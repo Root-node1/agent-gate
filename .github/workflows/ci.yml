@@ -8,6 +8,9 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    env:
+      DJANGO_SECRET_KEY: ci-only-not-a-real-secret
+      DJANGO_DEBUG: "False"
     defaults:
       run:
         working-directory: backend

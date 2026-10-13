@@ -115,3 +115,22 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [ ] Dashboard screens
 - [ ] Deploy on Render
 - [ ] SDK generated from the OpenAPI schema
+
+## 13. PayPal Cart API (agentic commerce) notes
+
+Source: PayPal's Postman collection for validating the merchant Cart API. Summary only; the collection and its linked OpenAPI spec are the reference.
+
+- **What it is:** a client that tests a merchant's own endpoints. PayPal's agentic checkout calls the merchant, not the other way round.
+- **Endpoints a merchant implements:** `POST /merchant-cart`, `GET` and `PUT /merchant-cart/{cartId}`, `POST /merchant-cart/{cartId}/checkout`.
+- **Flow:** create cart, update cart (optional), approve token (`ec_token`, approved by a sandbox personal account), checkout with `payer_id`.
+- **Latency limits:** under 3 seconds, and under 5 seconds for checkout.
+- **Auth:** PayPal-issued JWT. In sandbox we sign our own RS256 JWT with a self-generated key pair. In production PayPal signs and publishes its key via JWKS.
+- **Error scenarios it tests:** item not found, out of stock, payment declined, shipping not available, invalid JWT, multi-item errors (422 or 200 INCOMPLETE).
+- **Sandbox `payer_id`:** create a Personal sandbox account in the PayPal Developer Dashboard; its Account ID is the `payer_id`.
+
+How this relates to AgentGate:
+
+- AgentGate sits on the buyer side, between the agent and PayPal. This collection covers the seller side.
+- The approve-token and checkout steps are the moments the firewall should gate.
+- A spec-compliant demo merchant is a stretch goal for the Tech Lead after the rule engine and payment execution work. It is not part of the MVP.
+- Never commit signing keys. `*.pem` and `*.key` are git-ignored; keys and PayPal credentials live in `.env`. Use sandbox only.

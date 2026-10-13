@@ -8,3 +8,5 @@ dist/
 db.sqlite3
 .DS_Store
 .ruff_cache/
+*.pem
+*.key

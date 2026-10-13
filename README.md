@@ -87,3 +87,7 @@ cp backend/.env.example backend/.env
 ```
 
 Then set `DJANGO_SECRET_KEY` to your own random value. Never commit `.env`. PayPal sandbox credentials go in this file when the integration lands.
+
+## PayPal Postman collection
+
+PayPal's Postman collection (Cart API for agentic commerce) is for validating a merchant implementation. Notes on how it relates to this project are in [Doc.md](Doc.md), section 13. Never commit private keys, and use the sandbox only.

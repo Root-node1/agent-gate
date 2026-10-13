@@ -100,3 +100,10 @@ The backend defines Agent, Policy, MerchantRule, SpendRequest, Approval and Audi
     python manage.py createsuperuser
 
 Then visit http://localhost:8000/admin/. After changing models, run `python manage.py makemigrations` and commit the generated migration.
+
+## Rule engine
+
+`backend/gate/rules.py` decides allow, deny or needs_approval from a request, a policy and what has already been spent. Rules and precedence are listed in [Doc.md](Doc.md). Run its tests with:
+
+    cd backend && source venv/bin/activate
+    python manage.py test gate.test_rules

@@ -35,6 +35,29 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 7. If allowed or approved, AgentGate executes the payment through PayPal.
 8. Every step is written to the audit log.
 
+### Rule engine (built)
+
+Implemented in `backend/gate/rules.py` as a pure function: `evaluate(spend, limits, spent)` returns a decision plus the reasons. It never touches the database or the network, so it is fully deterministic and unit-tested (`gate/test_rules.py`).
+
+Hard rules (any one denies):
+
+- `INVALID_AMOUNT`: amount is zero or negative
+- `CURRENCY_MISMATCH`: request currency differs from the policy currency
+- `MERCHANT_BLOCKED`: merchant is on the block list
+- `MERCHANT_NOT_ALLOWED`: an allow list exists and the merchant is not on it
+- `OVER_TRANSACTION_CAP`: amount is above the per-transaction cap
+- `OVER_DAILY_BUDGET` and `OVER_MONTHLY_BUDGET`: already-spent plus this amount exceeds the budget
+
+Approval rules (a human must decide):
+
+- `UNTRUSTED_SOURCE`: the instruction came from a web page, email or invoice
+- `UNKNOWN_SOURCE`: the origin is unknown (fails closed; only `trusted` can be auto-allowed)
+- `OVER_APPROVAL_THRESHOLD`: amount is above the approval threshold
+
+Precedence: any deny wins, then any approval reason gives `needs_approval`, otherwise `allow`. Every triggered rule is reported, so the audit log explains the full decision. Merchants are normalized (lowercase, no scheme, path or `www.`) before matching, and lookalike domains such as `acme.com.evil.net` do not match `acme.com`.
+
+Open question for the Security role: who sets `source`? If the agent labels its own requests `trusted`, an attacker can spoof it. The label should come from the integration layer (SDK or MCP wrapper) based on where the instruction originated.
+
 ## 4. Data model (built)
 
 Defined in `backend/gate/models.py`, registered in the Django admin.
@@ -106,6 +129,9 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - **API keys are stored hashed**: only a prefix and SHA-256 hash are kept, so a database leak does not expose agent keys.
 - **Audit log is append-only in model code**, and agents are created through `Agent.create_with_key()` rather than the admin.
 - **CI fails on missing migrations** (`makemigrations --check`).
+- **Rule engine is a pure function**: no database access inside `evaluate`, so every rule is testable in isolation.
+- **Fail closed**: only requests from a trusted source can be auto-allowed; unknown or untrusted sources always need a human.
+- **Allow list means deny-by-default**: when a policy has an allow list, any other merchant is denied.
 
 ## 12. Status
 
@@ -116,7 +142,7 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [x] GitHub Actions CI
 - [x] README
 - [x] Data models, migrations and admin
-- [ ] Rule engine
+- [x] Rule engine (pure function, unit-tested)
 - [ ] Spend request API and approvals
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier

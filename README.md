@@ -77,3 +77,13 @@ MIT. See [LICENSE](LICENSE).
 ## Documentation
 
 Design, API plan, workflow, and status live in [Doc.md](Doc.md).
+
+## Configuration
+
+`./run.sh` creates `backend/.env` from `backend/.env.example` on first run and fills in a fresh `DJANGO_SECRET_KEY`. To do it by hand:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Then set `DJANGO_SECRET_KEY` to your own random value. Never commit `.env`. PayPal sandbox credentials go in this file when the integration lands.

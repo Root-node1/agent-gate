@@ -2,13 +2,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY="$ROOT/backend/.venv/bin/python"
+PY="$ROOT/backend/venv/bin/python"
 
 # First-run setup
-if [ ! -d "$ROOT/backend/.venv" ]; then
+if [ ! -d "$ROOT/backend/venv" ]; then
   echo "==> Creating Python venv and installing backend deps"
-  python3 -m venv "$ROOT/backend/.venv"
-  "$ROOT/backend/.venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
+  python3 -m venv "$ROOT/backend/venv"
+  "$ROOT/backend/venv/bin/pip" install -r "$ROOT/backend/requirements.txt"
 fi
 
 if [ ! -d "$ROOT/frontend/node_modules" ]; then

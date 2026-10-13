@@ -1,8 +1,10 @@
 __pycache__/
 *.pyc
+venv/
 .venv/
 .env
 node_modules/
 dist/
 db.sqlite3
 .DS_Store
+.ruff_cache/

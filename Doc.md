@@ -35,14 +35,18 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 7. If allowed or approved, AgentGate executes the payment through PayPal.
 8. Every step is written to the audit log.
 
-## 4. Data model (planned)
+## 4. Data model (built)
 
-- **Agent**: id, name, API key, status
-- **Policy**: agent, daily budget, monthly budget, per-transaction cap, approval threshold, currency
-- **MerchantRule**: policy, merchant identifier, allow or block
-- **SpendRequest**: agent, amount, currency, merchant, purpose, source, risk score, decision, reasons, matching rules, PayPal reference, timestamps
-- **Approval**: spend request, approver, outcome, note, timestamp
-- **AuditEvent**: append-only record of every request, decision, approval, and PayPal result
+Defined in `backend/gate/models.py`, registered in the Django admin.
+
+- **Agent**: name, `api_key_prefix`, `api_key_hash` (SHA-256; the raw key is shown once by `Agent.create_with_key()` and never stored), status (active or suspended)
+- **Policy** (one per agent): currency, `per_transaction_cap`, `approval_threshold`, `daily_budget`, `monthly_budget`. A database constraint requires the threshold to be at or below the cap.
+- **MerchantRule**: policy, merchant, action (allow or block), note. A merchant can appear once per policy.
+- **SpendRequest** (UUID id): agent, amount, currency, merchant, purpose, source (trusted, untrusted, unknown), `risk_score`, decision (pending, allow, deny, needs_approval), reasons, matched rules, PayPal reference
+- **Approval** (one per spend request): outcome (pending, approved, denied), approver, note, decided time
+- **AuditEvent**: event type, agent, spend request, JSON payload, created time. Append-only in code: `save()` on an existing row and `delete()` raise `PermissionError`. Create events with `AuditEvent.record(...)`. The admin shows them read-only.
+
+Note: bulk operations like `QuerySet.update()` bypass model methods, so never use them on audit events. A database-level guard may come later.
 
 ## 5. API (planned unless marked built)
 
@@ -99,6 +103,9 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - **SQLite for now**: switch to PostgreSQL when the models land.
 - **Python env named `venv`** inside `backend/`.
 - **SSH to GitHub over port 443**: some networks block port 22.
+- **API keys are stored hashed**: only a prefix and SHA-256 hash are kept, so a database leak does not expose agent keys.
+- **Audit log is append-only in model code**, and agents are created through `Agent.create_with_key()` rather than the admin.
+- **CI fails on missing migrations** (`makemigrations --check`).
 
 ## 12. Status
 
@@ -108,7 +115,8 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [x] run.sh starts both servers
 - [x] GitHub Actions CI
 - [x] README
-- [ ] Models and rule engine
+- [x] Data models, migrations and admin
+- [ ] Rule engine
 - [ ] Spend request API and approvals
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier

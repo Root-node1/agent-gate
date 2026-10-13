@@ -44,7 +44,7 @@ cd backend && source venv/bin/activate && ruff check . && python manage.py test
 cd frontend && npm run lint && npm run build
 ```
 
-The same checks run in GitHub Actions on every push and pull request.
+The same checks run in GitHub Actions on every push and pull request. Ruff settings live in `backend/ruff.toml`.
 
 ## How PayPal is used
 

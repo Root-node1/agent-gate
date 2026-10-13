@@ -84,7 +84,7 @@ Run locally before pushing:
     cd backend && source venv/bin/activate && ruff check . && python manage.py test
     cd frontend && npm run lint && npm run build
 
-GitHub Actions runs the same checks on every push and pull request. Every rule in the policy engine gets a unit test.
+GitHub Actions runs the same checks on every push and pull request. Every rule in the policy engine gets a unit test. Lint settings live in `backend/ruff.toml` (generated migrations are excluded; RUF012 is ignored because Django's `Meta` and admin options are plain class attributes). Keeping the config in the repo makes local runs and CI identical.
 
 ## 10. Deployment (planned)
 

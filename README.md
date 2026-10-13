@@ -107,3 +107,16 @@ Then visit http://localhost:8000/admin/. After changing models, run `python mana
 
     cd backend && source venv/bin/activate
     python manage.py test gate.test_rules
+
+## Try the API
+
+Create an agent (this prints its API key once), then submit spend requests:
+
+    cd backend && source venv/bin/activate
+    python manage.py create_agent shopper --allow acme.com --threshold 50
+
+    curl -s -X POST http://localhost:8000/v1/spend-requests/ \
+      -H "Authorization: Bearer agk_YOUR_KEY" -H "Content-Type: application/json" \
+      -d '{"amount":"10.00","currency":"USD","merchant":"acme.com","source":"trusted"}'
+
+The response always has HTTP status 201; read the `decision` field (allow, deny or needs_approval) and `reasons`. Interactive docs are at http://localhost:8000/api/docs/ and the OpenAPI schema is at `/api/schema/`.

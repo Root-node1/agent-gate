@@ -74,14 +74,26 @@ Note: bulk operations like `QuerySet.update()` bypass model methods, so never us
 ## 5. API (planned unless marked built)
 
 - `GET /api/health/` (built): returns `{"status": "ok"}`
-- `POST /v1/spend-requests`: submit a request, receive the decision
-- `GET /v1/spend-requests/{id}`: status
+- `GET /api/schema/` and `/api/docs/` (built): OpenAPI schema and Swagger UI
+- `POST /v1/spend-requests/` (built): submit a request. Returns 201 with `decision` (allow, deny or needs_approval), reasons and matched rules in the body
+- `GET /v1/spend-requests/{id}/` (built): read one of the agent's own requests
 - `POST /v1/approvals/{id}/approve` and `/deny`
 - `GET/PUT /v1/policies`: manage rules
 - `GET /v1/audit`: filterable log
 - `POST /webhooks/paypal`: payment events
 
 The OpenAPI schema is generated with drf-spectacular and used to generate the SDK.
+
+### Agent authentication and the spend request API (built)
+
+- Agents authenticate with `Authorization: Bearer <agent key>`. Keys look like `agk_...`. Only a SHA-256 hash is stored, and suspended agents are rejected.
+- Create an agent, its policy and merchant rules with `python manage.py create_agent NAME --allow acme.com --block evil.com --cap 100 --threshold 50 --daily 500 --monthly 5000`. The key is printed once.
+- `POST /v1/spend-requests/` takes `amount`, `currency`, `merchant`, optional `purpose`, and `source` (trusted, untrusted or unknown; missing means unknown). The response is HTTP 201 for every decision, so agents and SDKs must read `decision`, never just the status code.
+- Budgets count allowed requests plus approvals that are pending or approved. Denied requests and rejected approvals do not count.
+- The policy row is locked during a decision (`select_for_update`) so concurrent requests cannot both pass a budget. SQLite ignores the lock; PostgreSQL enforces it.
+- Audit events written per request: `spend_request.received`, `spend_request.decided`, and `approval.requested` when a human is needed.
+- A request from an agent with no policy returns 409.
+- `risk_score` stays 0 until the injection classifier lands.
 
 ## 6. Dashboard screens (planned)
 
@@ -143,7 +155,8 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [x] README
 - [x] Data models, migrations and admin
 - [x] Rule engine (pure function, unit-tested)
-- [ ] Spend request API and approvals
+- [x] Spend request API with agent key auth and audit trail
+- [ ] Approval endpoints (approve and deny)
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier
 - [ ] Dashboard screens

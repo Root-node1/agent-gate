@@ -3,13 +3,17 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND="$ROOT/backend"
-PY="$BACKEND/venv/bin/python"
+# Windows (Git Bash) venvs use Scripts/, and python3 is often a Store stub there
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) PY="$BACKEND/venv/Scripts/python"; SYS_PY=python ;;
+  *) PY="$BACKEND/venv/bin/python"; SYS_PY=python3 ;;
+esac
 
 # First-run setup: Python env
 if [ ! -d "$BACKEND/venv" ]; then
   echo "==> Creating Python venv and installing backend deps"
-  python3 -m venv "$BACKEND/venv"
-  "$BACKEND/venv/bin/pip" install -r "$BACKEND/requirements.txt"
+  "$SYS_PY" -m venv "$BACKEND/venv"
+  "$PY" -m pip install -r "$BACKEND/requirements.txt"
 fi
 
 # First-run setup: .env with a fresh secret key

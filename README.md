@@ -120,3 +120,7 @@ Create an agent (this prints its API key once), then submit spend requests:
       -d '{"amount":"10.00","currency":"USD","merchant":"acme.com","source":"trusted"}'
 
 The response always has HTTP status 201; read the `decision` field (allow, deny or needs_approval) and `reasons`. Interactive docs are at http://localhost:8000/api/docs/ and the OpenAPI schema is at `/api/schema/`.
+
+## Database
+
+Local development uses SQLite with no setup. To use PostgreSQL instead, set `DATABASE_URL` in `backend/.env`, for example `postgres://user:pass@localhost:5432/agentgate`. CI and production use PostgreSQL.

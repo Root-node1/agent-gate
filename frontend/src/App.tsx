@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
+import type { SpendRequest } from './api/spendRequests'
+import DecisionCard from './components/DecisionCard'
+import Logo from './components/Logo'
+import SpendRequestForm from './components/SpendRequestForm'
 
 export default function App() {
   const [status, setStatus] = useState('checking...')
+  const [result, setResult] = useState<SpendRequest | null>(null)
 
   useEffect(() => {
     fetch('/api/health/')
@@ -11,9 +16,31 @@ export default function App() {
   }, [])
 
   return (
-    <main style={{ padding: 24, fontFamily: 'sans-serif' }}>
-      <h1>AgentGate</h1>
-      <p>Backend status: {status}</p>
-    </main>
+    <>
+      <header className="app-header">
+        <h1>
+          <Logo />
+        </h1>
+        <p className="health">Backend: {status}</p>
+      </header>
+
+      <main className="page">
+        <div className="page-intro">
+          <h2>Test a payment</h2>
+          <p>Send a payment as an agent and see what AgentGate decides.</p>
+        </div>
+
+        <div className="tester">
+          <SpendRequestForm onResult={setResult} />
+          {result ? (
+            <DecisionCard request={result} />
+          ) : (
+            <section className="panel empty">
+              <p>The decision will show here.</p>
+            </section>
+          )}
+        </div>
+      </main>
+    </>
   )
 }

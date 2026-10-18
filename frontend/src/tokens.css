@@ -1,0 +1,44 @@
+/*
+ * Design tokens. Every color in the app comes from here.
+ * Placeholder palette: swap these values for the team palette.
+ */
+:root {
+  /* Surfaces and text */
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-border: #d4d8de;
+  --color-text: #1b1f24;
+  --color-text-muted: #545b66;
+
+  /* Brand */
+  --color-primary: #1f4fd1;
+  --color-primary-hover: #183fa8;
+  --color-on-primary: #ffffff;
+  --color-focus: #1f4fd1;
+
+  /* Decisions (always paired with an icon and a label, never color alone) */
+  --color-allow: #146c3a;
+  --color-allow-bg: #e3f4ea;
+  --color-deny: #b42318;
+  --color-deny-bg: #fdecea;
+  --color-approval: #8a4b00;
+  --color-approval-bg: #fff3dc;
+
+  /* Type */
+  --font-sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, Consolas, monospace;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+
+  /* Spacing and shape */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius: 8px;
+  --tap-target: 44px;
+}

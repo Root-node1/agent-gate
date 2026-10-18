@@ -124,3 +124,9 @@ The response always has HTTP status 201; read the `decision` field (allow, deny 
 ## Database
 
 Local development uses SQLite with no setup. To use PostgreSQL instead, set `DATABASE_URL` in `backend/.env`, for example `postgres://user:pass@localhost:5432/agentgate`. CI and production use PostgreSQL.
+
+CI runs the backend tests against PostgreSQL 17. To reproduce that locally, start a Postgres container and set `DATABASE_URL` before running the tests:
+
+    docker run -d --name agentgate-pg -e POSTGRES_USER=agentgate -e POSTGRES_PASSWORD=agentgate -e POSTGRES_DB=agentgate -p 5432:5432 postgres:17
+    cd backend && source venv/bin/activate
+    DATABASE_URL=postgres://agentgate:agentgate@localhost:5432/agentgate python manage.py test

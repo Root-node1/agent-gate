@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 import Layout from './components/Layout'
+import ApprovalsPage from './pages/ApprovalsPage'
 import RequestDetailPage from './pages/RequestDetailPage'
 import RequestsPage from './pages/RequestsPage'
 import TesterPage from './pages/TesterPage'
@@ -14,6 +15,7 @@ export default function App() {
             <Route index element={<TesterPage />} />
             <Route path="requests" element={<RequestsPage />} />
             <Route path="requests/:id" element={<RequestDetailPage />} />
+            <Route path="approvals" element={<ApprovalsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

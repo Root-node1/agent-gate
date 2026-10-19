@@ -25,6 +25,9 @@ export default function Layout() {
           <NavLink to="/requests" className="nav-link">
             Requests
           </NavLink>
+          <NavLink to="/approvals" className="nav-link">
+            Approvals
+          </NavLink>
         </nav>
         <p className="health">Backend: {status}</p>
       </header>

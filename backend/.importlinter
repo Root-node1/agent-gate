@@ -1,0 +1,28 @@
+[importlinter]
+root_packages =
+    config
+    gate
+    engine
+    apps
+include_external_packages = True
+
+[importlinter:contract:engine-is-pure]
+name = The engine is pure Python and framework-free
+type = forbidden
+source_modules =
+    engine
+forbidden_modules =
+    django
+    rest_framework
+    apps
+
+[importlinter:contract:paypal-isolation]
+name = Only the payments app may reach the PayPal client
+type = forbidden
+# Add each application package here when it is created.
+source_modules =
+    config
+    gate
+    engine
+forbidden_modules =
+    apps.payments.paypal

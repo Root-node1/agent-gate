@@ -1,42 +1,28 @@
-import type { Decision, SpendRequest } from '../api/spendRequests'
+import type { ReactNode } from 'react'
+import type { SpendRequest } from '../api/spendRequests'
+import DecisionBadge from './DecisionBadge'
+import { APPROVAL_LABELS, DECISION_LABELS, SOURCE_LABELS, formatTime } from './labels'
 
-const DECISION_LABELS: Record<Decision, { icon: string; label: string; summary: string }> = {
-  allow: { icon: '✓', label: 'Allowed', summary: 'This payment can go ahead.' },
-  deny: { icon: '✕', label: 'Denied', summary: 'This payment was blocked.' },
-  needs_approval: {
-    icon: '!',
-    label: 'Needs approval',
-    summary: 'A person must approve this before it is paid.',
-  },
-  pending: { icon: '…', label: 'Pending', summary: 'No decision yet.' },
+interface Props {
+  request: SpendRequest
+  actions?: ReactNode
 }
 
-const SOURCE_LABELS = {
-  trusted: 'Trusted (operator or user)',
-  untrusted: 'Untrusted (web page, email or invoice)',
-  unknown: 'Unknown',
-}
-
-export default function DecisionCard({ request }: { request: SpendRequest }) {
-  const { icon, label, summary } = DECISION_LABELS[request.decision]
-
+export default function DecisionCard({ request, actions }: Props) {
   return (
     <section
       className={`panel decision decision-${request.decision}`}
       aria-live="polite"
       aria-label="Decision"
     >
-      <span className={`badge badge-${request.decision}`}>
-        <span aria-hidden="true">{icon}</span>
-        {label}
-      </span>
+      <DecisionBadge decision={request.decision} />
 
       <div className="decision-summary">
         <p className="amount">
           {request.amount} {request.currency}
         </p>
         <p>to {request.merchant}</p>
-        <p className="hint">{summary}</p>
+        <p className="hint">{DECISION_LABELS[request.decision].summary}</p>
       </div>
 
       {request.reasons.length > 0 && (
@@ -65,7 +51,7 @@ export default function DecisionCard({ request }: { request: SpendRequest }) {
         {request.approval && (
           <>
             <dt>Approval</dt>
-            <dd>{request.approval}</dd>
+            <dd>{APPROVAL_LABELS[request.approval]}</dd>
           </>
         )}
         <dt>Request ID</dt>
@@ -73,8 +59,10 @@ export default function DecisionCard({ request }: { request: SpendRequest }) {
           <code>{request.id}</code>
         </dd>
         <dt>Time</dt>
-        <dd>{new Date(request.created_at).toLocaleString()}</dd>
+        <dd>{formatTime(request.created_at)}</dd>
       </dl>
+
+      {actions && <div className="card-actions">{actions}</div>}
     </section>
   )
 }

@@ -15,6 +15,7 @@
   --color-primary-hover: #183fa8;
   --color-on-primary: #ffffff;
   --color-focus: #1f4fd1;
+  --color-info-bg: #e8eefc;
 
   /* Decisions (always paired with an icon and a label, never color alone) */
   --color-allow: #146c3a;

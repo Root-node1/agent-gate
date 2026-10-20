@@ -123,7 +123,7 @@ Run locally before pushing:
     cd backend && source venv/bin/activate && ruff check . && python manage.py test
     cd frontend && npm run lint && npm run build
 
-GitHub Actions runs the same checks on every push and pull request. Every rule in the policy engine gets a unit test. Lint settings live in `backend/ruff.toml` (generated migrations are excluded; RUF012 is ignored because Django's `Meta` and admin options are plain class attributes). Keeping the config in the repo makes local runs and CI identical.
+GitHub Actions runs the same checks on every push and pull request, with the backend job running against a PostgreSQL 17 service container (`DATABASE_URL`), so the budget row lock is exercised for real. Every rule in the policy engine gets a unit test. Lint settings live in `backend/ruff.toml` (generated migrations are excluded; RUF012 is ignored because Django's `Meta` and admin options are plain class attributes). Keeping the config in the repo makes local runs and CI identical.
 
 ## 10. Deployment (planned)
 
@@ -135,7 +135,7 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 
 - **Django over Spring Boot**: the PayPal AI Toolkit supports Python and TypeScript, so the agent layer lives inside the Django service as one backend.
 - **Deterministic rules over model judgment**: limits cannot be argued away by text.
-- **SQLite for now**: switch to PostgreSQL when the models land.
+- **Database via `DATABASE_URL`**: SQLite by default for local dev; PostgreSQL in CI and production (`dj-database-url`, `psycopg`). The budget lock (`select_for_update`) only works on PostgreSQL.
 - **Python env named `venv`** inside `backend/`.
 - **SSH to GitHub over port 443**: some networks block port 22.
 - **API keys are stored hashed**: only a prefix and SHA-256 hash are kept, so a database leak does not expose agent keys.

@@ -34,7 +34,7 @@
   /* Chart series (validated for color-blind separation; see Overview chart) */
   --chart-allow: #1a7f45;
   --chart-deny: #c4321f;
-  --chart-approval: #d18a00;
+  --chart-approval: #b57600;
 
   /* Type */
   --font-sans: 'Inter Variable', system-ui, 'Segoe UI', Roboto, sans-serif;

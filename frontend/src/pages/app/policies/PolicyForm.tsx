@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useBlocker } from 'react-router'
 import { Info } from 'lucide-react'
 import { DemoError, spentWindows, updatePolicy, useDemoState, validatePolicy } from '../../../demo/store'
 import { agentById } from '../../../demo/selectors'
@@ -62,13 +62,11 @@ const FIELD_ORDER: (keyof PolicyDraft)[] = [
 export default function PolicyForm({ policy }: { policy: Policy }) {
   const state = useDemoState()
   const toast = useToast()
-  const navigate = useNavigate()
   const now = useNow()
   const [draft, setDraft] = useState<PolicyDraft>(() => draftFromPolicy(policy))
   const [touched, setTouched] = useState<Partial<Record<keyof PolicyDraft, boolean>>>({})
   const [submitted, setSubmitted] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [leaveTo, setLeaveTo] = useState<string | null>(null)
 
   const agent = agentById(state, policy.agent_id)
   const values = valuesFromDraft(draft)
@@ -80,30 +78,19 @@ export default function PolicyForm({ policy }: { policy: Policy }) {
 
   const errorFor = (field: keyof PolicyDraft) => (submitted || touched[field] ? errors[field] : undefined)
 
-  // react-router's useBlocker needs a data router; App uses BrowserRouter, so
-  // guard in-app links and tab closing by hand while there are unsaved edits.
+  // Ask before leaving with unsaved edits: in-app links and Back via the router,
+  // closing or reloading the tab via beforeunload.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname,
+  )
+
   useEffect(() => {
     if (!dirty) return
-    function onClick(e: MouseEvent) {
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-      const anchor = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
-      if (!anchor || anchor.target === '_blank') return
-      const url = new URL(anchor.href)
-      if (url.origin !== window.location.origin) return
-      if (url.pathname === window.location.pathname && url.search === window.location.search) return
-      e.preventDefault()
-      e.stopPropagation()
-      setLeaveTo(url.pathname + url.search + url.hash)
-    }
     function onBeforeUnload(e: BeforeUnloadEvent) {
       e.preventDefault()
     }
-    document.addEventListener('click', onClick, true)
     window.addEventListener('beforeunload', onBeforeUnload)
-    return () => {
-      document.removeEventListener('click', onClick, true)
-      window.removeEventListener('beforeunload', onBeforeUnload)
-    }
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [dirty])
 
   function set<K extends keyof PolicyDraft>(field: K, value: PolicyDraft[K]) {
@@ -352,22 +339,18 @@ export default function PolicyForm({ policy }: { policy: Policy }) {
       </aside>
 
       <Modal
-        open={leaveTo !== null}
-        onClose={() => setLeaveTo(null)}
+        open={blocker.state === 'blocked'}
+        onClose={() => blocker.reset?.()}
         title="Leave without saving?"
         footer={
           <>
-            <button type="button" className="btn btn-secondary" onClick={() => setLeaveTo(null)}>
+            <button type="button" className="btn btn-secondary" onClick={() => blocker.reset?.()}>
               Keep editing
             </button>
             <button
               type="button"
               className="btn btn-danger"
-              onClick={() => {
-                const to = leaveTo
-                setLeaveTo(null)
-                if (to) navigate(to)
-              }}
+              onClick={() => blocker.proceed?.()}
             >
               Discard and leave
             </button>

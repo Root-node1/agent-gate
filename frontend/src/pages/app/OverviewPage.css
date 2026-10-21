@@ -1,0 +1,481 @@
+/* Overview page. Shared building blocks come from index.css; this file only
+   holds what is specific to the overview (callout, chart, budgets, live feed). */
+
+/* Two column stacks: chart + recent decisions, budget + live feed. On narrow
+   screens they merge into one column ordered chart, budget, recent, feed. */
+
+.ov-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .ov-columns {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ov-column {
+    display: contents;
+  }
+
+  .ov-column:first-child > :first-child {
+    order: 1;
+  }
+
+  .ov-column:last-child > :first-child {
+    order: 2;
+  }
+
+  .ov-column:first-child > :last-child {
+    order: 3;
+  }
+
+  .ov-column:last-child > :last-child {
+    order: 4;
+  }
+}
+
+/* Approvals callout */
+
+.ov-callout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: var(--tone-bg);
+  border: 1px solid color-mix(in srgb, var(--tone-fg) 30%, transparent);
+  border-left: 4px solid var(--tone-fg);
+  border-radius: var(--radius-lg);
+}
+
+.ov-callout-clear {
+  background: var(--color-surface);
+  border-color: var(--color-border-subtle);
+  border-left-color: var(--tone-fg);
+}
+
+.ov-callout-icon {
+  flex-shrink: 0;
+  color: var(--tone-fg);
+}
+
+.ov-callout-body {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.ov-callout-title {
+  font-weight: 650;
+}
+
+.ov-callout-amount {
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.ov-callout-text {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.ov-callout-action {
+  flex-shrink: 0;
+}
+
+.ov-callout-skeleton {
+  height: 76px;
+  border-radius: var(--radius-lg);
+}
+
+.ov-stat-skeleton {
+  display: block;
+  width: 64px;
+  height: 36px;
+}
+
+/* Decisions chart */
+
+.ov-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.ov-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ov-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.ov-legend-total {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-chart-plot {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ov-chart-plot svg {
+  display: block;
+  border-radius: var(--radius);
+}
+
+.ov-chart-plot svg:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.ov-grid {
+  stroke: var(--color-border-subtle);
+  stroke-width: 1;
+}
+
+.ov-baseline {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.ov-axis {
+  font-size: 11px;
+  fill: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-col-hover {
+  fill: var(--color-neutral-bg);
+  opacity: 0.7;
+}
+
+.ov-col path,
+.ov-col rect:not(.ov-col-hover) {
+  transition: opacity var(--duration) var(--ease);
+}
+
+.ov-chart-plot svg:hover .ov-col:not(.ov-col-active) path,
+.ov-chart-plot svg:hover .ov-col:not(.ov-col-active) rect {
+  opacity: 0.55;
+}
+
+.ov-tooltip {
+  position: absolute;
+  top: var(--space-2);
+  min-width: 160px;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+
+.ov-tooltip-right {
+  transform: translateX(16px);
+}
+
+.ov-tooltip-left {
+  transform: translateX(calc(-100% - 16px));
+}
+
+.ov-tooltip-title {
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+}
+
+.ov-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ov-tooltip-row strong {
+  min-width: 2ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-line-key {
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.ov-chart-skeleton {
+  height: 252px;
+}
+
+/* Budget */
+
+.ov-subheading {
+  margin: var(--space-5) 0 var(--space-3);
+  padding-top: var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ov-agent-budgets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ov-agent-budget-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ov-agent-link,
+.ov-policy-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-target);
+  text-decoration: none;
+}
+
+.ov-agent-link {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.ov-policy-link {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.ov-agent-link:hover,
+.ov-policy-link:hover {
+  text-decoration: underline;
+}
+
+/* The agent name is already the link above the bar; keep it as the meter's accessible label only. */
+.ov-agent-budgets .meter-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ov-agent-budgets .meter {
+  margin-top: calc(var(--space-2) * -1);
+}
+
+.ov-agent-today {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Recent decisions */
+
+.ov-recent td {
+  white-space: nowrap;
+}
+
+.ov-recent td:first-child {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ov-recent-compact {
+  display: none;
+}
+
+/* Live activity feed */
+
+.ov-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-allow);
+  background: var(--color-allow-bg);
+  border-radius: 999px;
+}
+
+.ov-live-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--color-allow);
+  border-radius: 999px;
+  animation: ov-pulse 2s var(--ease) infinite;
+}
+
+@keyframes ov-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.ov-feed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ov-feed-item {
+  position: relative;
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
+  transition: background var(--duration) var(--ease);
+}
+
+.ov-feed-item:last-child {
+  border-bottom: none;
+}
+
+.ov-feed-item:hover {
+  background: var(--color-surface-2);
+}
+
+.ov-feed-item:has(.ov-feed-link:focus-visible) {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -3px;
+}
+
+.ov-feed-new {
+  animation: ov-enter 600ms var(--ease);
+}
+
+@keyframes ov-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+    background: var(--color-primary-bg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ov-feed-dot {
+  display: inline-grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--tone-fg);
+  background: var(--tone-bg);
+  border-radius: 999px;
+}
+
+.ov-feed-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ov-feed-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ov-feed-link {
+  min-width: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+/* The whole item is the link target. */
+.ov-feed-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.ov-feed-link:focus-visible {
+  outline: none;
+}
+
+.ov-feed-amount {
+  font-weight: 500;
+}
+
+.ov-feed-time {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.ov-feed-text {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.ov-feed-agent {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+@media (max-width: 560px) {
+  /* Keep the decision visible without sideways scrolling: pills move under the merchant. */
+  .ov-recent .ov-recent-wide {
+    display: none;
+  }
+
+  .ov-recent-compact {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+
+  .ov-stats.grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ov-callout-action {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ov-feed-item {
+    padding: var(--space-3) var(--space-4);
+  }
+}

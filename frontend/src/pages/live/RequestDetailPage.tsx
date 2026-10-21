@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
-import { ApiError, getSpendRequest, isRequestId, type SpendRequest } from '../api/spendRequests'
-import AgentKeyField from '../components/AgentKeyField'
-import DecisionCard from '../components/DecisionCard'
-import { useSession } from '../session/context'
+import { useParams } from 'react-router'
+import { ApiError, getSpendRequest, isRequestId, type SpendRequest } from '../../api/spendRequests'
+import AgentKeyField from '../../components/AgentKeyField'
+import DecisionCard from '../../components/DecisionCard'
+import { useSession } from '../../session/context'
+import PageHeader from '../../ui/PageHeader'
 
 interface Loaded {
   /** Which fetch this result belongs to, so a stale result is never shown. */
@@ -83,15 +84,11 @@ export default function RequestDetailPage() {
 
   return (
     <>
-      <Link to="/requests" className="text-link back-link">
-        ← All requests
-      </Link>
-      <div className="page-intro">
-        <h2>Request</h2>
-        <p>
-          <code>{id}</code>
-        </p>
-      </div>
+      <PageHeader
+        title="Live request"
+        description={<code>{id}</code>}
+        back={{ to: '/app/live/requests', label: 'Look up a request' }}
+      />
       <div className="detail">{body}</div>
     </>
   )

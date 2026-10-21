@@ -1,0 +1,312 @@
+/* Tabs: full tap targets, and scroll sideways on narrow screens instead of wrapping. */
+
+.st-tabs-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.st-tabs {
+  flex-wrap: nowrap;
+  margin-bottom: 0;
+}
+
+.st-tabs .tab {
+  min-height: var(--tap-target);
+  white-space: nowrap;
+}
+
+.st-panel:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .st-panel {
+    padding: var(--space-4);
+  }
+}
+
+.st-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* Workspace form */
+
+.st-form-actions {
+  align-items: center;
+}
+
+.st-demo-note {
+  margin-right: auto;
+}
+
+/* PayPal */
+
+.st-connection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.st-connection-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  color: var(--color-approval);
+  background: var(--color-approval-bg);
+  border-radius: var(--radius);
+}
+
+.st-connection-body {
+  flex: 1;
+  min-width: 220px;
+}
+
+.st-kv {
+  grid-template-columns: minmax(120px, 160px) 1fr;
+}
+
+@media (max-width: 480px) {
+  .st-kv {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+  .st-kv dd {
+    margin-bottom: var(--space-2);
+  }
+}
+
+/* Tables inside the settings card */
+
+.st-table-card {
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+}
+
+.st-manage {
+  font-weight: 600;
+  color: var(--color-primary);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.st-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.st-member-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.st-avatar-invite {
+  color: var(--color-text-muted);
+  background: var(--color-neutral-bg);
+}
+
+/* Roles */
+
+.st-roles,
+.st-links,
+.st-planned {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.st-role {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+}
+
+.st-role-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-primary);
+}
+
+.st-role-name {
+  font-weight: 650;
+}
+
+.st-role-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: none;
+}
+
+.st-role-picker legend {
+  margin-bottom: var(--space-2);
+}
+
+.st-role-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-height: var(--tap-target);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.st-role-option:has(input:checked) {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.st-role-option input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--color-primary);
+}
+
+.st-role-option > span {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Developer links */
+
+.st-link-card {
+  display: flex;
+  gap: var(--space-3);
+  height: 100%;
+  padding: var(--space-4);
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+  transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease);
+}
+
+.st-link-card:hover {
+  border-color: var(--color-primary);
+  background: var(--color-surface-2);
+}
+
+.st-link-card:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.st-link-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-primary);
+}
+
+.st-link-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.st-link-body strong {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Code block */
+
+.st-code {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.st-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  color: var(--color-text-muted);
+  background: var(--color-surface-2);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.st-code-bar span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.st-copy {
+  min-height: var(--tap-target);
+}
+
+.st-code pre {
+  margin: 0;
+  padding: var(--space-4);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  background: var(--color-surface);
+}
+
+.st-code pre code {
+  padding: 0;
+  background: none;
+}
+
+.st-code pre:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -3px;
+}
+
+/* Integrations */
+
+.st-planned {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+}
+
+.st-planned-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.st-planned-item + .st-planned-item {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.st-planned-item > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.st-planned-item > .pill,
+.st-connection .pill {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.st-panel .notice {
+  margin-bottom: 0;
+}

@@ -64,7 +64,7 @@ export default function SimulatePage() {
     setRequestId(null)
     setRunError(null)
     setLabel(what)
-    resultHeading.current?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
+    resultHeading.current?.closest('section')?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
     resultHeading.current?.focus({ preventScroll: true })
 
     timer.current = window.setTimeout(

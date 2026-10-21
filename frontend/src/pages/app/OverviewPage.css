@@ -300,6 +300,11 @@
   white-space: nowrap;
 }
 
+.ov-recent td:first-child {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .ov-recent-compact {
   display: none;
 }

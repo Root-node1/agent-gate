@@ -24,5 +24,13 @@ source_modules =
     config
     gate
     engine
+    apps.accounts
+    apps.agents
+    apps.policies
+    apps.payees
+    apps.spend
+    apps.approvals
+    apps.audit
+    apps.common
 forbidden_modules =
     apps.payments.paypal

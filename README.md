@@ -94,7 +94,7 @@ PayPal's Postman collection (Cart API for agentic commerce) is for validating a 
 
 ## Data model and admin
 
-The backend defines Agent, Policy, MerchantRule, SpendRequest, Approval and AuditEvent (see [Doc.md](Doc.md), section 4). To inspect them, create an admin user and open the admin site while the backend is running:
+The backend defines Organization, User, Agent, ApiKey, Policy, MerchantRule, Payee, SpendRequest, Approval, AuditEvent and WebhookEvent across `backend/apps/` (see [Doc.md](Doc.md), section 4). To inspect them, create an admin user and open the admin site while the backend is running:
 
     cd backend && source venv/bin/activate
     python manage.py createsuperuser
@@ -106,7 +106,7 @@ Then visit http://localhost:8000/admin/. After changing models, run `python mana
 `backend/gate/rules.py` decides allow, deny or needs_approval from a request, a policy and what has already been spent. Rules and precedence are listed in [Doc.md](Doc.md). Run its tests with:
 
     cd backend && source venv/bin/activate
-    python manage.py test gate.test_rules
+    python manage.py test tests.test_rules
 
 ## Try the API
 

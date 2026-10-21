@@ -37,7 +37,7 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 
 ### Rule engine (built)
 
-Implemented in `backend/gate/rules.py` as a pure function: `evaluate(spend, limits, spent)` returns a decision plus the reasons. It never touches the database or the network, so it is fully deterministic and unit-tested (`gate/test_rules.py`).
+Implemented in `backend/gate/rules.py` as a pure function: `evaluate(spend, limits, spent)` returns a decision plus the reasons. It never touches the database or the network, so it is fully deterministic and unit-tested (`backend/tests/test_rules.py`). It moves to the framework-free `engine/` package next.
 
 Hard rules (any one denies):
 
@@ -60,16 +60,20 @@ Open question for the Security role: who sets `source`? If the agent labels its 
 
 ## 4. Data model (built)
 
-Defined in `backend/gate/models.py`, registered in the Django admin.
+Split across `backend/apps/`, registered in the Django admin.
 
-- **Agent**: name, `api_key_prefix`, `api_key_hash` (SHA-256; the raw key is shown once by `Agent.create_with_key()` and never stored), status (active or suspended)
-- **Policy** (one per agent): currency, `per_transaction_cap`, `approval_threshold`, `daily_budget`, `monthly_budget`. A database constraint requires the threshold to be at or below the cap.
-- **MerchantRule**: policy, merchant, action (allow or block), note. A merchant can appear once per policy.
-- **SpendRequest** (UUID id): agent, amount, currency, merchant, purpose, source (trusted, untrusted, unknown), `risk_score`, decision (pending, allow, deny, needs_approval), reasons, matched rules, PayPal reference
-- **Approval** (one per spend request): outcome (pending, approved, denied), approver, note, decided time
-- **AuditEvent**: event type, agent, spend request, JSON payload, created time. Append-only in code: `save()` on an existing row and `delete()` raise `PermissionError`. Create events with `AuditEvent.record(...)`. The admin shows them read-only.
+- **User / Organization / OrgMembership** (`apps/accounts`): dashboard users authenticate as a custom `AUTH_USER_MODEL`; each organization has members with a role (admin, approver, viewer). Every operational row carries an `organization` foreign key.
+- **Agent / ApiKey** (`apps/agents`): an agent belongs to an organization and has a status (active or suspended). Keys live in a separate table so they can rotate; only a prefix and a SHA-256 hash are stored, `last_used_at`/`revoked_at` track use, and the raw key is shown once by `Agent.create_with_key()`.
+- **Policy / MerchantRule** (`apps/policies`): a policy is versioned (a new row per edit) and holds currency, minor-unit caps/budgets/threshold, merchant mode, velocity, payee cooldown, untrusted-source action, injection threshold, classifier requirement, approval TTL, and timezone. Constraints require the threshold to be at or below the cap and the injection threshold to be 0–100. Merchant rules are unique per policy.
+- **Payee** (`apps/payees`): the known destination for a merchant (type, value, SHA-256 fingerprint, trusted time, status), unique per organization and merchant.
+- **SpendRequest** (`apps/spend`, UUID id): agent, policy reference and `policy_version` snapshot, `idempotency_key`, `request_hash`, amount in minor units and currency, merchant, payee and destination snapshot, purpose, provenance (`source_type`/`source_ref`), capped evidence excerpt plus hash, `risk_score`, an immutable `decision`, a forward-only `status`, reasons, matched rules, PayPal reference/status, and decided/executed times.
+- **Approval** (`apps/approvals`, one per spend request): outcome (pending, approved, denied, expired), approver, note, `requested_at`, `expires_at`, `decided_at`.
+- **AuditEvent** (`apps/audit`): event type, organization, agent, spend request, actor type/id, JSON payload, `prev_hash`/`hash` chain columns, created time. Append-only in code: `save()` on an existing row and `delete()` raise `PermissionError`. Create events with `AuditEvent.record(...)`. The admin shows them read-only, and a PostgreSQL trigger blocks direct UPDATE/DELETE/TRUNCATE.
+- **WebhookEvent** (`apps/payments`): deduplicated PayPal inbox (`paypal_event_id` unique), event type, payload, signature-verified flag, received/processed times.
 
-Note: bulk operations like `QuerySet.update()` bypass model methods, so never use them on audit events. A database-level guard may come later.
+Money is stored as integer minor units with an ISO-4217 code (zero-decimal currencies such as JPY handled), converted to decimal strings only at the API and PayPal boundaries.
+
+Note: bulk operations like `QuerySet.update()` bypass model methods. Never use them on audit events; the database trigger is the backstop.
 
 ## 5. API (planned unless marked built)
 
@@ -86,12 +90,12 @@ The OpenAPI schema is generated with drf-spectacular and used to generate the SD
 
 ### Agent authentication and the spend request API (built)
 
-- Agents authenticate with `Authorization: Bearer <agent key>`. Keys look like `agk_...`. Only a SHA-256 hash is stored, and suspended agents are rejected.
-- Create an agent, its policy and merchant rules with `python manage.py create_agent NAME --allow acme.com --block evil.com --cap 100 --threshold 50 --daily 500 --monthly 5000`. The key is printed once.
-- `POST /v1/spend-requests/` takes `amount`, `currency`, `merchant`, optional `purpose`, and `source` (trusted, untrusted or unknown; missing means unknown). The response is HTTP 201 for every decision, so agents and SDKs must read `decision`, never just the status code.
-- Budgets count allowed requests plus approvals that are pending or approved. Denied requests and rejected approvals do not count.
-- The policy row is locked during a decision (`select_for_update`) so concurrent requests cannot both pass a budget. SQLite ignores the lock; PostgreSQL enforces it.
-- Audit events written per request: `spend_request.received`, `spend_request.decided`, and `approval.requested` when a human is needed.
+- Agents authenticate with `Authorization: Bearer <agent key>`. Keys look like `agk_...`. Lookup is by the stored prefix, then a constant-time hash comparison; suspended agents and revoked keys are rejected.
+- Create an agent, its policy and merchant rules with `python manage.py create_agent NAME [--org ORG] --allow acme.com --block evil.com --cap 100 --threshold 50 --daily 500 --monthly 5000`. The key is printed once.
+- `POST /v1/spend-requests/` takes `amount`, `currency`, `merchant`, optional `purpose`, `source_ref`, `evidence_excerpt`, and `source` (trusted, web_page, email, invoice, tool_output or unknown; missing means unknown). Unknown body fields are rejected with 400. The response is HTTP 201 for every decision, so agents and SDKs must read `decision`, never just the status code.
+- Budgets count requests that are approved, executing, or succeeded. Denied requests and pending approvals do not count, so a pending approval never reserves budget; approval rechecks before executing.
+- The current policy version is locked during a decision (`select_for_update`) so concurrent requests cannot both pass a budget. SQLite ignores the lock; PostgreSQL enforces it.
+- Audit events written per request: `request.received`, `decision.made`, and `approval.requested` when a human is needed.
 - A request from an agent with no policy returns 409.
 - `risk_score` stays 0 until the injection classifier lands.
 
@@ -120,26 +124,30 @@ The OpenAPI schema is generated with drf-spectacular and used to generate the SD
 
 Run locally before pushing:
 
-    cd backend && source venv/bin/activate && ruff check . && python manage.py test
+    cd backend && source venv/bin/activate && ruff check . && lint-imports && python manage.py test
     cd frontend && npm run lint && npm run build
 
 GitHub Actions runs the same checks on every push and pull request. Every rule in the policy engine gets a unit test. Lint settings live in `backend/ruff.toml` (generated migrations are excluded; RUF012 is ignored because Django's `Meta` and admin options are plain class attributes). Keeping the config in the repo makes local runs and CI identical.
 
 ## 10. Deployment (planned)
 
-- Hosted on Render. Backend and dashboard deployed from `main`.
-- Environment variables are set in Render, not in the repo.
-- The demo URL must open without a login.
+- Hosted on a Contabo VPS with Docker Compose: Caddy (TLS/reverse proxy), web (gunicorn), worker, and PostgreSQL.
+- Configuration comes from the environment (one server-side env file), never the repo.
+- PayPal webhooks need a public HTTPS hostname, and the demo URL must open without a login.
 
 ## 11. Decisions log
 
 - **Django over Spring Boot**: the PayPal AI Toolkit supports Python and TypeScript, so the agent layer lives inside the Django service as one backend.
 - **Deterministic rules over model judgment**: limits cannot be argued away by text.
-- **SQLite for now**: switch to PostgreSQL when the models land.
+- **SQLite for now**: development and CI move to PostgreSQL next.
 - **Python env named `venv`** inside `backend/`.
+- **Money as integer minor units**: avoids float/decimal drift and handles zero-decimal currencies; converted at the API and PayPal boundaries.
+- **Versioned policies**: editing a policy inserts a new version so a spend request can record the rules actually in force.
+- **Custom `accounts.User`**: set before the first real migration so organization membership and roles can be added without a later user-model swap.
+- **Keys in their own table**: rotation, `last_used_at`, and `revoked_at` without touching the agent row.
 - **SSH to GitHub over port 443**: some networks block port 22.
 - **API keys are stored hashed**: only a prefix and SHA-256 hash are kept, so a database leak does not expose agent keys.
-- **Audit log is append-only in model code**, and agents are created through `Agent.create_with_key()` rather than the admin.
+- **Audit log is append-only in model code and, on PostgreSQL, by a database trigger**, and agents are created through `Agent.create_with_key()` rather than the admin.
 - **CI fails on missing migrations** (`makemigrations --check`).
 - **Rule engine is a pure function**: no database access inside `evaluate`, so every rule is testable in isolation.
 - **Fail closed**: only requests from a trusted source can be auto-allowed; unknown or untrusted sources always need a human.
@@ -153,14 +161,15 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [x] run.sh starts both servers
 - [x] GitHub Actions CI
 - [x] README
-- [x] Data models, migrations and admin
+- [x] Data models, migrations and admin (split into accounts, agents, policies, payees, spend, approvals, payments, audit)
 - [x] Rule engine (pure function, unit-tested)
 - [x] Spend request API with agent key auth and audit trail
+- [ ] Framework-free `engine/` package with the R01–R15 rule table
 - [ ] Approval endpoints (approve and deny)
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier
 - [ ] Dashboard screens
-- [ ] Deploy on Render
+- [ ] Deploy on the Contabo VPS
 - [ ] SDK generated from the OpenAPI schema
 
 ## 13. PayPal Cart API (agentic commerce) notes

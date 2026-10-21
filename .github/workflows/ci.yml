@@ -8,9 +8,24 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: agentgate
+          POSTGRES_USER: agentgate
+          POSTGRES_PASSWORD: agentgate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentgate -d agentgate"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DJANGO_SECRET_KEY: ci-only-not-a-real-secret
       DJANGO_DEBUG: "False"
+      DATABASE_URL: postgresql://agentgate:agentgate@localhost:5432/agentgate
     defaults:
       run:
         working-directory: backend
@@ -23,6 +38,7 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
       - run: ruff check .
+      - run: lint-imports
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py test

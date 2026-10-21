@@ -23,7 +23,9 @@ class SpendRequestCreateView(APIView):
         serializer = SpendRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            spend_request = services.submit_spend_request(request.user.agent, **serializer.validated_data)
+            spend_request = services.submit_spend_request(
+                request.user.agent, **serializer.validated_data
+            )
         except services.PolicyMissing:
             return Response(
                 {"detail": "This agent has no policy configured."},

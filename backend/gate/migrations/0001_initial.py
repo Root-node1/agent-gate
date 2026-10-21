@@ -106,6 +106,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='merchantrule',
-            constraint=models.UniqueConstraint(fields=('policy', 'merchant'), name='unique_merchant_per_policy'),
+            constraint=models.UniqueConstraint(fields=('policy', 'merchant'), name='legacy_unique_merchant_per_policy'),
         ),
     ]

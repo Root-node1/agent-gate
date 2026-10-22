@@ -1,5 +1,7 @@
+from datetime import timedelta
 from uuid import uuid4
 
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Organization
@@ -7,6 +9,7 @@ from apps.agents.models import Agent
 from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
 from apps.policies.models import MerchantRule, Policy
+from apps.spend.models import SpendRequest
 
 URL = "/v1/spend-requests/"
 
@@ -103,6 +106,15 @@ class DecisionTests(ApiTestBase):
         self.assertEqual(third["decision"], "deny")
         self.assertIn("R06_DAILY_BUDGET", third["matched_rules"])
 
+    def test_weekly_budget_accumulates(self):
+        self.policy.weekly_budget_minor = 2_500
+        self.policy.save()
+        self.assertEqual(self.post().json()["decision"], "allow")
+        self.assertEqual(self.post().json()["decision"], "allow")
+        third = self.post().json()
+        self.assertEqual(third["decision"], "deny")
+        self.assertIn("R16_WEEKLY_BUDGET", third["matched_rules"])
+
     def test_denied_requests_do_not_count_toward_budget(self):
         self.policy.daily_budget_minor = 2500
         self.policy.save()
@@ -172,6 +184,68 @@ class DecisionTests(ApiTestBase):
         self.assertNotIn("678.90", serialized)
         for reason in body["reasons"]:
             self.assertFalse(any(char.isdigit() for char in reason["message"]))
+
+
+class WindowRuleTests(ApiTestBase):
+    def prior_request(self, *, status, decision):
+        return SpendRequest.objects.create(
+            organization=self.organization,
+            agent=self.agent,
+            policy=self.policy,
+            policy_version=self.policy.version,
+            amount_minor=1_000,
+            currency="USD",
+            merchant_ref="acme.com",
+            decision=decision,
+            status=status,
+        )
+
+    def test_velocity_limit_escalates_after_the_configured_count(self):
+        self.policy.velocity_max_count = 2
+        self.policy.save()
+        self.assertEqual(self.post().json()["decision"], "allow")
+        self.assertEqual(self.post().json()["decision"], "allow")
+        body = self.post().json()
+        self.assertEqual(body["decision"], "needs_approval")
+        self.assertIn("R08_VELOCITY", body["matched_rules"])
+
+    def test_velocity_ignores_denied_and_pending_requests(self):
+        self.policy.velocity_max_count = 1
+        self.policy.save()
+        self.prior_request(
+            status=SpendRequest.Status.DENIED,
+            decision=SpendRequest.Decision.DENY,
+        )
+        self.prior_request(
+            status=SpendRequest.Status.PENDING_APPROVAL,
+            decision=SpendRequest.Decision.NEEDS_APPROVAL,
+        )
+        self.assertEqual(self.post().json()["decision"], "allow")
+
+    def test_merchant_window_escalates_above_the_cap(self):
+        self.policy.merchant_window_cap_minor = 2_500
+        self.policy.save()
+        self.assertEqual(self.post().json()["decision"], "allow")
+        self.assertEqual(self.post().json()["decision"], "allow")
+        body = self.post().json()
+        self.assertEqual(body["decision"], "needs_approval")
+        self.assertIn("R09_MERCHANT_WINDOW", body["matched_rules"])
+
+    def test_merchant_window_allows_exactly_the_cap(self):
+        self.policy.merchant_window_cap_minor = 2_000
+        self.policy.save()
+        self.assertEqual(self.post().json()["decision"], "allow")
+        self.assertEqual(self.post().json()["decision"], "allow")
+
+    def test_velocity_window_expires(self):
+        self.policy.velocity_max_count = 1
+        self.policy.save()
+        first = self.post().json()
+        self.assertEqual(first["decision"], "allow")
+        SpendRequest.objects.filter(pk=first["id"]).update(
+            created_at=timezone.now() - timedelta(hours=2)
+        )
+        self.assertEqual(self.post().json()["decision"], "allow")
 
 
 class DetailTests(ApiTestBase):

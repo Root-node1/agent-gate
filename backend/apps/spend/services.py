@@ -3,7 +3,7 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 import engine
@@ -11,7 +11,7 @@ from apps.agents.models import Agent
 from apps.audit.models import AuditEvent
 from apps.common.currency import normalize_currency
 from apps.common.money import to_major, to_minor
-from apps.payees.models import fingerprint, normalize_destination
+from apps.payees.models import Payee, fingerprint, normalize_destination
 from apps.policies.models import MerchantRule, Policy
 
 from .idempotency import request_hash
@@ -61,7 +61,10 @@ def build_limits(policy: Policy) -> engine.PolicyLimits:
         per_transaction_cap=to_major(policy.per_transaction_cap_minor, policy.currency),
         approval_threshold=to_major(policy.approval_threshold_minor, policy.currency),
         daily_budget=to_major(policy.daily_budget_minor, policy.currency),
+        weekly_budget=to_major(policy.weekly_budget_minor, policy.currency),
         monthly_budget=to_major(policy.monthly_budget_minor, policy.currency),
+        merchant_window_cap=to_major(policy.merchant_window_cap_minor, policy.currency),
+        velocity_max_count=policy.velocity_max_count,
         allowed_merchants=frozenset(
             r.merchant_ref for r in merchant_rules if r.kind == MerchantRule.Kind.ALLOW
         ),
@@ -84,6 +87,42 @@ def counted_spend(agent, currency: str, since) -> Decimal:
         or 0
     )
     return to_major(total, currency)
+
+
+def window_usage(agent, currency: str, merchant_ref: str, since) -> tuple[int, Decimal]:
+    """Return budget-consuming request count and merchant spend since a cutoff."""
+    usage = SpendRequest.objects.filter(
+        agent=agent,
+        currency=currency,
+        status__in=SpendRequest.BUDGET_STATUSES,
+        created_at__gte=since,
+    ).aggregate(
+        velocity_count=Count("id"),
+        merchant_total=Sum("amount_minor", filter=Q(merchant_ref=merchant_ref)),
+    )
+    return usage["velocity_count"] or 0, to_major(usage["merchant_total"] or 0, currency)
+
+
+def build_spent(agent, policy: Policy, currency: str, merchant_ref: str, now=None) -> engine.Spent:
+    """Collect the budget and window usage used by both submission and recheck."""
+    now = now or timezone.now()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = day_start - timezone.timedelta(days=day_start.weekday())
+    month_start = day_start.replace(day=1)
+    velocity_count = 0
+    merchant_window_spend = Decimal("0")
+    if policy.velocity_max_count or policy.merchant_window_cap_minor:
+        window_start = now - timezone.timedelta(seconds=policy.velocity_window_seconds)
+        velocity_count, merchant_window_spend = window_usage(
+            agent, currency, merchant_ref, window_start
+        )
+    return engine.Spent(
+        today=counted_spend(agent, currency, day_start),
+        this_week=counted_spend(agent, currency, week_start),
+        this_month=counted_spend(agent, currency, month_start),
+        velocity_count=velocity_count,
+        merchant_window_spend=merchant_window_spend,
+    )
 
 
 @transaction.atomic
@@ -138,12 +177,7 @@ def submit_spend_request(
         raise PolicyMissing(f"Agent {agent} has no policy.")
 
     now = timezone.now()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    month_start = day_start.replace(day=1)
-    spent = engine.Spent(
-        today=counted_spend(agent, currency, day_start),
-        this_month=counted_spend(agent, currency, month_start),
-    )
+    spent = build_spent(agent, policy, currency, merchant_ref, now)
 
     decision = engine.evaluate(
         engine.SpendInput(
@@ -183,6 +217,31 @@ def submit_spend_request(
         matched_rules=decision.matched_rules,
         decided_at=now,
     )
+
+    if destination_type and decision.outcome != engine.DENY:
+        defaults = {
+            "destination_type": destination_type,
+            "destination_value": destination_value,
+            "destination_fingerprint": destination_fingerprint,
+        }
+        payee, created = Payee.objects.get_or_create(
+            organization=agent.organization,
+            merchant_ref=merchant_ref,
+            defaults=defaults,
+        )
+        if not created and payee.destination_fingerprint != destination_fingerprint:
+            for field, value in defaults.items():
+                setattr(payee, field, value)
+            payee.last_changed_at = now
+            payee.save(
+                update_fields=[
+                    "destination_type",
+                    "destination_value",
+                    "destination_fingerprint",
+                    "last_changed_at",
+                    "updated_at",
+                ]
+            )
 
     AuditEvent.record(
         AuditEvent.EventType.REQUEST_RECEIVED,

@@ -29,6 +29,7 @@ class CreateAgentCommandTests(TestCase):
         agent = Agent.objects.get(name="bot")
         policy = Policy.objects.get(agent=agent)
         self.assertEqual(policy.per_transaction_cap_minor, 8000)
+        self.assertEqual(policy.weekly_budget_minor, 200_000)
         rules = {r.merchant_ref: r.kind for r in policy.merchant_rules.all()}
         self.assertEqual(rules, {"acme.com": "allow", "evil.com": "block"})
         raw_key = next(line.split(": ")[-1] for line in out.getvalue().splitlines() if "agk_" in line)
@@ -40,9 +41,11 @@ class CreateAgentCommandTests(TestCase):
         self.assertFalse(Agent.objects.exists())
 
     def test_negative_budget_is_rejected(self):
-        with self.assertRaises(CommandError):
-            call_command("create_agent", "bot", "--daily", "-100", stdout=StringIO())
-        self.assertFalse(Agent.objects.exists())
+        for flag in ("--daily", "--weekly", "--monthly"):
+            with self.subTest(flag=flag):
+                with self.assertRaises(CommandError):
+                    call_command("create_agent", "bot", flag, "-100", stdout=StringIO())
+                self.assertFalse(Agent.objects.exists())
 
     def test_invalid_currency_is_rejected(self):
         with self.assertRaises(CommandError):
@@ -57,6 +60,10 @@ class CreateAgentCommandTests(TestCase):
     def test_currency_is_stored_uppercase(self):
         call_command("create_agent", "bot", "--currency", "usd", stdout=StringIO())
         self.assertEqual(Policy.objects.get().currency, "USD")
+
+    def test_weekly_budget_can_be_overridden(self):
+        call_command("create_agent", "bot", "--weekly", "1500", stdout=StringIO())
+        self.assertEqual(Policy.objects.get().weekly_budget_minor, 150_000)
 
 
 class SeedDemoCommandTests(TestCase):

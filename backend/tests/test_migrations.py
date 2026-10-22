@@ -94,6 +94,7 @@ class LegacyBackfillMigrationTests(PostgresTransactionTestCase):
         self.assertEqual(policy.currency, "JPY")
         self.assertEqual(policy.per_transaction_cap_minor, 500)
         self.assertEqual(policy.daily_budget_minor, 1000)
+        self.assertEqual(policy.weekly_budget_minor, 200_000)
         self.assertEqual(policy.monthly_budget_minor, 5000)
 
         rule = MerchantRule.objects.get(policy=policy)

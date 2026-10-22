@@ -30,12 +30,20 @@ class AttackCorpusTests(APITestCase):
                 Decimal(overrides.get("approval_threshold", "50.00")), "USD"
             ),
             "daily_budget_minor": to_minor(Decimal(overrides.get("daily_budget", "500.00")), "USD"),
+            "weekly_budget_minor": to_minor(
+                Decimal(overrides.get("weekly_budget", "5000.00")), "USD"
+            ),
             "monthly_budget_minor": to_minor(
                 Decimal(overrides.get("monthly_budget", "5000.00")), "USD"
             ),
             "merchant_mode": overrides.get("merchant_mode", Policy.MerchantMode.BLOCKLIST),
             "untrusted_source_action": overrides.get(
                 "untrusted_source_action", Policy.UntrustedSourceAction.NEEDS_APPROVAL
+            ),
+            "velocity_max_count": int(overrides.get("velocity_max_count", 0)),
+            "velocity_window_seconds": int(overrides.get("velocity_window_seconds", 3_600)),
+            "merchant_window_cap_minor": to_minor(
+                Decimal(overrides.get("merchant_window_cap", "0")), "USD"
             ),
         }
         return Policy.objects.create(agent=agent, **values)

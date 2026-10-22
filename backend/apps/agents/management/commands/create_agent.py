@@ -24,6 +24,7 @@ class Command(BaseCommand):
         parser.add_argument("--cap", default="100.00", help="Per-transaction cap")
         parser.add_argument("--threshold", default="50.00", help="Amount above which a human must approve")
         parser.add_argument("--daily", default="500.00", help="Daily budget")
+        parser.add_argument("--weekly", default="2000.00", help="Weekly budget")
         parser.add_argument("--monthly", default="5000.00", help="Monthly budget")
         parser.add_argument("--allow", action="append", default=[], help="Allowed merchant (repeatable)")
         parser.add_argument("--block", action="append", default=[], help="Blocked merchant (repeatable)")
@@ -44,10 +45,19 @@ class Command(BaseCommand):
             cap = Decimal(options["cap"])
             threshold = Decimal(options["threshold"])
             daily = Decimal(options["daily"])
+            weekly = Decimal(options["weekly"])
             monthly = Decimal(options["monthly"])
         except InvalidOperation:
-            raise CommandError("--cap, --threshold, --daily and --monthly must be numbers.") from None
-        for label, value in (("--cap", cap), ("--threshold", threshold), ("--daily", daily), ("--monthly", monthly)):
+            raise CommandError(
+                "--cap, --threshold, --daily, --weekly and --monthly must be numbers."
+            ) from None
+        for label, value in (
+            ("--cap", cap),
+            ("--threshold", threshold),
+            ("--daily", daily),
+            ("--weekly", weekly),
+            ("--monthly", monthly),
+        ):
             if value < 0:
                 raise CommandError(f"{label} must not be negative.")
         if threshold > cap:
@@ -67,6 +77,7 @@ class Command(BaseCommand):
             per_transaction_cap_minor=to_minor(cap, currency),
             approval_threshold_minor=to_minor(threshold, currency),
             daily_budget_minor=to_minor(daily, currency),
+            weekly_budget_minor=to_minor(weekly, currency),
             monthly_budget_minor=to_minor(monthly, currency),
         )
         for merchant in sorted(allowed):

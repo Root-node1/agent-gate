@@ -13,9 +13,12 @@ class PolicyLimits:
     approval_threshold: Decimal
     daily_budget: Decimal
     monthly_budget: Decimal
+    weekly_budget: Decimal | None = None
     allowed_merchants: frozenset[str] = frozenset()
     blocked_merchants: frozenset[str] = frozenset()
     untrusted_source_action: str = "needs_approval"
+    velocity_max_count: int = 0
+    merchant_window_cap: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -33,10 +36,13 @@ class SpendInput:
 
 @dataclass(frozen=True)
 class Spent:
-    """Money already counted against the same policy currency."""
+    """Prior usage counted against the same policy currency and merchant."""
 
     today: Decimal
     this_month: Decimal
+    this_week: Decimal = Decimal("0")
+    velocity_count: int = 0
+    merchant_window_spend: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)

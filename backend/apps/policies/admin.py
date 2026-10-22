@@ -10,7 +10,15 @@ class MerchantRuleInline(admin.TabularInline):
 
 @admin.register(Policy)
 class PolicyAdmin(admin.ModelAdmin):
-    list_display = ("agent", "version", "currency", "per_transaction_cap_minor", "daily_budget_minor", "monthly_budget_minor")
+    list_display = (
+        "agent",
+        "version",
+        "currency",
+        "per_transaction_cap_minor",
+        "daily_budget_minor",
+        "weekly_budget_minor",
+        "monthly_budget_minor",
+    )
     list_filter = ("currency", "merchant_mode")
     inlines = [MerchantRuleInline]
 

@@ -66,6 +66,21 @@ def evaluate_context(context: EvaluationContext) -> Decision:
         deny("R06_DAILY_BUDGET", "The request would exceed the daily budget.")
     if spent.this_month + spend.amount > limits.monthly_budget:
         deny("R07_MONTHLY_BUDGET", "The request would exceed the monthly budget.")
+    if limits.weekly_budget is not None and spent.this_week + spend.amount > limits.weekly_budget:
+        deny("R16_WEEKLY_BUDGET", "The request would exceed the weekly budget.")
+    if (
+        limits.velocity_max_count > 0
+        and spent.velocity_count >= limits.velocity_max_count
+    ):
+        needs_approval("R08_VELOCITY", "The recent request rate exceeds the policy limit.")
+    if (
+        limits.merchant_window_cap > 0
+        and spent.merchant_window_spend + spend.amount > limits.merchant_window_cap
+    ):
+        needs_approval(
+            "R09_MERCHANT_WINDOW",
+            "Recent spending with this merchant exceeds the policy limit.",
+        )
     if spend.amount >= limits.approval_threshold:
         needs_approval("R10_APPROVAL_THRESHOLD", "The amount requires human approval.")
 

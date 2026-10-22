@@ -98,6 +98,15 @@ class PolicyTests(TestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             Policy.objects.filter(pk=policy.pk).update(injection_escalate_threshold=101)
 
+    def test_velocity_window_must_be_positive(self):
+        agent, _ = make_agent("window")
+        policy = Policy(agent=agent, velocity_window_seconds=0)
+        with self.assertRaises(ValidationError):
+            policy.full_clean()
+        policy = Policy.objects.create(agent=agent)
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Policy.objects.filter(pk=policy.pk).update(velocity_window_seconds=0)
+
     def test_invalid_timezone_is_rejected(self):
         agent, _ = make_agent("tz")
         with self.assertRaises(ValidationError):

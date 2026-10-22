@@ -21,6 +21,7 @@ def make_limits(**overrides):
         "per_transaction_cap": Decimal("100"),
         "approval_threshold": Decimal("50"),
         "daily_budget": Decimal("500"),
+        "weekly_budget": Decimal("2000"),
         "monthly_budget": Decimal("5000"),
     }
     values.update(overrides)
@@ -112,6 +113,17 @@ class DenyTests(TestCase):
         self.assertEqual(decision.outcome, DENY)
         self.assertIn("R07_MONTHLY_BUDGET", decision.matched_rules)
 
+    def test_over_weekly_budget(self):
+        spent = Spent(today=Decimal("0"), this_month=Decimal("0"), this_week=Decimal("1990"))
+        decision = evaluate(make_spend(amount=Decimal("20")), make_limits(), spent)
+        self.assertEqual(decision.outcome, DENY)
+        self.assertIn("R16_WEEKLY_BUDGET", decision.matched_rules)
+
+    def test_exactly_at_weekly_budget_is_allowed(self):
+        spent = Spent(today=Decimal("0"), this_month=Decimal("0"), this_week=Decimal("1980"))
+        decision = evaluate(make_spend(amount=Decimal("20")), make_limits(), spent)
+        self.assertEqual(decision.outcome, ALLOW)
+
     def test_suspended_agent_is_denied(self):
         decision = evaluate(make_spend(agent_active=False), make_limits(), NOTHING_SPENT)
         self.assertEqual(decision.outcome, DENY)
@@ -192,6 +204,88 @@ class DenyTests(TestCase):
             NOTHING_SPENT,
         )
         self.assertEqual(decision.outcome, ALLOW)
+
+
+class WindowRuleTests(TestCase):
+    def usage(self, *, velocity_count=0, merchant_window_spend=Decimal("0")):
+        return Spent(
+            today=Decimal("0"),
+            this_month=Decimal("0"),
+            velocity_count=velocity_count,
+            merchant_window_spend=merchant_window_spend,
+        )
+
+    def test_velocity_disabled_at_zero(self):
+        limits = make_limits(velocity_max_count=0)
+        decision = evaluate(make_spend(), limits, self.usage(velocity_count=100))
+        self.assertEqual(decision.outcome, ALLOW)
+
+    def test_velocity_below_limit_is_allowed(self):
+        limits = make_limits(velocity_max_count=3)
+        decision = evaluate(make_spend(), limits, self.usage(velocity_count=2))
+        self.assertEqual(decision.outcome, ALLOW)
+
+    def test_velocity_at_limit_escalates(self):
+        limits = make_limits(velocity_max_count=3)
+        decision = evaluate(make_spend(), limits, self.usage(velocity_count=3))
+        self.assertEqual(decision.outcome, NEEDS_APPROVAL)
+        self.assertIn("R08_VELOCITY", decision.matched_rules)
+
+    def test_velocity_over_limit_escalates(self):
+        limits = make_limits(velocity_max_count=3)
+        decision = evaluate(make_spend(), limits, self.usage(velocity_count=4))
+        self.assertEqual(decision.outcome, NEEDS_APPROVAL)
+        self.assertIn("R08_VELOCITY", decision.matched_rules)
+
+    def test_merchant_window_disabled_at_zero(self):
+        limits = make_limits(merchant_window_cap=Decimal("0"))
+        decision = evaluate(
+            make_spend(), limits, self.usage(merchant_window_spend=Decimal("1000"))
+        )
+        self.assertEqual(decision.outcome, ALLOW)
+
+    def test_merchant_window_at_cap_is_allowed(self):
+        limits = make_limits(merchant_window_cap=Decimal("100"))
+        decision = evaluate(
+            make_spend(amount=Decimal("10")),
+            limits,
+            self.usage(merchant_window_spend=Decimal("90")),
+        )
+        self.assertEqual(decision.outcome, ALLOW)
+
+    def test_merchant_window_above_cap_escalates(self):
+        limits = make_limits(merchant_window_cap=Decimal("100"))
+        decision = evaluate(
+            make_spend(amount=Decimal("10")),
+            limits,
+            self.usage(merchant_window_spend=Decimal("91")),
+        )
+        self.assertEqual(decision.outcome, NEEDS_APPROVAL)
+        self.assertIn("R09_MERCHANT_WINDOW", decision.matched_rules)
+
+    def test_both_window_rules_are_reported(self):
+        limits = make_limits(
+            velocity_max_count=1,
+            merchant_window_cap=Decimal("100"),
+        )
+        decision = evaluate(
+            make_spend(amount=Decimal("10")),
+            limits,
+            self.usage(velocity_count=1, merchant_window_spend=Decimal("95")),
+        )
+        self.assertEqual(decision.outcome, NEEDS_APPROVAL)
+        self.assertIn("R08_VELOCITY", decision.matched_rules)
+        self.assertIn("R09_MERCHANT_WINDOW", decision.matched_rules)
+
+    def test_hard_deny_beats_window_escalation(self):
+        limits = make_limits(
+            blocked_merchants=frozenset({"acme.com"}),
+            velocity_max_count=1,
+        )
+        decision = evaluate(make_spend(), limits, self.usage(velocity_count=1))
+        self.assertEqual(decision.outcome, DENY)
+        self.assertIn("R03_MERCHANT_BLOCK", decision.matched_rules)
+        self.assertIn("R08_VELOCITY", decision.matched_rules)
 
 
 class ApprovalTests(TestCase):

@@ -92,6 +92,21 @@ cases:
       decision: deny
       rules_all: [R07_MONTHLY_BUDGET]
 
+  - id: over-weekly-budget
+    description: This week's approved spend counts against the weekly budget.
+    request:
+      amount: "20.00"
+      merchant: acme.com
+      source: trusted
+    policy:
+      daily_budget: "5000.00"
+      weekly_budget: "2500.00"
+      monthly_budget: "5000.00"
+    prior_approved_spend: ["2490.00"]
+    expect:
+      decision: deny
+      rules_all: [R16_WEEKLY_BUDGET]
+
   - id: at-approval-threshold
     description: A payment at the approval threshold needs a human.
     request:
@@ -103,6 +118,34 @@ cases:
     expect:
       decision: needs_approval
       rules_all: [R10_APPROVAL_THRESHOLD]
+
+  - id: velocity-limit
+    description: More request volume than the policy window allows needs a human.
+    request:
+      amount: "10.00"
+      merchant: acme.com
+      source: trusted
+    policy:
+      velocity_max_count: 2
+      velocity_window_seconds: 3600
+    prior_approved_spend: ["10.00", "10.00"]
+    expect:
+      decision: needs_approval
+      rules_all: [R08_VELOCITY]
+
+  - id: merchant-window-cap
+    description: Spending above the merchant window cap needs a human.
+    request:
+      amount: "10.00"
+      merchant: acme.com
+      source: trusted
+    policy:
+      merchant_window_cap: "25.00"
+      velocity_window_seconds: 3600
+    prior_approved_spend: ["20.00"]
+    expect:
+      decision: needs_approval
+      rules_all: [R09_MERCHANT_WINDOW]
 
   - id: currency-mismatch
     description: A request in a different currency is denied, not converted.

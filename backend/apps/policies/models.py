@@ -32,6 +32,7 @@ class Policy(models.Model):
 
     per_transaction_cap_minor = models.PositiveBigIntegerField(default=10_000, validators=MONEY_VALIDATORS)
     daily_budget_minor = models.PositiveBigIntegerField(default=50_000, validators=MONEY_VALIDATORS)
+    weekly_budget_minor = models.PositiveBigIntegerField(default=200_000, validators=MONEY_VALIDATORS)
     monthly_budget_minor = models.PositiveBigIntegerField(default=500_000, validators=MONEY_VALIDATORS)
     approval_threshold_minor = models.PositiveBigIntegerField(default=5_000, validators=MONEY_VALIDATORS)
 
@@ -39,7 +40,9 @@ class Policy(models.Model):
         max_length=20, choices=MerchantMode.choices, default=MerchantMode.BLOCKLIST
     )
     velocity_max_count = models.PositiveIntegerField(default=0)
-    velocity_window_seconds = models.PositiveIntegerField(default=3_600)
+    velocity_window_seconds = models.PositiveIntegerField(
+        default=3_600, validators=[MinValueValidator(1)]
+    )
     merchant_window_cap_minor = models.PositiveBigIntegerField(default=0)
     new_payee_cooldown_hours = models.PositiveIntegerField(default=0)
     untrusted_source_action = models.CharField(
@@ -69,6 +72,10 @@ class Policy(models.Model):
                 condition=Q(injection_escalate_threshold__gte=0)
                 & Q(injection_escalate_threshold__lte=100),
                 name="policy_injection_threshold_range",
+            ),
+            models.CheckConstraint(
+                condition=Q(velocity_window_seconds__gte=1),
+                name="policy_velocity_window_positive",
             ),
         ]
         indexes = [models.Index(fields=["organization", "agent"], name="policy_org_agent_idx")]

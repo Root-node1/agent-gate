@@ -6,6 +6,7 @@ from django.test import TestCase
 
 from apps.agents.keys import hash_key
 from apps.agents.models import Agent
+from apps.audit.models import AuditEvent
 from apps.policies.models import Policy
 
 
@@ -56,3 +57,18 @@ class CreateAgentCommandTests(TestCase):
     def test_currency_is_stored_uppercase(self):
         call_command("create_agent", "bot", "--currency", "usd", stdout=StringIO())
         self.assertEqual(Policy.objects.get().currency, "USD")
+
+
+class SeedDemoCommandTests(TestCase):
+    def test_reset_suspends_the_old_agent_and_keeps_history(self):
+        call_command("seed_demo", stdout=StringIO())
+        first = Agent.objects.get()
+        call_command("seed_demo", stdout=StringIO())
+
+        first.refresh_from_db()
+        self.assertEqual(first.status, Agent.Status.SUSPENDED)
+        self.assertEqual(Agent.objects.filter(status=Agent.Status.ACTIVE).count(), 1)
+        self.assertEqual(Policy.objects.count(), 2)
+        self.assertEqual(AuditEvent.objects.filter(event_type=AuditEvent.EventType.DEMO_RESET).count(), 2)
+        latest = AuditEvent.objects.filter(event_type=AuditEvent.EventType.DEMO_RESET).first()
+        self.assertEqual(latest.payload["previous_agent_id"], str(first.pk))

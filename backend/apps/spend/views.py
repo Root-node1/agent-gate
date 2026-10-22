@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
+from apps.agents.authentication import AgentKeyAuthentication
 from apps.agents.throttling import AgentKeyRateThrottle
 
 from . import services
@@ -14,6 +15,7 @@ from .serializers import SpendRequestCreateSerializer, SpendRequestSerializer
 
 
 class SpendRequestCreateView(APIView):
+    authentication_classes = [AgentKeyAuthentication]
     throttle_classes = [AgentKeyRateThrottle, AnonRateThrottle]
 
     @extend_schema(
@@ -60,6 +62,7 @@ class SpendRequestCreateView(APIView):
 
 
 class SpendRequestDetailView(APIView):
+    authentication_classes = [AgentKeyAuthentication]
     throttle_classes = [AgentKeyRateThrottle, AnonRateThrottle]
 
     @extend_schema(responses={200: SpendRequestSerializer}, summary="Get a spend request")

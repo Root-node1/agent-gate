@@ -144,7 +144,10 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    "DEFAULT_AUTHENTICATION_CLASSES": ["apps.agents.authentication.AgentKeyAuthentication"],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "apps.agents.authentication.AgentKeyAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "NUM_PROXIES": TRUSTED_PROXY_COUNT,

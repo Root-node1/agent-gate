@@ -6,25 +6,21 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+import engine
+from apps.agents.models import Agent
 from apps.audit.models import AuditEvent
 from apps.common.currency import normalize_currency
 from apps.common.money import to_major, to_minor
+from apps.payees.models import fingerprint, normalize_destination
 from apps.policies.models import MerchantRule, Policy
-from gate import rules
 
+from .idempotency import request_hash
 from .models import SpendRequest
 
-UNTRUSTED_SOURCES = {
-    SpendRequest.SourceType.WEB_PAGE,
-    SpendRequest.SourceType.EMAIL,
-    SpendRequest.SourceType.INVOICE,
-    SpendRequest.SourceType.TOOL_OUTPUT,
-}
-
 OUTCOME_STATUS = {
-    rules.ALLOW: SpendRequest.Status.APPROVED,
-    rules.DENY: SpendRequest.Status.DENIED,
-    rules.NEEDS_APPROVAL: SpendRequest.Status.PENDING_APPROVAL,
+    engine.ALLOW: SpendRequest.Status.APPROVED,
+    engine.DENY: SpendRequest.Status.DENIED,
+    engine.NEEDS_APPROVAL: SpendRequest.Status.PENDING_APPROVAL,
 }
 
 
@@ -32,28 +28,31 @@ class PolicyMissing(Exception):
     """The agent has no policy, so nothing can be decided."""
 
 
+class IdempotencyConflict(Exception):
+    """The same key was reused with a different request body."""
+
+
 def rule_source(source_type: str) -> str:
     """Map the stored provenance to the engine's three-level trust model."""
     if source_type == SpendRequest.SourceType.TRUSTED:
-        return rules.SOURCE_TRUSTED
+        return engine.SOURCE_TRUSTED
     if source_type == SpendRequest.SourceType.UNKNOWN:
-        return rules.SOURCE_UNKNOWN
-    return rules.SOURCE_UNTRUSTED
+        return engine.SOURCE_UNKNOWN
+    return engine.SOURCE_UNTRUSTED
 
 
 def current_policy(agent) -> Policy | None:
-    """Return the newest policy version for an agent, or None when unset."""
-    return (
-        Policy.objects.select_for_update()
-        .filter(agent=agent)
-        .order_by("-version")
-        .first()
-    )
+    """Return the newest policy version for an agent, or None when unset.
+
+    The caller holds the agent row lock, which serializes policy reads and budget
+    accounting for that agent.
+    """
+    return Policy.objects.filter(agent=agent).order_by("-version").first()
 
 
-def build_limits(policy: Policy) -> rules.PolicyLimits:
+def build_limits(policy: Policy) -> engine.PolicyLimits:
     merchant_rules = list(policy.merchant_rules.all())
-    return rules.PolicyLimits(
+    return engine.PolicyLimits(
         currency=policy.currency,
         per_transaction_cap=to_major(policy.per_transaction_cap_minor, policy.currency),
         approval_threshold=to_major(policy.approval_threshold_minor, policy.currency),
@@ -65,6 +64,7 @@ def build_limits(policy: Policy) -> rules.PolicyLimits:
         blocked_merchants=frozenset(
             r.merchant_ref for r in merchant_rules if r.kind == MerchantRule.Kind.BLOCK
         ),
+        untrusted_source_action=policy.untrusted_source_action,
     )
 
 
@@ -90,34 +90,66 @@ def submit_spend_request(
     currency: str,
     merchant: str,
     purpose: str = "",
-    source_type: str = SpendRequest.SourceType.UNKNOWN,
+    source_type: str = SpendRequest.SourceType.UNTRUSTED,
     source_ref: str = "",
     evidence_excerpt: str = "",
+    destination_type: str = "",
+    destination_value: str = "",
     idempotency_key: str | None = None,
-    request_hash: str = "",
 ):
+    agent = Agent.objects.select_for_update().get(pk=agent.pk)
+
+    currency = normalize_currency(currency)
+    amount_minor = to_minor(amount, currency)
+    merchant_ref = engine.normalize_merchant(merchant)
+    if destination_type:
+        destination_value = normalize_destination(destination_type, destination_value)
+        destination_fingerprint = fingerprint(destination_type, destination_value)
+    else:
+        destination_value = ""
+        destination_fingerprint = ""
+
+    body_hash = request_hash(
+        amount_minor=amount_minor,
+        currency=currency,
+        merchant_ref=merchant_ref,
+        purpose=purpose,
+        source_type=source_type,
+        source_ref=source_ref,
+        evidence_excerpt=evidence_excerpt,
+        destination_type=destination_type,
+        destination_value=destination_value,
+    )
+    if idempotency_key:
+        existing = SpendRequest.objects.filter(
+            agent=agent, idempotency_key=idempotency_key
+        ).first()
+        if existing is not None:
+            if existing.request_hash != body_hash:
+                raise IdempotencyConflict("Idempotency-Key was reused with a different request.")
+            return existing, True
+
     policy = current_policy(agent)
     if policy is None:
         raise PolicyMissing(f"Agent {agent} has no policy.")
 
-    currency = normalize_currency(currency)
-    amount_minor = to_minor(amount, currency)
-    merchant_ref = rules.normalize_merchant(merchant)
-
     now = timezone.now()
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     month_start = day_start.replace(day=1)
-    spent = rules.Spent(
+    spent = engine.Spent(
         today=counted_spend(agent, currency, day_start),
         this_month=counted_spend(agent, currency, month_start),
     )
 
-    decision = rules.evaluate(
-        rules.SpendInput(
+    decision = engine.evaluate(
+        engine.SpendInput(
             amount=amount,
             currency=currency,
             merchant=merchant_ref,
             source=rule_source(source_type),
+            purpose=purpose,
+            evidence_excerpt=evidence_excerpt,
+            agent_active=agent.status == Agent.Status.ACTIVE,
         ),
         build_limits(policy),
         spent,
@@ -129,10 +161,13 @@ def submit_spend_request(
         policy=policy,
         policy_version=policy.version,
         idempotency_key=idempotency_key,
-        request_hash=request_hash,
+        request_hash=body_hash,
         amount_minor=amount_minor,
         currency=currency,
         merchant_ref=merchant_ref,
+        destination_type=destination_type,
+        destination_value=destination_value,
+        destination_fingerprint=destination_fingerprint,
         purpose=purpose,
         source_type=source_type,
         source_ref=source_ref,
@@ -167,7 +202,7 @@ def submit_spend_request(
         rules=decision.matched_rules,
     )
 
-    if decision.outcome == rules.NEEDS_APPROVAL:
+    if decision.outcome == engine.NEEDS_APPROVAL:
         from apps.approvals.models import Approval
 
         Approval.objects.create(
@@ -184,4 +219,4 @@ def submit_spend_request(
             actor_type=AuditEvent.ActorType.SYSTEM,
         )
 
-    return spend_request
+    return spend_request, False

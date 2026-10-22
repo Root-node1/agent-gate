@@ -16,6 +16,7 @@ class SpendRequest(models.Model):
 
     class SourceType(models.TextChoices):
         TRUSTED = "trusted", "Trusted (operator or user)"
+        UNTRUSTED = "untrusted", "Untrusted"
         WEB_PAGE = "web_page", "Web page"
         EMAIL = "email", "Email"
         INVOICE = "invoice", "Invoice"
@@ -59,7 +60,7 @@ class SpendRequest(models.Model):
     destination_fingerprint = models.CharField(max_length=64, blank=True)
 
     purpose = models.CharField(max_length=2_000, blank=True)
-    source_type = models.CharField(max_length=20, choices=SourceType.choices, default=SourceType.UNKNOWN)
+    source_type = models.CharField(max_length=20, choices=SourceType.choices, default=SourceType.UNTRUSTED)
     source_ref = models.CharField(max_length=500, blank=True)
     evidence_excerpt = models.CharField(max_length=4_096, blank=True)
     evidence_hash = models.CharField(max_length=64, blank=True)

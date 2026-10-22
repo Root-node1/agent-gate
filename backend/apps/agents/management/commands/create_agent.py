@@ -9,6 +9,7 @@ from apps.audit.models import AuditEvent
 from apps.common.currency import normalize_currency
 from apps.common.money import to_minor
 from apps.policies.models import MerchantRule, Policy
+from engine import normalize_merchant
 
 from ...models import Agent
 
@@ -29,8 +30,6 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        from gate.rules import normalize_merchant
-
         organization, _ = Organization.objects.get_or_create(name=options["org"])
         name = options["name"]
         if Agent.objects.filter(organization=organization, name=name).exists():

@@ -4,14 +4,9 @@ from rest_framework import serializers
 
 from apps.common.currency import normalize_currency
 from apps.common.money import to_major
+from apps.payees.models import DestinationType, normalize_destination
 
 from .models import SpendRequest
-
-SOURCE_CHOICES = [
-    *SpendRequest.SourceType.choices,
-    ("untrusted", "Untrusted (legacy alias)"),
-]
-LEGACY_SOURCE_ALIASES = {"untrusted": SpendRequest.SourceType.WEB_PAGE}
 
 
 class SpendRequestCreateSerializer(serializers.Serializer):
@@ -22,12 +17,29 @@ class SpendRequestCreateSerializer(serializers.Serializer):
     merchant = serializers.CharField(max_length=255)
     purpose = serializers.CharField(required=False, allow_blank=True, default="", max_length=2_000)
     source = serializers.ChoiceField(
-        choices=SOURCE_CHOICES,
+        choices=SpendRequest.SourceType.choices,
         source="source_type",
-        default=SpendRequest.SourceType.UNKNOWN,
+        default=SpendRequest.SourceType.UNTRUSTED,
     )
     source_ref = serializers.CharField(required=False, allow_blank=True, default="", max_length=500)
     evidence_excerpt = serializers.CharField(required=False, allow_blank=True, default="", max_length=4_096)
+    destination_type = serializers.ChoiceField(
+        choices=DestinationType.choices, required=False, allow_blank=True, default=""
+    )
+    destination_value = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=500
+    )
+
+    def validate(self, attrs):
+        destination_type = attrs.get("destination_type", "")
+        destination_value = attrs.get("destination_value", "")
+        if bool(destination_type) != bool(destination_value):
+            raise serializers.ValidationError(
+                {"destination_value": "Destination type and value must be provided together."}
+            )
+        if destination_type:
+            attrs["destination_value"] = normalize_destination(destination_type, destination_value)
+        return attrs
 
     def to_internal_value(self, data):
         unknown = set(data) - set(self.fields)
@@ -39,9 +51,6 @@ class SpendRequestCreateSerializer(serializers.Serializer):
 
     def validate_currency(self, value: str) -> str:
         return normalize_currency(value)
-
-    def validate_source(self, value: str) -> str:
-        return LEGACY_SOURCE_ALIASES.get(value, value)
 
 
 class SpendRequestSerializer(serializers.ModelSerializer):

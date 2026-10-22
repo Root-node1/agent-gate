@@ -59,7 +59,7 @@ TODO: replace with what is actually built. Planned:
 ## How AI is used
 
 - `python manage.py seed_demo` creates a fresh demo agent, its policy and key, and appends a `demo.reset` audit event. Previous demo agents are suspended, never deleted.
-- A prompt-injection classifier that scores requests is planned (advisory only; spending rules never depend on the model). Deterministic override phrases are already denied by `R14_INJECTION_PATTERN`.
+- `R14_INJECTION_PATTERN` is a deterministic phrase backstop, not an injection detector. It normalizes common Unicode and whitespace evasions and denies known override phrases, but paraphrases can still get through. An advisory classifier that scores requests is planned; spending rules never depend on the model.
 
 ## Sponsor tools
 
@@ -91,6 +91,8 @@ cp backend/.env.example backend/.env
 ```
 
 Then set `DJANGO_SECRET_KEY` to your own random value. Never commit `.env`. PayPal sandbox credentials go in this file when the integration lands.
+
+Set `TRUSTED_PROXY_COUNT` to the number of reverse proxies in front of Django (`0` direct, `1` Caddy only, `2` CDN plus Caddy) so throttling sees the real client address. Anonymous throttling is configured for future public endpoints; the current API has none.
 
 Settings are split by environment: `config.settings.dev` (local), `config.settings.test` (tests), and `config.settings.prod` (Contabo). Production requires `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, and a PostgreSQL 17 `DATABASE_URL`; use the direct Neon URL for migrations and the worker. Run `python manage.py createcachetable` once in production for the database-backed throttle cache. Deployment and reset procedures are in [backend/OPERATIONS.md](backend/OPERATIONS.md).
 

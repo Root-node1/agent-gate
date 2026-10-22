@@ -96,6 +96,19 @@ def postgres_config(url: str) -> dict:
     }
 
 
+def env_int(name: str, default: int) -> int:
+    """Read a non-negative integer setting and fail clearly when it is malformed."""
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"{name} must be an integer.") from exc
+    if value < 0:
+        raise ImproperlyConfigured(f"{name} must be zero or greater.")
+    return value
+
+
+TRUSTED_PROXY_COUNT = env_int("TRUSTED_PROXY_COUNT", 0)
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if DATABASE_URL:
     DATABASES = {"default": postgres_config(DATABASE_URL)}
@@ -134,6 +147,7 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["apps.agents.authentication.AgentKeyAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "NUM_PROXIES": TRUSTED_PROXY_COUNT,
     "DEFAULT_THROTTLE_RATES": {
         "agent": os.environ.get("THROTTLE_AGENT", "60/min"),
         "anon": os.environ.get("THROTTLE_ANON", "20/min"),

@@ -5,6 +5,7 @@ import os
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F403
+from .base import env_int
 
 DEBUG = False
 
@@ -18,6 +19,9 @@ ALLOWED_HOSTS = [
 ]
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS must be set in production.")
+
+TRUSTED_PROXY_COUNT = env_int("TRUSTED_PROXY_COUNT", 1)
+REST_FRAMEWORK = {**REST_FRAMEWORK, "NUM_PROXIES": TRUSTED_PROXY_COUNT}  # noqa: F405
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = True

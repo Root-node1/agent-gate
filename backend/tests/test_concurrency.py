@@ -4,6 +4,7 @@ from unittest import skipUnless
 from uuid import uuid4
 
 from django.db import close_old_connections, connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.accounts.models import Organization
 from apps.agents.models import Agent
@@ -48,3 +49,31 @@ class BudgetLockTests(PostgresTransactionTestCase):
             ).values_list("amount_minor", flat=True)
         )
         self.assertEqual(total, 10_000)
+
+
+@skipUnless(connection.vendor == "postgresql", "row locking is exercised against PostgreSQL")
+class PolicyLockOrderTests(PostgresTransactionTestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(name="default")
+        self.agent, _ = Agent.create_with_key("shopper", self.organization)
+        Policy.objects.create(agent=self.agent)
+
+    def test_submit_locks_agent_then_policy(self):
+        with CaptureQueriesContext(connection) as queries:
+            services.submit_spend_request(
+                self.agent,
+                amount=Decimal("10.00"),
+                currency="USD",
+                merchant="acme.com",
+                source_type=SpendRequest.SourceType.TRUSTED,
+                idempotency_key=str(uuid4()),
+            )
+
+        locked_tables = [
+            query["sql"]
+            for query in queries.captured_queries
+            if "FOR UPDATE" in query["sql"]
+        ]
+        self.assertGreaterEqual(len(locked_tables), 2)
+        self.assertIn("agents_agent", locked_tables[0])
+        self.assertIn("policies_policy", locked_tables[1])

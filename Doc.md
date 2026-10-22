@@ -58,7 +58,7 @@ Precedence: any deny wins, then any approval reason gives `needs_approval`, othe
 
 Provenance is self-reported. The API cannot prove that `source=trusted` is true; the SDK or MCP wrapper must set it from where the instruction originated. Missing provenance defaults to `untrusted`, and every non-trusted source fails closed.
 
-Deterministic injection screening lives in `engine/screening/patterns.py` and covers phrases such as "ignore previous instructions", "override the policy" and "approve this payment". The classifier remains a later, advisory-only layer: it may escalate and add risk, never deny or lower another rule.
+Deterministic injection screening lives in `engine/screening/patterns.py`. It normalizes NFKC, casefolds, strips zero-width format characters, folds common homoglyphs, and collapses whitespace before matching phrases such as "ignore previous instructions", "override the policy" and "approve this payment". It is a backstop, not a detector: paraphrases can still pass. The classifier remains a later, advisory-only layer: it may escalate and add risk, never deny or lower another rule.
 
 ## 4. Data model (built)
 
@@ -100,7 +100,7 @@ The OpenAPI schema is generated with drf-spectacular and used to generate the SD
 - Replaying the same key and body returns the stored request with `Idempotent-Replayed: true`; reusing the key with a different body or destination returns 409. The hash includes the normalized destination.
 - Writes are throttled per agent key (`THROTTLE_AGENT`, default 60/min), and request bodies over 64 KiB are rejected.
 - Budgets count requests that are approved, executing, or succeeded. Denied requests and pending approvals do not count, so a pending approval never reserves budget; approval rechecks before executing.
-- The agent row is locked first (`select_for_update`), then the current policy is read and budgets are counted; every spend path uses that order. Concurrent requests for one agent therefore serialize and cannot both pass a budget. Approval rechecks will take the same locks in the same order. SQLite ignores the lock; PostgreSQL enforces it, and a 20-way concurrency test covers the budget.
+- The agent row is locked first (`select_for_update`), then the current policy row is locked, then the spend request is written, and only then does the audit append lock the organization. Every spend path uses that order, and approval rechecks will take the same locks in the same order. Concurrent requests for one agent therefore serialize and cannot both pass a budget. SQLite ignores the locks; PostgreSQL enforces them, a 20-way concurrency test covers the budget, and a query-order test covers agent-before-policy locking.
 - Audit events written per request: `request.received`, `decision.made`, and `approval.requested` when a human is needed.
 - A request from an agent with no policy returns 409.
 - `risk_score` stays 0 until the injection classifier lands.

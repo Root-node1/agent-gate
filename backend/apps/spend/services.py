@@ -41,13 +41,17 @@ def rule_source(source_type: str) -> str:
     return engine.SOURCE_UNTRUSTED
 
 
-def current_policy(agent) -> Policy | None:
+def current_policy(agent, *, for_update: bool = False) -> Policy | None:
     """Return the newest policy version for an agent, or None when unset.
 
-    The caller holds the agent row lock, which serializes policy reads and budget
-    accounting for that agent.
+    Callers lock the agent row before this lookup. Pass ``for_update=True`` when the
+    caller will create or change state that depends on this policy version, so the
+    lock order stays agent, then policy.
     """
-    return Policy.objects.filter(agent=agent).order_by("-version").first()
+    policies = Policy.objects.filter(agent=agent).order_by("-version")
+    if for_update:
+        policies = policies.select_for_update()
+    return policies.first()
 
 
 def build_limits(policy: Policy) -> engine.PolicyLimits:
@@ -129,7 +133,7 @@ def submit_spend_request(
                 raise IdempotencyConflict("Idempotency-Key was reused with a different request.")
             return existing, True
 
-    policy = current_policy(agent)
+    policy = current_policy(agent, for_update=True)
     if policy is None:
         raise PolicyMissing(f"Agent {agent} has no policy.")
 

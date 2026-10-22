@@ -23,9 +23,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DJANGO_SECRET_KEY: ci-only-not-a-real-secret
-      DJANGO_DEBUG: "False"
-      DATABASE_URL: postgresql://agentgate:agentgate@localhost:5432/agentgate
+      DJANGO_SETTINGS_MODULE: config.settings.test
+      DJANGO_SECRET_KEY: ci-only-not-a-real-secret-but-long-enough-for-checks
+      TEST_DATABASE_URL: postgresql://agentgate:agentgate@localhost:5432/agentgate
     defaults:
       run:
         working-directory: backend
@@ -40,6 +40,11 @@ jobs:
       - run: ruff check .
       - run: lint-imports
       - run: python manage.py check
+      - run: python manage.py check --deploy --settings=config.settings.prod
+        env:
+          DJANGO_SECRET_KEY: ci-only-not-a-real-secret-but-long-enough-for-checks
+          DJANGO_ALLOWED_HOSTS: example.com
+          DATABASE_URL: postgresql://agentgate:agentgate@localhost:5432/agentgate
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py test
 

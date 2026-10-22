@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import ProtectedError
 from django.test import TestCase
 
 from apps.accounts.models import Organization, OrgMembership, User
@@ -23,9 +24,17 @@ def make_agent(name="shopper", org_name="default"):
 
 class HealthTests(TestCase):
     def test_health_returns_ok(self):
-        response = self.client.get("/api/health/")
+        response = self.client.get("/healthz")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_readiness_checks_the_database(self):
+        response = self.client.get("/readyz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_legacy_health_alias_still_works(self):
+        self.assertEqual(self.client.get("/api/health/").status_code, 200)
 
 
 class AgentTests(TestCase):
@@ -253,3 +262,11 @@ class FakeExecutorTests(TestCase):
             FakeExecutor("timeout").execute(spend)
         with self.assertRaises(ValueError):
             FakeExecutor("nonsense")
+
+
+class AuditProtectionTests(TestCase):
+    def test_audit_rows_block_deleting_the_organization(self):
+        agent, _ = make_agent()
+        AuditEvent.record(AuditEvent.EventType.AGENT_CREATED, organization=agent.organization)
+        with self.assertRaises(ProtectedError):
+            agent.organization.delete()

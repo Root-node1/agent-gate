@@ -25,7 +25,7 @@ cd agent-gate
 ./run.sh
 ```
 
-- Backend: http://localhost:8000 (health check: `/api/health/`)
+- Backend: http://localhost:8000 (liveness: `/healthz`, readiness: `/readyz`)
 - Frontend: http://localhost:5173
 
 `run.sh` creates the Python venv, installs dependencies on first run, applies migrations, and starts both servers. Press Ctrl+C to stop both.
@@ -40,11 +40,12 @@ cd ../frontend && npm install
 ## Checks
 
 ```bash
-cd backend && source venv/bin/activate && ruff check . && python manage.py test
+cd backend && source venv/bin/activate
+ruff check . && lint-imports && python manage.py makemigrations --check --dry-run && python manage.py test
 cd frontend && npm run lint && npm run build
 ```
 
-The same checks run in GitHub Actions on every push and pull request. Ruff settings live in `backend/ruff.toml`.
+`python manage.py test` uses SQLite by default. To run the PostgreSQL-only concurrency and trigger tests, set `TEST_DATABASE_URL` to a throwaway PostgreSQL 17 database. The same checks run in GitHub Actions on every push and pull request. Ruff settings live in `backend/ruff.toml`.
 
 ## How PayPal is used
 
@@ -57,10 +58,8 @@ TODO: replace with what is actually built. Planned:
 
 ## How AI is used
 
-TODO: replace with what is actually built. Planned:
-
-- A demo agent that submits spend requests through AgentGate
-- A prompt-injection classifier that scores requests (advisory only; spending rules never depend on the model)
+- `python manage.py seed_demo` creates a fresh demo agent, its policy and key, and appends a `demo.reset` audit event. Previous demo agents are suspended, never deleted.
+- A prompt-injection classifier that scores requests is planned (advisory only; spending rules never depend on the model). Deterministic override phrases are already denied by `R14_INJECTION_PATTERN`.
 
 ## Sponsor tools
 
@@ -68,7 +67,12 @@ TODO: list only what is actually used (for example Render, APIMatic, AG Grid, Po
 
 ## Security notes
 
-TODO: add the threat model summary and known limits.
+- `source=trusted` is self-reported by the caller. The API cannot prove that a request came from a trusted origin; the SDK or MCP wrapper must set it from the instruction's actual provenance. Missing provenance defaults to `untrusted` and needs approval.
+- The audit log is append-only and hash-chained per organization. It is tamper-evident, not tamper-proof, unless the head hash is anchored outside the database.
+- Spend requests require an `Idempotency-Key`. Replaying the same key and body returns the stored response with `Idempotent-Replayed: true`; reusing a key with a different body or destination returns 409.
+- Agent responses carry rule IDs and short messages only. Budgets, caps and spent amounts stay in the dashboard and audit log.
+- Writes are throttled per agent key and request bodies are capped at 64 KiB.
+- PayPal is sandbox-only; the agent never receives PayPal credentials.
 
 ## License
 
@@ -88,6 +92,8 @@ cp backend/.env.example backend/.env
 
 Then set `DJANGO_SECRET_KEY` to your own random value. Never commit `.env`. PayPal sandbox credentials go in this file when the integration lands.
 
+Settings are split by environment: `config.settings.dev` (local), `config.settings.test` (tests), and `config.settings.prod` (Contabo). Production requires `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, and a PostgreSQL 17 `DATABASE_URL`; use the direct Neon URL for migrations and the worker. Run `python manage.py createcachetable` once in production for the database-backed throttle cache. Deployment and reset procedures are in [backend/OPERATIONS.md](backend/OPERATIONS.md).
+
 ## PayPal Postman collection
 
 PayPal's Postman collection (Cart API for agentic commerce) is for validating a merchant implementation. Notes on how it relates to this project are in [Doc.md](Doc.md), section 13. Never commit private keys, and use the sandbox only.
@@ -103,7 +109,7 @@ Then visit http://localhost:8000/admin/. After changing models, run `python mana
 
 ## Rule engine
 
-`backend/gate/rules.py` decides allow, deny or needs_approval from a request, a policy and what has already been spent. Rules and precedence are listed in [Doc.md](Doc.md). Run its tests with:
+`backend/engine/` decides allow, deny or needs_approval from a request, a policy and what has already been spent. It is pure Python and imports neither Django nor application code. Rules and precedence are listed in [Doc.md](Doc.md). Run its tests with:
 
     cd backend && source venv/bin/activate
     python manage.py test tests.test_rules
@@ -114,9 +120,11 @@ Create an agent (this prints its API key once), then submit spend requests:
 
     cd backend && source venv/bin/activate
     python manage.py create_agent shopper --allow acme.com --threshold 50
+    # or, for the demo agent: python manage.py seed_demo
 
     curl -s -X POST http://localhost:8000/v1/spend-requests/ \
       -H "Authorization: Bearer agk_YOUR_KEY" -H "Content-Type: application/json" \
-      -d '{"amount":"10.00","currency":"USD","merchant":"acme.com","source":"trusted"}'
+      -H "Idempotency-Key: 7f2c9d1e-4a3b-4c5d-8e9f-0a1b2c3d4e5f" \
+      -d '{"amount":"10.00","currency":"USD","merchant":"acme.com","source":"trusted","destination_type":"paypal_email","destination_value":"seller@example.com"}'
 
-The response always has HTTP status 201; read the `decision` field (allow, deny or needs_approval) and `reasons`. Interactive docs are at http://localhost:8000/api/docs/ and the OpenAPI schema is at `/api/schema/`.
+The response always has HTTP status 201; read the `decision` field (allow, deny or needs_approval) and `reasons`. Retries must reuse the same `Idempotency-Key` and body. Interactive docs are at http://localhost:8000/api/docs/ and the OpenAPI schema is at `/api/schema/`.

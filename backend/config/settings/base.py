@@ -1,3 +1,5 @@
+"""Settings shared by every environment."""
+
 import os
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
@@ -5,22 +7,16 @@ from urllib.parse import parse_qsl, unquote, urlparse
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
-if not SECRET_KEY:
-    raise ImproperlyConfigured(
-        "DJANGO_SECRET_KEY is not set. Copy .env.example to .env and fill it in."
-    )
-
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "")
 DEBUG = os.environ.get("DJANGO_DEBUG", "False").lower() == "true"
-
 ALLOWED_HOSTS = [
-    h.strip()
-    for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
-    if h.strip()
+    host.strip()
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if host.strip()
 ]
 
 INSTALLED_APPS = [
@@ -74,8 +70,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
+
 def postgres_config(url: str) -> dict:
-    """Builds a Django database config from a PostgreSQL connection URL."""
+    """Build a Django database config from a PostgreSQL connection URL."""
     parsed = urlparse(url)
     if parsed.scheme not in {"postgres", "postgresql", "postgresql+psycopg"}:
         raise ImproperlyConfigured(f"Unsupported DATABASE_URL scheme: {parsed.scheme!r}")
@@ -94,6 +91,7 @@ def postgres_config(url: str) -> dict:
         "HOST": parsed.hostname or "",
         "PORT": str(parsed.port or ""),
         "CONN_MAX_AGE": conn_max_age,
+        "CONN_HEALTH_CHECKS": True,
         "OPTIONS": dict(parse_qsl(parsed.query)),
     }
 
@@ -109,6 +107,13 @@ else:
         }
     }
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "agentgate",
+    }
+}
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -122,7 +127,6 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
-
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
@@ -130,7 +134,21 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["apps.agents.authentication.AgentKeyAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_THROTTLE_RATES": {
+        "agent": os.environ.get("THROTTLE_AGENT", "60/min"),
+        "anon": os.environ.get("THROTTLE_ANON", "20/min"),
+    },
 }
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
+
+ADMIN_PATH = os.environ.get("DJANGO_ADMIN_PATH", "admin").strip("/")
+if not ADMIN_PATH:
+    ADMIN_PATH = "admin"
+ADMIN_PATH = f"{ADMIN_PATH}/"
+
+DEMO_ORG_NAME = os.environ.get("DEMO_ORG_NAME", "demo")
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "AgentGate API",

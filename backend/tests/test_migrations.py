@@ -2,7 +2,6 @@ from decimal import Decimal
 
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
-from django.test import TransactionTestCase
 
 from apps.accounts.models import Organization
 from apps.agents.models import Agent, ApiKey
@@ -10,12 +9,13 @@ from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
 from apps.policies.models import MerchantRule, Policy
 from apps.spend.models import SpendRequest
+from tests.base import PostgresTransactionTestCase
 
 AUDIT_TABLE = "audit_auditevent"
 TRUNCATE_TRIGGER = "audit_auditevent_no_truncate"
 
 
-class LegacyBackfillMigrationTests(TransactionTestCase):
+class LegacyBackfillMigrationTests(PostgresTransactionTestCase):
     """Runs the legacy backfill against real legacy rows instead of trusting an empty table."""
 
     migrate_from = [("gate", "0001_initial")]
@@ -115,23 +115,3 @@ class LegacyBackfillMigrationTests(TransactionTestCase):
         event = AuditEvent.objects.get(event_type="request.received")
         self.assertEqual(event.organization_id, organization.id)
         self.assertEqual(event.agent_id, agent.id)
-
-    def _audit_trigger_exists(self):
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT 1 FROM pg_trigger WHERE tgname = %s AND tgrelid = to_regclass(%s)",
-                [TRUNCATE_TRIGGER, AUDIT_TABLE],
-            )
-            return cursor.fetchone() is not None
-
-    def _fixture_teardown(self):
-        disabled = connection.vendor == "postgresql" and self._audit_trigger_exists()
-        if disabled:
-            with connection.cursor() as cursor:
-                cursor.execute(f"ALTER TABLE {AUDIT_TABLE} DISABLE TRIGGER {TRUNCATE_TRIGGER}")
-        try:
-            super()._fixture_teardown()
-        finally:
-            if disabled and self._audit_trigger_exists():
-                with connection.cursor() as cursor:
-                    cursor.execute(f"ALTER TABLE {AUDIT_TABLE} ENABLE TRIGGER {TRUNCATE_TRIGGER}")

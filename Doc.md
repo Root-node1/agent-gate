@@ -27,7 +27,7 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 ## 3. Request flow
 
 1. The agent submits a spend request (amount, currency, merchant, purpose, where the instruction came from).
-2. The rule engine checks: merchant allow/block list, per-transaction cap, daily and monthly budget, currency, provenance and deterministic injection phrases. Velocity and new-payee checks are planned.
+2. The rule engine checks: merchant allow/block list, per-transaction cap, daily, weekly and monthly budgets, velocity, merchant-window spend, currency, provenance and deterministic injection phrases. New-payee checks are planned.
 3. If the instruction did not come from a trusted source, the request is escalated or denied according to the policy.
 4. A later injection classifier may score the request. It can raise risk but never lower a rule-based denial; deterministic injection phrases are denied today.
 5. Decision: allow, deny, or needs_approval, with reasons and matching rule IDs.
@@ -46,11 +46,14 @@ Hard rules (any one denies):
 - `R03_MERCHANT_BLOCK`: merchant is on the block list
 - `R04_MERCHANT_ALLOW`: an allow list exists and the merchant is not on it
 - `R05_PER_TX_CAP`: amount is zero, negative, or above the per-transaction cap
-- `R06_DAILY_BUDGET` and `R07_MONTHLY_BUDGET`: already-spent plus this amount exceeds the budget
+- `R06_DAILY_BUDGET` and `R07_MONTHLY_BUDGET`: already-spent plus this amount exceeds the daily or monthly budget
+- `R16_WEEKLY_BUDGET`: already-spent this week plus this amount exceeds the weekly budget
 - `R14_INJECTION_PATTERN`: the purpose or evidence contains a deterministic override phrase
 
 Approval rules (a human must decide):
 
+- `R08_VELOCITY`: the count of recent budget-consuming requests is already at the policy maximum
+- `R09_MERCHANT_WINDOW`: recent budget-consuming spend to this merchant plus this amount exceeds the merchant-window cap
 - `R10_APPROVAL_THRESHOLD`: amount is at or above the approval threshold
 - `R13_UNTRUSTED_SOURCE`: provenance is anything other than `trusted`; the policy's `untrusted_source_action` can turn this into a deny
 
@@ -85,22 +88,33 @@ Note: bulk operations like `QuerySet.update()` bypass model methods. Never use t
 - `GET /api/schema/` and `/api/docs/` (built): OpenAPI schema and Swagger UI
 - `POST /v1/spend-requests/` (built): submit a request with an `Idempotency-Key`. Returns 201 with `decision` (allow, deny or needs_approval), reasons and matched rules in the body
 - `GET /v1/spend-requests/{id}/` (built): read one of the agent's own requests
-- `POST /v1/approvals/{id}/approve` and `/deny`
-- `GET/PUT /v1/policies`: manage rules
-- `GET /v1/audit`: filterable log
-- `POST /webhooks/paypal`: payment events
+- `GET /v1/approvals/` and `GET /v1/approvals/{id}/` (built): approver/admin queue, pending by default, paginated
+- `POST /v1/approvals/{id}/approve` and `/deny` (built): approve rechecks current policy and destination; a failed recheck returns 409 and leaves the request pending
+- `GET /v1/policies/` (built): policy versions and merchant rules for the caller's organizations; policy writes are still planned
+- `GET /v1/audit/` and `GET /v1/audit/verify/` (built): filterable log and admin-only chain verification
+- `POST /webhooks/paypal`: payment events (planned)
 
 The OpenAPI schema is generated with drf-spectacular and used to generate the SDK.
+
+### Dashboard authentication and approval API (built)
+
+- Dashboard endpoints use Django session authentication; agents cannot use their API keys on approval, policy, or audit endpoints. A same-origin dashboard can log in through `/api-auth/login/` or the admin.
+- Roles come from `OrgMembership`: `admin` and `approver` may read and decide approvals, `viewer` may read policies and audit, and only `admin` may verify audit chains. Results are always scoped to the caller's organizations.
+- Approvals are pending by default (`?outcome=all` includes decided rows) and use `limit`/`offset` pagination. Double approve/deny is idempotent; a conflicting decision returns 409.
+- Approval locks follow the same order: agent, current policy, spend request, approval, then organization for audit. The recheck re-runs the current policy and budget. If a hard rule now denies or a known payee fingerprint changed, the API returns 409 with rule ids and leaves the approval pending.
+- An overdue approval is marked expired on decision and by `python manage.py expire_approvals`; run that command from cron (every minute is sufficient). The command is idempotent.
+- `GET /v1/audit/verify/` verifies only the organizations where the caller is an admin and returns 409 at the first broken event.
 
 ### Agent authentication and the spend request API (built)
 
 - Agents authenticate with `Authorization: Bearer <agent key>`. Keys look like `agk_...`. Lookup is by the stored prefix, then a constant-time hash comparison; suspended agents and revoked keys are rejected.
-- Create an agent, its policy and merchant rules with `python manage.py create_agent NAME [--org ORG] --allow acme.com --block evil.com --cap 100 --threshold 50 --daily 500 --monthly 5000`. The key is printed once.
+- Create an agent, its policy and merchant rules with `python manage.py create_agent NAME [--org ORG] --allow acme.com --block evil.com --cap 100 --threshold 50 --daily 500 --weekly 2000 --monthly 5000`. The key is printed once.
 - `POST /v1/spend-requests/` requires `Idempotency-Key` (1–255 printable characters) and takes `amount`, `currency`, `merchant`, optional `purpose`, `source_ref`, `evidence_excerpt`, `source`, and a paired `destination_type`/`destination_value`. Source values are `trusted`, `untrusted`, `web_page`, `email`, `invoice`, `tool_output` or `unknown`; missing means `untrusted`. Unknown body fields are rejected with 400. The response is HTTP 201 for every decision, so agents and SDKs must read `decision`, never just the status code.
 - Replaying the same key and body returns the stored request with `Idempotent-Replayed: true`; reusing the key with a different body or destination returns 409. The hash includes the normalized destination.
 - Writes are throttled per agent key (`THROTTLE_AGENT`, default 60/min), and request bodies over 64 KiB are rejected.
-- Budgets count requests that are approved, executing, or succeeded. Denied requests and pending approvals do not count, so a pending approval never reserves budget; approval rechecks before executing.
-- The agent row is locked first (`select_for_update`), then the current policy row is locked, then the spend request is written, and only then does the audit append lock the organization. Every spend path uses that order, and approval rechecks will take the same locks in the same order. Concurrent requests for one agent therefore serialize and cannot both pass a budget. SQLite ignores the locks; PostgreSQL enforces them, a 20-way concurrency test covers the budget, and a query-order test covers agent-before-policy locking.
+- Budgets count requests that are approved, executing, or succeeded. Denied requests and pending approvals do not count, so a pending approval never reserves budget; approval rechecks before executing. R16 uses the current ISO week starting Monday. R08 velocity and R09 merchant-window use the same budget statuses over the rolling `velocity_window_seconds` window; R09 reuses that window and counts only the normalized merchant.
+- Accepted requests with a destination upsert the organization merchant `Payee`; a later request that changes the fingerprint makes older pending approvals fail the destination recheck.
+- The agent row is locked first (`select_for_update`), then the current policy row is locked, then the spend request is written, and only then does the audit append lock the organization. Every spend path uses that order, and approval decisions take the same locks in the same order. Concurrent requests for one agent therefore serialize and cannot both pass a budget. SQLite ignores the locks; PostgreSQL enforces them, a 20-way concurrency test covers the budget, and a query-order test covers agent-before-policy locking.
 - Audit events written per request: `request.received`, `decision.made`, and `approval.requested` when a human is needed.
 - A request from an agent with no policy returns 409.
 - `risk_score` stays 0 until the injection classifier lands.
@@ -174,9 +188,11 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [x] Data models, migrations and admin (split into accounts, agents, policies, payees, spend, approvals, payments, audit)
 - [x] Rule engine (pure function, unit-tested)
 - [x] Spend request API with agent key auth and audit trail
-- [x] Framework-free `engine/` package with the R01–R14 MVP rule table
+- [x] Framework-free `engine/` package with R01–R10, R13, R14 and R16
+- [x] R08 velocity, R09 merchant-window and R16 weekly-budget rules
 - [x] Idempotent spend requests, agent-row locking, audit hash chain and demo reset command
-- [ ] Approval endpoints (approve and deny)
+- [x] Approval queue API with recheck, session auth, roles, and expiry command
+- [x] Read APIs for policies and audit, plus admin audit verification
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier
 - [ ] Dashboard screens

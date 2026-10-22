@@ -130,3 +130,9 @@ Create an agent (this prints its API key once), then submit spend requests:
       -d '{"amount":"10.00","currency":"USD","merchant":"acme.com","source":"trusted","destination_type":"paypal_email","destination_value":"seller@example.com"}'
 
 The response always has HTTP status 201; read the `decision` field (allow, deny or needs_approval) and `reasons`. Retries must reuse the same `Idempotency-Key` and body. Interactive docs are at http://localhost:8000/api/docs/ and the OpenAPI schema is at `/api/schema/`.
+
+## Approval queue
+
+Dashboard endpoints use Django session authentication, not agent keys. Create a user with `createsuperuser`, give it an `OrgMembership` with the `approver` or `admin` role in the Django admin, then log in at `/api-auth/login/`. The queue is `GET /v1/approvals/` (pending by default); approve and deny are `POST /v1/approvals/{id}/approve/` and `/deny/`. An approve rechecks the current policy and returns 409 without deciding if a hard rule now denies or the payee destination changed.
+
+Run `python manage.py expire_approvals` from cron every minute to expire overdue approvals.

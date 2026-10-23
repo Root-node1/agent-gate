@@ -66,7 +66,9 @@ class AuditApiTests(APITestCase):
         self.client.force_authenticate(user=self.admin)
         response = self.client.get("/v1/audit/verify/")
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["event"], self.event.pk)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "audit_chain_broken")
+        self.assertEqual(body["error"]["details"]["event"], self.event.pk)
 
     def test_command_uses_the_same_verifier(self):
         out = StringIO()

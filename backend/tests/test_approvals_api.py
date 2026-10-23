@@ -172,7 +172,9 @@ class ApprovalDecisionTests(ApprovalApiBase):
             self.url(spend_request.approval) + "approve/", {}, format="json"
         )
         self.assertEqual(response.status_code, 409)
-        self.assertIn("R06_DAILY_BUDGET", response.json()["rules"])
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "recheck_failed")
+        self.assertIn("R06_DAILY_BUDGET", body["error"]["details"]["rules"])
         spend_request.refresh_from_db()
         self.assertEqual(spend_request.status, SpendRequest.Status.PENDING_APPROVAL)
         self.assertEqual(spend_request.approval.outcome, Approval.Outcome.PENDING)
@@ -197,7 +199,9 @@ class ApprovalDecisionTests(ApprovalApiBase):
             self.url(spend_request.approval) + "approve/", {}, format="json"
         )
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["rules"], ["destination_changed"])
+        self.assertEqual(
+            response.json()["error"]["details"]["rules"], ["destination_changed"]
+        )
 
     def test_expired_approval_cannot_be_approved(self):
         spend_request = self.pending()

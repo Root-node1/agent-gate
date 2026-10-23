@@ -42,6 +42,7 @@ INSTALLED_APPS = [
 AUTH_USER_MODEL = "accounts.User"
 
 MIDDLEWARE = [
+    "apps.common.middleware.RequestIdMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -143,6 +144,7 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
+    "EXCEPTION_HANDLER": "apps.common.errors.api_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "apps.agents.authentication.AgentKeyAuthentication",
@@ -159,6 +161,7 @@ REST_FRAMEWORK = {
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
+CSRF_FAILURE_VIEW = "apps.common.errors.csrf_failure"
 
 ADMIN_PATH = os.environ.get("DJANGO_ADMIN_PATH", "admin").strip("/")
 if not ADMIN_PATH:

@@ -40,6 +40,7 @@ jobs:
       - run: ruff check .
       - run: lint-imports
       - run: python manage.py check
+      - run: python manage.py spectacular --file /tmp/schema.yaml --validate
       - run: python manage.py check --deploy --settings=config.settings.prod
         env:
           DJANGO_SECRET_KEY: ci-only-not-a-real-secret-but-long-enough-for-checks

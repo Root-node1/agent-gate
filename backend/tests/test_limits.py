@@ -35,13 +35,16 @@ class ThrottleTests(APITestCase):
             "DEFAULT_AUTHENTICATION_CLASSES": ["apps.agents.authentication.AgentKeyAuthentication"],
             "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
             "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+            "EXCEPTION_HANDLER": "apps.common.errors.api_exception_handler",
             "DEFAULT_THROTTLE_RATES": {"agent": "2/min", "anon": "2/min"},
         }
     )
     def test_agent_is_throttled_after_the_rate(self):
         self.assertEqual(self.post().status_code, 201)
         self.assertEqual(self.post().status_code, 201)
-        self.assertEqual(self.post().status_code, 429)
+        response = self.post()
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["error"]["code"], "throttled")
 
     @override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=1_024)
     def test_oversized_body_is_rejected(self):
@@ -60,7 +63,8 @@ class ThrottleTests(APITestCase):
             content_type="application/json",
             HTTP_IDEMPOTENCY_KEY=str(uuid4()),
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(response.json()["error"]["code"], "request_too_large")
 
 
 class AnonymousThrottleProxyTests(APITestCase):

@@ -4,8 +4,10 @@ from django.utils import timezone
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 
-from .keys import PREFIX_LENGTH, hash_matches
-from .models import ApiKey
+from apps.common.errors import AgentSuspended
+
+from .keys import DUMMY_HASH, PREFIX_LENGTH, hash_matches
+from .models import Agent, ApiKey
 
 
 class AgentPrincipal:
@@ -32,16 +34,20 @@ class AgentKeyAuthentication(authentication.BaseAuthentication):
         if len(parts) != 2 or parts[0] != self.keyword:
             raise exceptions.AuthenticationFailed("Use 'Authorization: Bearer <agent key>'.")
         raw_key = parts[1]
-        try:
-            api_key = ApiKey.objects.select_related("agent").get(
-                prefix=raw_key[:PREFIX_LENGTH],
-                revoked_at__isnull=True,
-                agent__status="active",
-            )
-        except ApiKey.DoesNotExist:
-            raise exceptions.AuthenticationFailed("Invalid or inactive agent key.") from None
+        api_key = (
+            ApiKey.objects.select_related("agent")
+            .filter(prefix=raw_key[:PREFIX_LENGTH])
+            .first()
+        )
+        if api_key is None:
+            hash_matches(raw_key, DUMMY_HASH)
+            raise exceptions.AuthenticationFailed("Invalid or inactive agent key.")
         if not hash_matches(raw_key, api_key.key_hash):
             raise exceptions.AuthenticationFailed("Invalid or inactive agent key.")
+        if api_key.revoked_at is not None:
+            raise exceptions.AuthenticationFailed("Invalid or inactive agent key.")
+        if api_key.agent.status != Agent.Status.ACTIVE:
+            raise AgentSuspended()
         self._mark_used(api_key)
         return (AgentPrincipal(api_key.agent), None)
 

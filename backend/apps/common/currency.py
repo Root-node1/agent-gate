@@ -35,7 +35,7 @@ def normalize_currency(value: str) -> str:
     """Return the canonical uppercase code or raise ValidationError."""
     code = value.strip().upper()
     if code not in ISO_4217:
-        raise ValidationError(f"{value!r} is not a valid ISO-4217 currency code.")
+        raise ValidationError("Enter a valid ISO-4217 currency code.")
     return code
 
 

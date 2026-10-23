@@ -94,7 +94,15 @@ Note: bulk operations like `QuerySet.update()` bypass model methods. Never use t
 - `GET /v1/audit/` and `GET /v1/audit/verify/` (built): filterable log and admin-only chain verification
 - `POST /webhooks/paypal`: payment events (planned)
 
-The OpenAPI schema is generated with drf-spectacular and used to generate the SDK.
+The OpenAPI schema is generated with drf-spectacular and used to generate the SDK. Error responses declare the shared envelope and the machine-readable code enum; CI runs `python manage.py spectacular --file /tmp/schema.yaml --validate`.
+
+### API errors, request ids and input handling (built)
+
+- Every API failure returns `{"error": {"code", "message", "details"}, "request_id": ...}` and the same id in the `X-Request-Id` response header. The id is generated server-side and never copied from a client header.
+- Errors use a stable machine code and the matching status: 400 validation/JSON problems, 401 bad or revoked key, 403 suspended agent or wrong role, 404 missing or out-of-scope objects, 405 wrong method, 409 idempotency or approval conflicts, 415 unsupported media, 429 throttling. Validation `details` are field-keyed objects; they never echo submitted values.
+- `amount` is accepted only as a decimal string. JSON numbers, exponents, signs, surrounding whitespace, too many digits, and fractional minor units for zero-decimal currencies are rejected before conversion. Invalid currency and timezone messages are generic.
+- Merchant, purpose, evidence, source reference, and destination text have bidi-override and control characters removed before validation and storage.
+- Unknown and revoked keys return the same 401 response. A valid key for a suspended agent returns 403 with `agent_suspended`.
 
 ### Dashboard authentication and approval API (built)
 
@@ -107,7 +115,7 @@ The OpenAPI schema is generated with drf-spectacular and used to generate the SD
 
 ### Agent authentication and the spend request API (built)
 
-- Agents authenticate with `Authorization: Bearer <agent key>`. Keys look like `agk_...`. Lookup is by the stored prefix, then a constant-time hash comparison; suspended agents and revoked keys are rejected.
+- Agents authenticate with `Authorization: Bearer <agent key>`. Keys look like `agk_...`. Lookup is by the stored prefix, then a constant-time hash comparison. Unknown and revoked keys produce the same 401; a valid key for a suspended agent produces 403 `agent_suspended`.
 - Create an agent, its policy and merchant rules with `python manage.py create_agent NAME [--org ORG] --allow acme.com --block evil.com --cap 100 --threshold 50 --daily 500 --weekly 2000 --monthly 5000`. The key is printed once.
 - `POST /v1/spend-requests/` requires `Idempotency-Key` (1–255 printable characters) and takes `amount`, `currency`, `merchant`, optional `purpose`, `source_ref`, `evidence_excerpt`, `source`, and a paired `destination_type`/`destination_value`. Source values are `trusted`, `untrusted`, `web_page`, `email`, `invoice`, `tool_output` or `unknown`; missing means `untrusted`. Unknown body fields are rejected with 400. The response is HTTP 201 for every decision, so agents and SDKs must read `decision`, never just the status code.
 - Replaying the same key and body returns the stored request with `Idempotent-Replayed: true`; reusing the key with a different body or destination returns 409. The hash includes the normalized destination.
@@ -193,6 +201,7 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [x] Idempotent spend requests, agent-row locking, audit hash chain and demo reset command
 - [x] Approval queue API with recheck, session auth, roles, and expiry command
 - [x] Read APIs for policies and audit, plus admin audit verification
+- [x] Stable API error envelope, request ids, strict spend input, and OpenAPI validation
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier
 - [ ] Dashboard screens

@@ -147,7 +147,7 @@ Run locally before pushing:
     cd backend && source venv/bin/activate && ruff check . && lint-imports && python manage.py test
     cd frontend && npm run lint && npm run build
 
-GitHub Actions runs the same checks on every push and pull request. Every rule in the policy engine gets a unit test. Lint settings live in `backend/ruff.toml` (generated migrations are excluded; RUF012 is ignored because Django's `Meta` and admin options are plain class attributes). Keeping the config in the repo makes local runs and CI identical.
+GitHub Actions runs the same checks on every push and pull request, with the backend job running against a PostgreSQL 17 service container (`DATABASE_URL`), so the budget row lock is exercised for real. Every rule in the policy engine gets a unit test. Lint settings live in `backend/ruff.toml` (generated migrations are excluded; RUF012 is ignored because Django's `Meta` and admin options are plain class attributes). Keeping the config in the repo makes local runs and CI identical.
 
 ## 10. Deployment (planned)
 
@@ -163,7 +163,7 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 
 - **Django over Spring Boot**: the PayPal AI Toolkit supports Python and TypeScript, so the agent layer lives inside the Django service as one backend.
 - **Deterministic rules over model judgment**: limits cannot be argued away by text.
-- **SQLite for local tests, PostgreSQL 17 for CI and production**: Neon provides managed backups; SQLite keeps the default test run fast and offline.
+- **SQLite for local tests, PostgreSQL 17 for CI and production via `DATABASE_URL`**: Neon provides managed backups; SQLite keeps the default test run fast and offline. The budget lock (`select_for_update`) only works on PostgreSQL.
 - **Python env named `venv`** inside `backend/`.
 - **Money as integer minor units**: avoids float/decimal drift and handles zero-decimal currencies; converted at the API and PayPal boundaries.
 - **Versioned policies**: editing a policy inserts a new version so a spend request can record the rules actually in force.

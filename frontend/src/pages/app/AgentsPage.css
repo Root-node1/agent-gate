@@ -1,0 +1,207 @@
+/* Agents list, agent detail and the API key screens. */
+
+.ag-search {
+  flex: 0 1 320px;
+}
+
+.ag-table td {
+  vertical-align: top;
+}
+
+.ag-name-cell {
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.ag-desc {
+  margin-top: 2px;
+}
+
+.ag-nowrap {
+  white-space: nowrap;
+}
+
+.ag-sub {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* Links inside a clickable row sit above the row anchor's overlay. */
+.ag-cell-link {
+  position: relative;
+  z-index: 1;
+  font-weight: 500;
+}
+
+.ag-nokey {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-deny);
+  font-weight: 600;
+}
+
+.ag-modal-intro {
+  margin-bottom: var(--space-4);
+}
+
+.ag-key-field {
+  margin-bottom: 0;
+}
+
+.ag-snippet {
+  gap: var(--space-2);
+}
+
+.ag-code {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+}
+
+.ag-code:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Detail page */
+
+.ag-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ag-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.ag-total {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  padding: var(--space-3);
+  background: var(--color-surface-2);
+  border-radius: var(--radius);
+}
+
+.ag-total dt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--tone-fg, var(--color-text-muted));
+}
+
+.ag-total dd {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  .ag-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ag-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ag-events li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--color-border-subtle);
+  font-size: var(--text-sm);
+}
+
+.ag-events li:first-child {
+  border-top: none;
+}
+
+.ag-event-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+}
+
+.ag-event-title strong {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ag-event-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone-fg);
+}
+
+.ag-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.ag-key-actions .btn {
+  flex: 1 1 140px;
+}
+
+.ag-skeleton-card {
+  height: 200px;
+}
+
+.ag-confirm-list {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.ag-confirm-list li + li {
+  margin-top: var(--space-1);
+}
+
+.ag-title-skeleton {
+  width: 240px;
+  height: 32px;
+}
+
+.ag-key-note {
+  margin-top: var(--space-3);
+}
+
+/* Long keys and the code sample must scroll inside the dialog, not widen it. */
+.ag-key-reveal {
+  min-width: 0;
+  contain: inline-size;
+}
+
+/* .split collapses to 1fr, which lets a wide table stretch the page. */
+@media (max-width: 1100px) {
+  .ag-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

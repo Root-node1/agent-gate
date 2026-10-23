@@ -48,30 +48,46 @@ export class ApiError extends Error {
   }
 }
 
-export async function submitSpendRequest(
-  agentKey: string,
-  input: SpendRequestInput,
-): Promise<SpendRequest> {
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function isRequestId(value: string): boolean {
+  return UUID_PATTERN.test(value)
+}
+
+async function agentFetch(agentKey: string, path: string, init: RequestInit = {}) {
   let res: Response
   try {
-    res = await fetch('/v1/spend-requests/', {
-      method: 'POST',
+    res = await fetch(path, {
+      ...init,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${agentKey}`,
       },
-      body: JSON.stringify(input),
     })
   } catch {
     throw new ApiError('Cannot reach the backend. Is it running on port 8000?', 0)
   }
-
   const body = await res.json().catch(() => ({}))
 
-  // 201 is returned for every decision; the caller must read `decision`.
-  if (res.status === 201) return body as SpendRequest
+  if (res.status === 401 || res.status === 403) {
+    throw new ApiError('Agent key is wrong or the agent is suspended.', res.status)
+  }
+  return { status: res.status, body }
+}
 
-  if (res.status === 400) {
+export async function submitSpendRequest(
+  agentKey: string,
+  input: SpendRequestInput,
+): Promise<SpendRequest> {
+  const { status, body } = await agentFetch(agentKey, '/v1/spend-requests/', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+
+  // 201 is returned for every decision; the caller must read `decision`.
+  if (status === 201) return body as SpendRequest
+
+  if (status === 400) {
     const fieldErrors: FieldErrors = {}
     for (const [field, messages] of Object.entries(body)) {
       fieldErrors[field as keyof SpendRequestInput] = Array.isArray(messages)
@@ -81,13 +97,23 @@ export async function submitSpendRequest(
     throw new ApiError('Check the highlighted fields.', 400, fieldErrors)
   }
 
-  if (res.status === 401 || res.status === 403) {
-    throw new ApiError('Agent key is wrong or the agent is suspended.', res.status)
-  }
-
-  if (res.status === 409) {
+  if (status === 409) {
     throw new ApiError('This agent has no spending policy yet. Set one up first.', 409)
   }
 
-  throw new ApiError(body.detail ?? `Unexpected error (${res.status}).`, res.status)
+  throw new ApiError(body.detail ?? `Unexpected error (${status}).`, status)
+}
+
+export async function getSpendRequest(agentKey: string, id: string): Promise<SpendRequest> {
+  const { status, body } = await agentFetch(agentKey, `/v1/spend-requests/${id}/`)
+
+  if (status === 200) return body as SpendRequest
+
+  // The backend only shows an agent its own requests, so a 404 can also mean
+  // the request belongs to a different agent.
+  if (status === 404) {
+    throw new ApiError('No request with this ID for this agent. Check the ID and the agent key.', 404)
+  }
+
+  throw new ApiError(body.detail ?? `Unexpected error (${status}).`, status)
 }

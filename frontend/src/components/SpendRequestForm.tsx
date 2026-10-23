@@ -6,6 +6,8 @@ import {
   type SpendRequest,
   type SpendRequestInput,
 } from '../api/spendRequests'
+import { useSession } from '../session/context'
+import AgentKeyField from './AgentKeyField'
 
 const EMPTY_INPUT: SpendRequestInput = {
   amount: '',
@@ -20,10 +22,10 @@ interface Props {
 }
 
 export default function SpendRequestForm({ onResult }: Props) {
-  // The agent key lives only in memory: never written to storage or the URL.
-  const [agentKey, setAgentKey] = useState('')
+  const { agentKey } = useSession()
   const [input, setInput] = useState<SpendRequestInput>(EMPTY_INPUT)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  const [keyError, setKeyError] = useState('')
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -35,9 +37,14 @@ export default function SpendRequestForm({ onResult }: Props) {
     event.preventDefault()
     setFieldErrors({})
     setFormError('')
+    setKeyError('')
+    if (!agentKey) {
+      setKeyError('Paste the agent key first.')
+      return
+    }
     setSubmitting(true)
     try {
-      onResult(await submitSpendRequest(agentKey.trim(), input))
+      onResult(await submitSpendRequest(agentKey, input))
     } catch (err) {
       if (err instanceof ApiError) {
         setFormError(err.message)
@@ -76,21 +83,7 @@ export default function SpendRequestForm({ onResult }: Props) {
         </p>
       )}
 
-      <div className="field">
-        <label htmlFor="agentKey">Agent key</label>
-        <input
-          id="agentKey"
-          type="password"
-          autoComplete="off"
-          placeholder="agk_..."
-          value={agentKey}
-          onChange={(e) => setAgentKey(e.target.value)}
-          required
-        />
-        <span className="hint">
-          From <code>manage.py create_agent</code>. Kept in this tab only.
-        </span>
-      </div>
+      <AgentKeyField error={keyError} />
 
       <div className="row">
         <div className="field">

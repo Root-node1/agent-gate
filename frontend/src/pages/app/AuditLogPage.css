@@ -1,0 +1,218 @@
+.au-trust {
+  margin-bottom: 0;
+}
+
+/* Filters */
+
+.au-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)) repeat(2, minmax(140px, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.au-filters .field {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.au-filters .search {
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .au-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .au-filter-search {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 600px) {
+  .au-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: var(--space-4);
+  }
+}
+
+.au-results-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 52px;
+  padding: var(--space-2) var(--space-5);
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* Table */
+
+.au-table th,
+.au-table td {
+  padding-left: var(--space-3);
+  padding-right: var(--space-3);
+}
+
+.au-table th:first-child,
+.au-table td:first-child {
+  padding-left: var(--space-5);
+}
+
+.au-table td {
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.au-table time {
+  display: flex;
+  flex-direction: column;
+  font-variant-numeric: tabular-nums;
+}
+
+.au-clock {
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.au-table td.au-what {
+  min-width: 240px;
+  white-space: normal;
+}
+
+/* Sits above the row link overlay so it stays clickable on its own. */
+.au-above-row {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  padding: var(--space-1) 0;
+}
+
+.au-explanation {
+  display: block;
+  margin-top: 2px;
+  max-width: 440px;
+  color: var(--color-text-muted);
+}
+
+/* Event type: dot plus label */
+
+.au-type {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.au-type-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--tone-fg);
+  box-shadow: 0 0 0 3px var(--tone-bg);
+}
+
+/* Actor: people, agents and the system each get their own icon and label */
+
+.au-actor {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+
+.au-actor-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.au-actor-person .au-actor-icon {
+  color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.au-actor-agent .au-actor-icon {
+  color: var(--color-text);
+  background: var(--color-neutral-bg);
+  border-radius: 6px;
+}
+
+.au-actor-system .au-actor-icon {
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px dashed var(--color-border);
+}
+
+.au-actor-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.au-actor-name {
+  white-space: nowrap;
+}
+
+.au-actor-person .au-actor-name {
+  font-weight: 600;
+}
+
+.au-actor-system .au-actor-name {
+  color: var(--color-text-muted);
+}
+
+.au-actor-kind {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* Drawer */
+
+.au-drawer-summary {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-base);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+}
+
+.au-section {
+  gap: var(--space-3);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.au-section-title {
+  font-size: var(--text-sm);
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.au-json {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+}
+
+.au-json:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}

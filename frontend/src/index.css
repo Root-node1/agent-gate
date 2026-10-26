@@ -1429,6 +1429,102 @@ dialog.drawer[open] {
 }
 
 /* ==========================================================================
+   Display settings dialog (src/a11y/DisplayButton.tsx)
+   ========================================================================== */
+
+.display-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.display-group {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.display-group legend {
+  margin-bottom: var(--space-2);
+}
+
+.display-choices {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.display-choices-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.display-choices-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 480px) {
+  .display-choices-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .display-choices-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.display-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap-target);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.display-choice:has(input:checked) {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+.display-choice:has(input:focus-visible) {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.display-choice input {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.display-choice > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.display-choice-row {
+  align-items: flex-start;
+}
+
+.display-choice-row input {
+  margin-top: 2px;
+}
+
+.display-choice-row .hint {
+  font-weight: 400;
+}
+
+.display-sample {
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* ==========================================================================
    Toasts
    ========================================================================== */
 

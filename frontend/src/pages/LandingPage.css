@@ -160,26 +160,26 @@
 }
 
 .lp-btn-invert {
-  color: var(--color-text);
-  background: var(--color-surface);
+  color: var(--color-inverse-bg);
+  background: var(--color-inverse-text);
 }
 
 .lp-btn-invert:hover {
-  background: var(--color-primary-bg);
+  background: var(--color-inverse-hover);
 }
 
 .lp-btn-outline-invert {
-  color: var(--color-surface);
+  color: var(--color-inverse-text);
   background: transparent;
-  border-color: var(--color-text-muted);
+  border-color: var(--color-inverse-border);
 }
 
 .lp-btn-outline-invert:hover {
-  border-color: var(--color-surface);
+  border-color: var(--color-inverse-text);
 }
 
 .lp-cta :focus-visible {
-  outline-color: var(--color-surface);
+  outline-color: var(--color-inverse-text);
 }
 
 /* ==========================================================================
@@ -472,7 +472,7 @@
   place-items: center;
   width: 26px;
   height: 26px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 800;
   line-height: 1;
   border: 2px solid var(--color-surface);
@@ -1186,7 +1186,7 @@
   top: 88px;
   min-width: 0;
   overflow: hidden;
-  background: var(--color-text);
+  background: var(--color-inverse-bg);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
 }
@@ -1196,7 +1196,7 @@
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid color-mix(in srgb, var(--color-surface) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-inverse-text) 12%, transparent);
 }
 
 .lp-code-dots {
@@ -1207,14 +1207,14 @@
 .lp-code-dots span {
   width: 10px;
   height: 10px;
-  background: color-mix(in srgb, var(--color-surface) 22%, transparent);
+  background: color-mix(in srgb, var(--color-inverse-text) 22%, transparent);
   border-radius: 50%;
 }
 
 .lp-code-title {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--color-border);
+  color: var(--color-inverse-muted);
 }
 
 .lp-pre {
@@ -1222,9 +1222,9 @@
   padding: var(--space-5);
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.7;
-  color: var(--color-surface);
+  color: var(--color-inverse-text);
 }
 
 .lp-pre code {
@@ -1232,25 +1232,25 @@
 }
 
 .lp-pre:focus-visible {
-  outline-color: var(--color-surface);
+  outline-color: var(--color-inverse-text);
   outline-offset: -3px;
 }
 
 .lp-c-cmt {
   font-style: italic;
-  color: var(--color-border);
+  color: var(--color-inverse-muted);
 }
 
 .lp-c-key {
-  color: var(--color-primary-bg);
+  color: var(--color-inverse-key);
 }
 
 .lp-c-str {
-  color: var(--color-allow-bg);
+  color: var(--color-inverse-str);
 }
 
 .lp-c-approval {
-  color: var(--chart-approval);
+  color: var(--color-inverse-approval);
   font-weight: 700;
 }
 
@@ -1258,10 +1258,10 @@
 
 .lp-cta {
   padding: 80px 0;
-  color: var(--color-surface);
+  color: var(--color-inverse-text);
   background:
     radial-gradient(ellipse 50% 120% at 100% 0%, color-mix(in srgb, var(--color-primary) 40%, transparent), transparent 70%),
-    var(--color-text);
+    var(--color-inverse-bg);
 }
 
 .lp-cta-inner {
@@ -1280,7 +1280,7 @@
   max-width: 34rem;
   margin-top: var(--space-3);
   font-size: 1.0625rem;
-  color: var(--color-border);
+  color: var(--color-inverse-muted);
 }
 
 .lp-cta-actions {
@@ -1411,7 +1411,7 @@
 
   .lp-pre {
     padding: var(--space-4);
-    font-size: 12px;
+    font-size: 0.75rem;
   }
 
   .lp-cta {

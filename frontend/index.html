@@ -6,6 +6,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgentGate: a firewall for AI agent payments</title>
     <meta name="description" content="AgentGate sits between AI agents and PayPal. It allows, denies or escalates every payment against your rules, and logs every decision." />
+    <script>
+      // Apply saved display preferences before first paint (see src/a11y/preferences.ts).
+      (function () {
+        var p = {}
+        try {
+          p = JSON.parse(localStorage.getItem('agentgate:display') || '{}') || {}
+        } catch (e) {}
+        var root = document.documentElement
+        var dark = p.theme === 'dark' || (p.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        var high = p.highContrast === undefined ? matchMedia('(prefers-contrast: more)').matches : p.highContrast
+        root.dataset.theme = dark ? 'dark' : 'light'
+        if (high) root.dataset.contrast = 'high'
+        if (p.fontSize && p.fontSize !== 'default') root.dataset.fontSize = p.fontSize
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -2,8 +2,13 @@
  * Design tokens. Every color in the app comes from here.
  * Placeholder palette: swap these values for the team palette.
  * Contrast: every text/background pair below meets WCAG AA (4.5:1).
+ *
+ * Display preferences (src/a11y/preferences.ts) set attributes on <html>:
+ *   data-theme="light|dark", data-contrast="high", data-font-size="...".
+ * Each block below overrides only the tokens that change.
  */
 :root {
+  color-scheme: light;
   /* Surfaces and text */
   --color-bg: #f6f7f9;
   --color-surface: #ffffff;
@@ -36,6 +41,19 @@
   --chart-deny: #c4321f;
   --chart-approval: #b57600;
 
+  /* Inverse surfaces (code windows, CTA band, toasts): stay dark in every theme */
+  --color-inverse-bg: #1b1f24;
+  --color-inverse-text: #ffffff;
+  --color-inverse-muted: #d4d8de;
+  --color-inverse-border: #545b66;
+  --color-inverse-hover: #e8eefc;
+  --color-inverse-key: #e8eefc;
+  --color-inverse-str: #e3f4ea;
+  --color-inverse-allow: #7ee2a8;
+  --color-inverse-deny: #ffb4a9;
+  --color-inverse-info: #a9c1ff;
+  --color-inverse-approval: #b57600;
+
   /* Type */
   --font-sans: 'Inter Variable', system-ui, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
@@ -61,6 +79,8 @@
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
   --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
   --shadow-lg: 0 20px 40px rgba(16, 24, 40, 0.18);
+  --scrim: rgba(16, 24, 40, 0.45);
+  --focus-width: 3px;
 
   /* Layout */
   --sidebar-width: 248px;
@@ -69,4 +89,152 @@
   /* Motion */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --duration: 160ms;
+}
+
+/* ==========================================================================
+   Font size. 100% (the browser default, 16px) is the default; every --text-*
+   token is in rem, so changing the root size scales all text.
+   ========================================================================== */
+
+html {
+  font-size: 100%;
+}
+
+html[data-font-size='small'] {
+  font-size: 87.5%;
+}
+
+html[data-font-size='large'] {
+  font-size: 112.5%;
+}
+
+html[data-font-size='x-large'] {
+  font-size: 125%;
+}
+
+/* ==========================================================================
+   Dark theme
+   ========================================================================== */
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-bg: #0f1217;
+  --color-surface: #171b21;
+  --color-surface-2: #1d2229;
+  --color-border: #3a414c;
+  --color-border-subtle: #2a3038;
+  --color-text: #e6e9ee;
+  --color-text-muted: #a3abb7;
+
+  --color-primary: #7aa2ff;
+  --color-primary-hover: #9db9ff;
+  --color-primary-bg: #1c2a4a;
+  --color-on-primary: #0b1220;
+  --color-focus: #7aa2ff;
+  --color-info-bg: #1c2a4a;
+
+  --color-allow: #5fd08f;
+  --color-allow-bg: #12301f;
+  --color-deny: #ff8a7a;
+  --color-deny-bg: #3a1714;
+  --color-approval: #f2b45a;
+  --color-approval-bg: #352509;
+  --color-neutral: #a3abb7;
+  --color-neutral-bg: #252b33;
+
+  --chart-allow: #4cc17f;
+  --chart-deny: #f26d5b;
+  --chart-approval: #e0a23a;
+
+  --color-inverse-bg: #05070a;
+  --color-inverse-text: #e6e9ee;
+  --color-inverse-muted: #a3abb7;
+  --color-inverse-border: #545b66;
+  --color-inverse-approval: #f2b45a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.6);
+  --scrim: rgba(0, 0, 0, 0.6);
+}
+
+/* ==========================================================================
+   High contrast (light). Text reaches WCAG AAA (7:1); borders are solid.
+   ========================================================================== */
+
+:root[data-contrast='high'] {
+  --color-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-2: #ffffff;
+  --color-border: #000000;
+  --color-border-subtle: #4a4f57;
+  --color-text: #000000;
+  --color-text-muted: #2b2f36;
+
+  --color-primary: #0033b3;
+  --color-primary-hover: #00227a;
+  --color-primary-bg: #dbe5ff;
+  --color-on-primary: #ffffff;
+  --color-focus: #000000;
+  --color-info-bg: #dbe5ff;
+
+  --color-allow: #0a5a2c;
+  --color-allow-bg: #dff2e6;
+  --color-deny: #8f1207;
+  --color-deny-bg: #fde4e1;
+  --color-approval: #5e3300;
+  --color-approval-bg: #ffefcc;
+  --color-neutral: #2b2f36;
+  --color-neutral-bg: #e9ecf0;
+
+  --chart-allow: #0a6a33;
+  --chart-deny: #a3170b;
+  --chart-approval: #8a5200;
+
+  --color-inverse-bg: #000000;
+  --color-inverse-text: #ffffff;
+  --color-inverse-muted: #ffffff;
+  --color-inverse-border: #ffffff;
+  --color-inverse-approval: #ffcf7a;
+
+  --focus-width: 4px;
+}
+
+/* High contrast (dark) */
+
+:root[data-theme='dark'][data-contrast='high'] {
+  --color-bg: #000000;
+  --color-surface: #000000;
+  --color-surface-2: #0a0a0a;
+  --color-border: #ffffff;
+  --color-border-subtle: #9aa3ae;
+  --color-text: #ffffff;
+  --color-text-muted: #e0e4ea;
+
+  --color-primary: #9dbaff;
+  --color-primary-hover: #c4d5ff;
+  --color-primary-bg: #0d1a3a;
+  --color-on-primary: #000000;
+  --color-focus: #ffd60a;
+  --color-info-bg: #0d1a3a;
+
+  --color-allow: #7ef0ab;
+  --color-allow-bg: #0a2615;
+  --color-deny: #ffaa9e;
+  --color-deny-bg: #330f0b;
+  --color-approval: #ffcf7a;
+  --color-approval-bg: #2e1f05;
+  --color-neutral: #e0e4ea;
+  --color-neutral-bg: #1a1d22;
+
+  --chart-allow: #6fe39f;
+  --chart-deny: #ff8f80;
+  --chart-approval: #ffc457;
+
+  --color-inverse-bg: #000000;
+  --color-inverse-text: #ffffff;
+  --color-inverse-muted: #ffffff;
+  --color-inverse-border: #ffffff;
+  --color-inverse-hover: #c4d5ff;
 }

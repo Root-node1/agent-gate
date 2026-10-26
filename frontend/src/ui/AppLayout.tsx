@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, NavLink, Outlet } from 'react-router'
 import {
+  Accessibility,
   Bot,
   CircleCheckBig,
   FlaskConical,
@@ -121,6 +122,14 @@ export default function AppLayout() {
             <span className="demo-dot" aria-hidden="true" />
             Demo workspace <span className="demo-pill-detail">· sample data, no real money</span>
           </div>
+          <Link
+            to="/app/settings?tab=appearance"
+            className="icon-button"
+            aria-label="Display settings: theme, contrast and text size"
+            title="Display settings"
+          >
+            <Accessibility size={20} aria-hidden="true" />
+          </Link>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmReset(true)}>
             <RotateCcw size={16} aria-hidden="true" />
             Reset demo

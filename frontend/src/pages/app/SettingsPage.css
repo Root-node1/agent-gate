@@ -16,7 +16,7 @@
 }
 
 .st-panel:focus-visible {
-  outline: 3px solid var(--color-focus);
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -205,7 +205,7 @@
 }
 
 .st-link-card:focus-visible {
-  outline: 3px solid var(--color-focus);
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -273,7 +273,7 @@
 }
 
 .st-code pre:focus-visible {
-  outline: 3px solid var(--color-focus);
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: -3px;
 }
 

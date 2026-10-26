@@ -44,7 +44,7 @@ code {
 }
 
 :focus-visible {
-  outline: 3px solid var(--color-focus);
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -353,7 +353,7 @@ code {
     position: fixed;
     inset: 0;
     z-index: 40;
-    background: rgba(16, 24, 40, 0.4);
+    background: var(--scrim);
   }
 
   .shell .sidebar-close,
@@ -1039,7 +1039,7 @@ code {
 }
 
 .row-link:has(a.row-anchor:focus-visible) {
-  outline: 3px solid var(--color-focus);
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: -3px;
 }
 
@@ -1337,7 +1337,7 @@ dialog.drawer {
 
 dialog.modal::backdrop,
 dialog.drawer::backdrop {
-  background: rgba(16, 24, 40, 0.45);
+  background: var(--scrim);
 }
 
 dialog.modal {
@@ -1451,23 +1451,23 @@ dialog.drawer[open] {
   padding: var(--space-3) var(--space-4);
   font-size: var(--text-sm);
   font-weight: 500;
-  color: var(--color-surface);
-  background: var(--color-text);
+  color: var(--color-inverse-text);
+  background: var(--color-inverse-bg);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   animation: modal-in 200ms var(--ease);
 }
 
 .toast-success svg {
-  color: #7ee2a8;
+  color: var(--color-inverse-allow);
 }
 
 .toast-error svg {
-  color: #ffb4a9;
+  color: var(--color-inverse-deny);
 }
 
 .toast-info svg {
-  color: #a9c1ff;
+  color: var(--color-inverse-info);
 }
 
 /* ==========================================================================

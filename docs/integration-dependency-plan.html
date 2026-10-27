@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Integration Dependency Plan &mdash; AgentGate</title>
+  <meta name="description" content="INT-02: Dependency plan for adopting the AUTH-01 + Backend CRUD integration baseline across feature worktrees.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>AgentGate Documentation</h1>
+    <p class="subtitle">Spending firewall between AI agents and PayPal. <em>Status: work in progress for the PayPal AI hackathon.</em></p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Documentation Home</a>
+      <a href="project-current-state.html">Project Current State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gap Analysis</a>
+      <a href="authentication-architecture.html">Authentication Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot Integration</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+      <a href="integration-dependency-plan.html">Integration Dependency Plan</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="overview">INT-02: Integration Dependency Plan</h2>
+
+    <div class="callout note">
+      <h4>Scope and boundaries</h4>
+      <p>
+        This document establishes the validated <strong>AUTH-01 + Backend CRUD</strong> integration
+        (branch <code>integration/auth-crud</code>, HEAD <code>3d6fef9</code>) as the reference baseline
+        for incorporating the remaining feature worktrees without losing their changes or
+        introducing conflicting authentication implementations.
+      </p>
+      <p>
+        <strong>Out of scope</strong>: no merge, rebase, cherry-pick, push, or deploy is performed here.
+        No application source code is modified. This is a planning and risk-assessment document only.
+      </p>
+    </div>
+
+    <div class="toc">
+      <h3>On this page</h3>
+      <ul>
+        <li><a href="#baseline">1. Validated integration baseline</a></li>
+        <li><a href="#worktrees">2. Worktree inventory and current state</a></li>
+        <li><a href="#ancestry">3. Branch ancestry and divergence</a></li>
+        <li><a href="#auth-deps">4. Authentication dependencies</a></li>
+        <li><a href="#frontend-deps">5. Frontend dependencies</a></li>
+        <li><a href="#backend-infra-deps">6. Backend and infrastructure dependencies</a></li>
+        <li><a href="#conflicts">7. Shared-file conflict risks</a></li>
+        <li><a href="#sequence">8. Recommended implementation sequence</a></li>
+        <li><a href="#strategy">9. Safe future integration strategy</a></li>
+        <li><a href="#gates">10. Approval gates</a></li>
+        <li><a href="#decisions">11. Decisions requiring Tech Lead approval</a></li>
+      </ul>
+    </div>
+
+    <!-- ===== 1. Baseline ===== -->
+
+    <h2 id="baseline">1. Validated integration baseline</h2>
+
+    <p>
+      The reference baseline is the <code>integration/auth-crud</code> worktree, currently at
+      commit <code>3d6fef9</code> (<code>test(integration): verify auth and backend CRUD compatibility</code>).
+      Its immediate parent, <code>bc6987e</code> ("Merge pull request #6 from
+      Root-node1/audit/agentgate-predeployment-readiness"), is the common ancestor of every feature
+      branch and the starting point from which the integration was built.
+    </p>
+
+    <h3>Baseline verification</h3>
+    <table>
+      <thead>
+        <tr><th>Check</th><th>Evidence</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Branch name</td><td><code>git branch --show-current</code></td><td>integration/auth-crud</td></tr>
+        <tr><td>HEAD commit</td><td><code>3d6fef9</code></td><td>PASS</td></tr>
+        <tr><td><code>bc6987e</code> reachable from HEAD</td><td><code>git merge-base --is-ancestor bc6987e integration/auth-crud</code></td><td>PASS</td></tr>
+        <tr><td>Working tree clean</td><td><code>git status --short</code></td><td>PASS (no modifications)</td></tr>
+        <tr><td>AUTH-01 present</td><td>commit <code>c35287d</code> &mdash; <code>feat(auth): establish session authentication foundation</code></td><td>PASS</td></tr>
+        <tr><td>Backend CRUD present</td><td>commits <code>3b9c71d</code> &mdash; <code>00a82d5</code> (CRUD-02 through CRUD-03B.3)</td><td>PASS</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Integrated commit history</h3>
+    <p>
+      The baseline was assembled by taking <code>feat/auth-foundation</code> as the base, then merging
+      <code>feat/backend-crud</code> into it with a fast-forward-preserving merge. All commits are
+      reachable from <code>3d6fef9</code>:
+    </p>
+    <table>
+      <thead>
+        <tr><th>Commit</th><th>Branch</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>bc6987e</code></td><td>(merge-base)</td><td>Merge PR #6 &mdash; audit/agentgate-predeployment-readiness baseline</td></tr>
+        <tr><td><code>c35287d</code></td><td>feat/auth-foundation</td><td>Establish session authentication foundation (allauth, CSRF, accounts app) &mdash; <strong>AUTH-01</strong></td></tr>
+        <tr><td><code>3b9c71d</code></td><td>feat/backend-crud</td><td>Add backend CRUD contract documentation (agents, policies, transactions)</td></tr>
+        <tr><td><code>4a0096e</code></td><td>feat/backend-crud</td><td>Implement agent management API (CRUD-02)</td></tr>
+        <tr><td><code>d19ab71</code></td><td>feat/backend-crud</td><td>Agent mutation audit completeness</td></tr>
+        <tr><td><code>f49f6b9</code></td><td>feat/backend-crud</td><td>Finalize policy CRUD contract and versioning docs</td></tr>
+        <tr><td><code>83faeb4</code></td><td>feat/backend-crud</td><td>Immutable policy retrieval and updates</td></tr>
+        <tr><td><code>2ee3b19</code></td><td>feat/backend-crud</td><td>Immutable versioned policy creation</td></tr>
+        <tr><td><code>00a82d5</code></td><td>feat/backend-crud</td><td>Immutable merchant-rule mutations &mdash; <strong>CRUD-03B.3</strong></td></tr>
+        <tr><td><code>b40afe8</code></td><td>(merge)</td><td>Merge feat/backend-crud into integration/auth-crud</td></tr>
+        <tr><td><code>3d6fef9</code></td><td>(integration)</td><td>test(integration): verify auth and backend CRUD compatibility</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Validation results (at <code>3d6fef9</code>)</h3>
+    <table>
+      <thead><tr><th>Check</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td><code>python manage.py check</code></td><td class="complete">No issues (0 silenced)</td></tr>
+        <tr><td><code>python manage.py makemigrations --check --dry-run</code></td><td class="complete">No missing migrations</td></tr>
+        <tr><td>Full test suite</td><td class="complete">339 passed, 2 skipped, 0 failures, 0 errors (43.9s)</td></tr>
+        <tr><td>Ruff lint</td><td class="complete">0 errors (5 pre-existing import-sorting fixes applied)</td></tr>
+        <tr><td><code>git diff --check</code></td><td class="complete">Clean</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>Merge-conflict summary</h4>
+      <p>
+        The auth foundation &rarr; CRUD merge produced <strong>zero textual conflicts</strong>. The only
+        file written by both branches, <code>backend/config/urls.py</code>, was auto-merged by
+        combining the allauth headless URL includes and the <code>/v1/agents/</code> CRUD includes into
+        a single <code>urlpatterns</code> list. No settings, requirements, or model conflicts occurred.
+      </p>
+    </div>
+
+    <!-- ===== 2. Worktree inventory ===== -->
+
+    <h2 id="worktrees">2. Worktree inventory and current state</h2>
+
+    <p>
+      Each feature branch was inspected via <code>git status</code> and <code>git merge-base</code>
+      against <code>integration/auth-crud</code>. No worktree was modified during inspection.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Worktree</th><th>Branch</th><th>HEAD</th><th>Merge-base vs integration/auth-crud</th><th>Unique commits</th><th>Uncommitted changes</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>integration-auth-crud</td><td>integration/auth-crud</td><td><code>3d6fef9</code></td><td>itself</td><td>&mdash;</td><td>No</td><td><span class="badge badge-complete">Baseline (reference)</span></td></tr>
+        <tr><td>feat-auth-foundation-…</td><td>feat/auth-foundation</td><td><code>c35287d</code></td><td><code>c35287d</code> (ancestor of baseline)</td><td>0 ahead of baseline</td><td>No</td><td><span class="badge badge-complete">Integrated &mdash; source of AUTH-01</span></td></tr>
+        <tr><td>feat-backend-crud-…</td><td>feat/backend-crud</td><td><code>00a82d5</code></td><td><code>00a82d5</code> (ancestor of baseline)</td><td>0 ahead of baseline</td><td>No</td><td><span class="badge badge-complete">Integrated &mdash; source of CRUD-03B.3</span></td></tr>
+        <tr><td>feat-github-oauth-…</td><td>feat/github-oauth</td><td><code>bc6987e</code></td><td><code>bc6987e</code></td><td>0</td><td>No</td><td><span class="badge badge-pending">Pending &mdash; needs baseline</span></td></tr>
+        <tr><td>feat-account-recovery-…</td><td>feat/account-recovery</td><td><code>bc6987e</code></td><td><code>bc6987e</code></td><td>0</td><td>No</td><td><span class="badge badge-pending">Pending &mdash; needs baseline</span></td></tr>
+        <tr><td>feat-totp-2fa-…</td><td>feat/totp-2fa</td><td><code>bc6987e</code></td><td><code>bc6987e</code></td><td>0</td><td>No</td><td><span class="badge badge-pending">Pending &mdash; needs baseline</span></td></tr>
+        <tr><td>feat-dashboard-integration-…</td><td>feat/dashboard-integration</td><td><code>bc6987e</code></td><td><code>bc6987e</code></td><td>0</td><td>No</td><td><span class="badge badge-pending">Pending &mdash; needs baseline</span></td></tr>
+        <tr><td>feat-gemini-chatbot-…</td><td>feat/gemini-chatbot</td><td><code>bc6987e</code></td><td><code>bc6987e</code></td><td>0</td><td>No</td><td><span class="badge badge-pending">Pending &mdash; needs baseline</span></td></tr>
+        <tr><td>feat-background-jobs-…</td><td>feat/background-jobs</td><td><code>bc6987e</code></td><td><code>bc6987e</code></td><td>0</td><td>No</td><td><span class="badge badge-pending">Pending &mdash; needs baseline</span></td></tr>
+        <tr><td>feat-paypal-sandbox-…</td><td>feat/paypal-sandbox</td><td><code>bc6987e</code></td><td><code>bc6987e</code></td><td>0</td><td>No</td><td><span class="badge badge-pending">Pending &mdash; needs baseline</span></td></tr>
+        <tr><td>infra-contabo-deployment-…</td><td>infra/contabo-deployment</td><td><code>bc6987e</code></td><td><code>bc6987e</code></td><td>0</td><td>No</td><td><span class="badge badge-pending">Pending &mdash; needs baseline</span></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <h4>No <code>test/integration-qa</code> branch exists</h4>
+      <p>
+        The INT-02 task brief referenced a <code>test/integration-qa</code> worktree to inspect.
+        It does not exist in the repository (no local or remote branch). Inspection was therefore
+        limited to the ten feature branches and two integration branches listed above.
+      </p>
+    </div>
+
+    <!-- ===== 3. Ancestry and divergence ===== -->
+
+    <h2 id="ancestry">3. Branch ancestry and divergence</h2>
+
+    <p>Lean <code>git</code> results (run from the shared object database, no worktree changes):</p>
+
+    <pre><code>bc6987e  is ancestor of  integration/auth-crud (3d6fef9)   → YES
+c35287d (AUTH-01)  is ancestor of  integration/auth-crud             → YES
+00a82d5 (CRUD-03B.3)  is ancestor of  integration/auth-crud            → YES</code></pre>
+
+    <ul>
+      <li><strong>Ancestry chain</strong>: <code>bc6987e &rarr; c35287d (AUTH-01) &rarr; CRUD commits &rarr; b40afe8 (merge) &rarr; 3d6fef9</code>. The integration is linear beyond the merge commit.</li>
+      <li><strong>Feature branches</strong>: all eight pending branches diverge directly from <code>bc6987e</code> and sit <strong>10 commits behind</strong> the integration baseline. None carry any unique commits, so there is no work to preserve or resolve &mdash; each can be rebased onto <code>3d6fef9</code> cleanly.</li>
+      <li><strong>Integrated sources</strong>: <code>feat/auth-foundation</code> and <code>feat/backend-crud</code> are themselves ancestors of the baseline; their content is fully represented in <code>3d6fef9</code>.</li>
+    </ul>
+
+    <!-- ===== 4. Auth dependencies ===== -->
+
+    <h2 id="auth-deps">4. Authentication dependencies</h2>
+
+    <p>
+      The baseline integrates <strong>AUTH-01</strong> (email/password signup & login via
+      <code>django-allauth</code> Headless, CSRF, mandatory email verification, the
+      <code>GET /api/auth/user/</code> endpoint). The remaining auth tasks
+      (AUTH-02 through AUTH-06) are documented in
+      <code>docs/authentication-architecture.html</code> but <strong>not yet implemented</strong> &mdash;
+      they exist as a task decomposition for future work.
+    </p>
+
+    <h3>Auth task dependency graph</h3>
+    <pre><code>AUTH-01: Email/password signup/login  (DONE &mdash; c35287d in baseline)
+   │
+   ├── AUTH-02: Email verification + secure logout  (depends on AUTH-01)
+   │    │
+   │    ├── AUTH-03: Password reset & change  (depends on AUTH-02)
+   │    └── AUTH-05: TOTP 2FA — enrollment, recovery codes, enforcement (depends on AUTH-02)
+   │         │
+   │         └── AUTH-06: RBAC + rate limiting  (depends on AUTH-05)
+   │
+   └── AUTH-04: GitHub OAuth  (depends on AUTH-01; connects to AUTH-05 for post-login 2FA)</code></pre>
+
+    <h3>GitHub OAuth (<code>feat/github-oauth</code>)</h3>
+    <p><strong>Depends on</strong>: AUTH-01 (allauth installed and configured in baseline).</p>
+    <ul>
+      <li><strong>Existing configuration</strong>: <code>django-allauth</code> with <code>allauth.account</code> and <code>allauth.socialaccount</code> in <code>INSTALLED_APPS</code>; <code>AllauthMiddleware</code> active; <code>ACCOUNT_EMAIL_VERIFICATION = "mandatory"</code>.</li>
+      <li><strong>Setup required</strong>: register a GitHub OAuth App (callback <code>/accounts/github/login/callback/</code>), set <code>SOCIALACCOUNT_PROVIDERS["github"]</code>, configure <code>DJANGO_GITHUB_CLIENT_ID</code> / <code>DJANGO_GITHUB_CLIENT_SECRET</code> env vars (server-side only).</li>
+      <li><strong>Email verification</strong>: <code>SOCIALACCOUNT_EMAIL_VERIFICATION = "mandatory"</code> must be enforced; GitHub emails that are unverified should not gain dashboard access.</li>
+      <li><strong>Account linking</strong>: when a GitHub user matches an existing <code>User.email</code>, allauth should link the <code>SocialAccount</code> rather than create a duplicate; a custom <code>SocialAccountAdapter</code> enforces the allowlisted-domain rule.</li>
+      <li><strong>Session/CSRF</strong>: OAuth completes server-side via Django sessions; the frontend reads the resulting <code>sessionid</code>/<code>csrftoken</code> cookies and then polls <code>GET /api/auth/user/</code>. No frontend token exchange.</li>
+      <li><strong>Conflict risk</strong>: <code>backend/config/urls.py</code> extends the allauth URL includes &mdash; must be merged after the CRUD URL block already present in the baseline.</li>
+    </ul>
+
+    <h3>Account recovery (<code>feat/account-recovery</code>)</h3>
+    <p><strong>Depends on</strong>: AUTH-02 (email backend + verification flow).</p>
+    <ul>
+      <li><strong>Password reset</strong>: uses allauth <code>ACCOUNT_PASSWORD_RESET</code>; links expiring (1 hour, single-use) via <code>ACCOUNT_PASSWORD_RESET_TIMEOUT = 3600</code>.</li>
+      <li><strong>Password change</strong>: <code>POST /accounts/password/change/</code> requires the current password.</li>
+      <li><strong>Email verification</strong>: reuses the AUTH-02 confirmation flow; <code>ACCOUNT_EMAIL_CONFIRMATION_EXPIRE_DAYS = 3</code>.</li>
+      <li><strong>Session invalidation</strong>: logout (allauth <code>POST /accounts/logout/</code>) destroys the session row so a subsequent <code>GET /api/auth/user/</code> returns 401. Password-reset flows should not rotate the session cookie unless the password is actually changed.</li>
+      <li><strong>Shared files</strong>: settings (<code>base.py</code>), <code>apps/accounts/adapters.py</code> (custom <code>AccountAdapter</code>).</li>
+    </ul>
+
+    <h3>TOTP 2FA (<code>feat/totp-2fa</code>)</h3>
+    <p><strong>Depends on</strong>: AUTH-05 task unit; builds on AUTH-02's email flow + AUTH-06's rate limiting.</p>
+    <ul>
+      <li><strong>django-allauth MFA vs. <code>django-two-factor-auth</code>: </strong> the architecture doc recommends <code>django-two-factor-auth</code> (built on <code>django-otp</code>); this must be confirmed with the Tech Lead (see <a href="#decisions">§11</a>).</li>
+      <li><strong>Enrollment</strong>: generate a TOTP secret, render a QR code (<code>otpauth://</code> URI), verify a 6-digit code.</li>
+      <li><strong>Recovery codes</strong>: 10 single-use backup codes (20 chars each) stored hashed at <code>apps/accounts/models.py</code> (new <code>TOTPRecoveryCode</code> model &rarr; shared-file risk with accounts app).</li>
+      <li><strong>Enforcement</strong>: <code>admin</code> and <code>approver</code> roles are forced through the 2FA state machine; <code>viewer</code> is opt-in.</li>
+      <li><strong>GitHub OAuth interaction</strong>: after a successful OAuth login, if the user has 2FA enrolled, redirect to <code>GET /2fa/verify?prompt=1</code> before granting dashboard access.</li>
+      <li><strong>API permission</strong>: 2FA status is surfaced via <code>GET /api/auth/user/</code> (<code>two_factor_enabled</code> boolean) so the frontend can gate routes.</li>
+      <li><strong>State machine</strong>: <code>Unauthenticated &rarr; Primary Verified &rarr; Second Factor Required &rarr; Second Factor Verified &rarr; Authenticated Dashboard User</code>.</li>
+    </ul>
+
+    <!-- ===== 5. Frontend dependencies ===== -->
+
+    <h2 id="frontend-deps">5. Frontend dependencies</h2>
+
+    <p>
+      The React + TypeScript + Vite dashboard (<code>frontend/</code>) currently has <strong>two
+      data paths</strong> (see <code>docs/integration-gap-analysis.html</code>):
+    </p>
+    <ul>
+      <li><strong>11 of 17 dashboard screens</strong> read from an in-memory demo store
+        (<code>frontend/src/demo/store.ts</code>) &mdash; <strong>zero real backend calls</strong>.</li>
+      <li><strong>3 simulator/live pages</strong> call the real agent API
+        (<code>POST /v1/spend-requests/</code>) via <code>frontend/src/api/spendRequests.ts</code>
+        using an in-memory agent key.</li>
+    </ul>
+
+    <div class="callout danger">
+      <h4>Critical finding</h4>
+      <p>
+        The dashboard is a fully functional mock application. It replicates the backend rule engine
+        in TypeScript but has no integration with the actual backend for any dashboard operation
+        (approvals, policies, agents, audit, transactions, settings).
+      </p>
+    </div>
+
+    <h3>Minimum auth capabilities per screen</h3>
+    <table>
+      <thead><tr><th>Screen</th><th>Requires</th><th>Depends on (backend)</th></tr></thead>
+      <tbody>
+        <tr><td>SimulatePage</td><td>Agent key only</td><td><code>POST /v1/spend-requests/</code> (works)</td></tr>
+        <tr><td>OverviewPage</td><td>User + any membership</td><td>Dashboard auth + <code>GET /v1/spend-requests/</code> (org-scoped, missing)</td></tr>
+        <tr><td>ApprovalsPage / ApprovalDetailPage</td><td>approver/admin role</td><td>Dashboard auth + <code>GET/POST /v1/approvals/…</code></td></tr>
+        <tr><td>TransactionsPage / TransactionDetailPage</td><td>any membership</td><td>Dashboard auth + org-scoped spend-request list (missing)</td></tr>
+        <tr><td>AgentsPage / AgentDetailPage / Agent CRUD</td><td>admin (write)</td><td>Dashboard auth + <code>/v1/agents/...</code> (integrated &mdash; needs API client)</td></tr>
+        <tr><td>PoliciesPage / PolicyEditPage</td><td>admin (write)</td><td>Dashboard auth + <code>/v1/policies/...</code> (integrated &mdash; needs API client + response transform)</td></tr>
+        <tr><td>AuditLogPage</td><td>any membership</td><td>Dashboard auth + <code>GET /v1/audit/</code> (param mapping needed)</td></tr>
+        <tr><td>Settings (Workspace / Team / API keys / Webhooks / PayPal)</td><td>admin</td><td>Dashboard auth + settings APIs (most missing)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Frontend integration dependencies</h3>
+    <dl>
+      <dt>CSRF cookie bootstrap</dt>
+      <dd>Must call <code>GET /api/auth/headless/browser/v1/config</code> to obtain the CSRF cookie before any state-changing request.</dd>
+      <dt>Session-aware requests</dt>
+      <dd>All dashboard <code>fetch()</code> calls must use <code>credentials: "include"</code> and pass the <code>X-CSRFToken</code> header.</dd>
+      <dt>Dashboard auth flow</dt>
+      <dd><code>SessionProvider.tsx</code> currently stores only an agent key; it must be extended to hold the dashboard user and roles from <code>GET /api/auth/user/</code>.</dd>
+      <dt>API client split</dt>
+      <dd><code>spendRequests.ts</code> (agent-key path) must NOT be modified; a new dashboard API client must be added alongside it.</dd>
+      <dt>Contract mismatches</dt>
+      <dd>Policy list response uses UUID + minor currency units + <code>merchant_rules[]</code>; the frontend demo type uses numeric IDs + major units + split <code>allowed_merchants/blocked_merchants</code>. A response transformer is required.</dd>
+      <dt>Agent key auth</dt>
+      <dd><code>frontend/src/api/spendRequests.ts</code> + <code>AgentKeyAuthentication</code> backend are already wired &mdash; the simulator path is independent and unchanged by auth work.</dd>
+    </dl>
+
+    <!-- ===== 6. Backend & infra dependencies ===== -->
+
+    <h2 id="backend-infra-deps">6. Backend and infrastructure dependencies</h2>
+
+    <h3>Gemini chatbot (<code>feat/gemini-chatbot</code>)</h3>
+    <ul>
+      <li><strong>Depends on</strong>: dashboard session auth (admin/approver can invoke), the spend/policy read APIs for context.</li>
+      <li><strong>Security boundary</strong>: read-only advisory proxy; must remain <strong>read-only</strong>; server-side Gemini key only.</li>
+      <li><strong>Shared files</strong>: <code>backend/config/urls.py</code> (new <code>/v1/gemini/…</code> include), <code>requirements.txt</code> (<code>google-generativeai</code>), <code>frontend/src/session/</code> + <code>App.tsx</code> (protected route).</li>
+    </ul>
+
+    <h3>Background jobs (<code>feat/background-jobs</code>)</h3>
+    <ul>
+      <li><strong>Depends on</strong>: dashboard auth (admin-only management endpoints), the approvals engine (to schedule expiry checks).</li>
+      <li><strong>Tech stack</strong>: Procrastinate (Postgres-backed queue), per <code>docs/implementation-plan.html</code>.</li>
+      <li><strong>Shared files</strong>: <code>requirements.txt</code> (<code>procrastinate</code>), <code>config/settings/base.py</code> (task queue config), <code>backend/run.sh</code> (worker startup), <code>apps/approvals/services.py</code> (expiry scheduling).</li>
+      <li><strong>Blocker for staging</strong>: <code>expire_approvals</code> must run automatically (P1).</li>
+    </ul>
+
+    <h3>PayPal sandbox (<code>feat/paypal-sandbox</code>)</h3>
+    <ul>
+      <li><strong>Depends on</strong>: the spend-request engine, the approval flow (only approved requests execute), the audit log.</li>
+      <li><strong>Security boundary</strong>: <strong>sandbox-only</strong>; no production financial execution; no PayPal credentials committed to Git.</li>
+      <li><strong>Required env vars</strong>: <code>PAYPAL_CLIENT_ID</code>, <code>PAYPAL_CLIENT_SECRET</code>, <code>PAYPAL_WEBHOOK_SECRET</code> (sandbox credentials only).</li>
+      <li><strong>Shared files</strong>: <code>requirements.txt</code> (PayPal SDK), <code>config/urls.py</code> (webhook endpoint), <code>apps/payments/executors.py</code>, <code>apps/approvals/views.py</code> (post-approve trigger).</li>
+    </ul>
+
+    <h3>Contabro VPS deployment (<code>infra/contabo-deployment</code>)</h3>
+    <ul>
+      <li><strong>Depends on</strong>: all application features being on <code>main</code> or a release candidate; a Docker Compose stack.</li>
+      <li><strong>Topology</strong>: Caddy (HTTPS) &rarr; Gunicorn &rarr; Neon PostgreSQL; static assets served by Caddy.</li>
+      <li><strong>Shared files</strong>: <code>docker-compose.yml</code>, <code>Caddyfile</code>, <code>backend/config/settings/prod.py</code> (allowed hosts, secure cookie flags).</li>
+      <li><strong>Critical</strong>: must be the <strong>last</strong> integration &mdash; it depends on auth, CRUD, approvals, PayPal, and background jobs all being stable.</li>
+    </ul>
+
+    <h3>PostgreSQL migrations</h3>
+    <ul>
+      <li>Baseline verification: <code>makemigrations --check --dry-run</code> reports no missing migrations.</li>
+      <li>Any new model (e.g., TOTP recovery codes, invite codes) must ship its migration alongside its code; <code>migrate --plan</code> should be re-run after each feature lands.</li>
+      <li>The audit <code>AuditEvent</code> model already has an append-only DB trigger (commit <code>973f5a6</code>); new audit event types must extend the trigger, not bypass it.</li>
+    </ul>
+
+    <h3>CI and integration testing</h3>
+    <ul>
+      <li>The GitHub Actions workflow (<code>.github/workflows/ci.yml</code>) runs backend tests against PostgreSQL, the frontend build, and a security audit.</li>
+      <li>After each feature branch is rebased onto the baseline, CI must run <strong>before</strong> any merge &mdash; baseline is 339 passing tests; regressions are not acceptable.</li>
+      <li>No frontend unit/E2E tests exist; the first priority after auth is adding them (P1 in the gap analysis).</li>
+    </ul>
+
+    <!-- ===== 7. Conflict risks ===== -->
+
+    <h2 id="conflicts">7. Shared-file conflict risks</h2>
+
+    <p>
+      Every feature branch ultimately traces back to <code>bc6987e</code>, so conflicts are expected
+      when multiple branches modify the same Django/React files. The highest-risk shared files are:
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>File / module</th><th>Touched by</th><th>Risk when integrating together</th><th>Mitigation</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>backend/config/settings/base.py</code></td><td>AUTH-02&ndash;06 (allauth, 2FA libs), CRUD (agent key), infra, Gemini, PayPal</td><td>INSTALLED_APPS / MIDDLEWARE / AUTHENTICATION_BACKENDS collisions</td><td>Integrate auth fully first; rebase each subsequent branch on the completed auth stack</td></tr>
+        <tr><td><code>backend/config/urls.py</code></td><td>All auth tasks, CRUD, approvals, audit, spend, Gemini, PayPal webhook</td><td>urlpatterns ordering &mdash; duplicate <code>path()</code> prefixes</td><td>Maintain a central URL-prefix convention; lint for duplicates after each merge</td></tr>
+        <tr><td><code>backend/requirements.txt</code></td><td>All backend tasks (allauth variants, procrastinate, PayPal SDK, Gemini SDK, django-axes)</td><td>Version pinning conflicts</td><td>Pin and run <code>pip check</code> / lock file review before each merge</td></tr>
+        <tr><td><code>frontend/src/session/{SessionProvider, context}.{ts,tsx}</code></td><td>All dashboard features</td><td>Auth state shape changes break every page</td><td>Fix the session layer once (AUTH-02), then branch the frontend from it</td></tr>
+        <tr><td><code>frontend/src/App.tsx</code> / routing</td><td>Auth guards, dashboard routes, settings, PayPal settings</td><td>Route-order and guard collisions</td><td>Stabilize App.tsx routing after auth + current-user endpoint land</td></tr>
+        <tr><td><code>backend/apps/accounts/{models,adapters,permissions,views,serializers,urls}.py</code></td><td>AUTH-01&ndash;06, dashboard integration</td><td>OrgMembership / role logic changes ripple across features</td><td>Accounts app is the auth owner; lock its contract after AUTH-06</td></tr>
+        <tr><td><code>backend/apps/audit/models.py</code></td><td>All backend features (every mutation emits an audit event)</td><td>Event-type enum growth; trigger consistency</td><td>Single owner for the event-type list; extend via the existing migration pattern</td></tr>
+        <tr><td><code>backend/apps/policies/*</code></td><td>CRUD (integrated), PayPal (rule evaluation)</td><td>Policy shape used by both spend engine and PayPal executor</td><td>Define policy shape once after CRUD; PayPal conforms to it</td></tr>
+      </tbody>
+    </table>
+
+    <!-- ===== 8. Sequence ===== -->
+
+    <h2 id="sequence">8. Recommended implementation sequence</h2>
+
+    <p>
+      Ordering respects the AUTH dependency graph (§4), the P0/P1 prioritization in the gap
+      analysis, and the "backend before frontend" invariant (the frontend cannot integrate
+      a screen until its backend endpoint and auth gate exist).
+    </p>
+
+    <table>
+      <thead><tr><th>Step</th><th>Feature</th><th>Worktree</th><th>Order rationale</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>AUTH-02 &mdash; email verification + secure logout</td><td>feat/account-recovery</td><td>Unlocks AUTH-03 and AUTH-05; email verification gates all dashboard access</td></tr>
+        <tr><td>2</td><td>AUTH-04 &mdash; GitHub OAuth</td><td>feat/github-oauth</td><td>Depends only on AUTH-01 (already in baseline); parallel-safe with AUTH-02</td></tr>
+        <tr><td>3</td><td>AUTH-03 &mdash; password reset/change</td><td>feat/account-recovery</td><td>Depends on AUTH-02 email backend</td></tr>
+        <tr><td>4</td><td>AUTH-05 &mdash; TOTP 2FA</td><td>feat/totp-2fa</td><td>Depends on AUTH-02; needed by AUTH-06 and post-OAuth enforcement</td></tr>
+        <tr><td>5</td><td>AUTH-06 &mdash; RBAC + rate limiting</td><td>feat/dashboard-integration</td><td>Depends on AUTH-05; completes the org/role contract</td></tr>
+        <tr><td>6</td><td>Frontend dashboard auth integration</td><td>feat/dashboard-integration</td><td>Consumes <code>/api/auth/user/</code> + session; enables all protected routes</td></tr>
+        <tr><td>7</td><td>Dashboard API clients (approvals, transactions, audit)</td><td>feat/dashboard-integration</td><td>P0 &mdash; backend endpoints exist (CRUD) or are near-term (spend list)</td></tr>
+        <tr><td>8</td><td>Agent CRUD frontend client</td><td>feat/dashboard-integration</td><td>Backend <code>/v1/agents/</code> is integrated; only the API client + screens are missing</td></tr>
+        <tr><td>9</td><td>Background jobs (Procrastinate)</td><td>feat/background-jobs</td><td>Approval expiry must be automatic for staging; independent of PayPal</td></tr>
+        <tr><td>10</td><td>PayPal sandbox execution + webhook</td><td>feat/paypal-sandbox</td><td>Depends on approvals + spend engine + audit; sandbox-only boundary</td></tr>
+        <tr><td>11</td><td>Gemini chatbot proxy</td><td>feat/gemini-chatbot</td><td>Read-only; depends on auth session + policy/spend reads; can run late</td></tr>
+        <tr><td>12</td><td>Contabo Docker Compose deployment</td><td>infra/contabo-deployment</td><td>Last &mdash; depends on every feature being stable on <code>main</code></td></tr>
+    </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>Next recommended feature and worktree</h4>
+      <p>
+        After INT-02 closes, the next work should begin in <code>feat/account-recovery</code>
+        (rebased onto <code>3d6fef9</code>): implement <strong>AUTH-02</strong> (email verification +
+        secure logout). It has the widest blast radius &mdash; every downstream feature depends on
+        it &mdash; and the email backend it introduces unblocks AUTH-03 immediately thereafter.
+      </p>
+    </div>
+
+    <!-- ===== 9. Strategy ===== -->
+
+    <h2 id="strategy">9. Safe future integration strategy</h2>
+
+    <p>Guiding rules for bringing each feature onto the validated baseline:</p>
+
+    <ol>
+      <li><strong>Never rebase <code>integration/auth-crud</code>.</strong> It is the reference baseline. Treat <code>3d6fef9</code> as an immutable anchor.</li>
+      <li><strong>Rebase each feature branch onto <code>3d6fef9</code> before merge.</strong> Because all pending branches derive from <code>bc6987e</code> with no unique commits, a rebase is a fast-forward that cannot lose work.</li>
+      <li><strong>Integrate in dependency order</strong> (§8). Auth tasks must land before the dashboard or PayPal work that consumes sessions.</li>
+      <li><strong>Run the full gate after each integration</strong>:
+        <pre><code>python manage.py check
+python manage.py makemigrations --check --dry-run
+python manage.py test
+ruff check .
+git diff --check</code></pre>
+        Regression threshold: 339 passing, 2 skipped &mdash; no new failures.</li>
+      <li><strong>Re-run the INT-01 compatibility tests after every auth change.</strong> The 6 cross-module integration tests verify that auth and CRUD layers remain mutually compatible.</li>
+      <li><strong>Keep <code>backend/engine/</code> untouched</strong> by auth/infra changes (enforced by <code>.importlinter</code>).</li>
+      <li><strong>Do not merge auth + CRUD + dashboard into <code>main</code> until the frontend gap (demo store &rarr; real API clients) is closed for at least the P0 screens.</strong></li>
+    </ol>
+
+    <!-- ===== 10. Approval gates ===== -->
+
+    <h2 id="gates">10. Approval gates</h2>
+
+    <div class="callout danger">
+      <h4>Before merging, pushing, or deploying</h4>
+      <p>The following actions require explicit Tech Lead approval before proceeding:</p>
+      <ul>
+        <li>Rebaselining any feature branch onto <code>integration/auth-crud</code>.</li>
+        <li>Merging a feature branch into <code>main</code> or into <code>integration/auth-crud</code>.</li>
+        <li>Adding production PayPal credentials or switching PayPal from sandbox to live.</li>
+        <li>Changing Cloudflare tunnel/routing configuration.</li>
+        <li>Introducing new third-party dependencies (auth libraries, queue, PayPal/Gemini SDKs).</li>
+      </ul>
+    </div>
+
+    <p>No merge, rebase, cherry-pick, push, or deploy is performed in INT-02 itself.</p>
+
+    <!-- ===== 11. Decisions ===== -->
+
+    <h2 id="decisions">11. Decisions requiring Tech Lead approval</h2>
+
+    <table>
+      <thead><tr><th>#</th><th>Decision</th><th>Default / recommendation</th><th>Impact if unapproved</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>TOTP library: <code>django-two-factor-auth</code> (recommended) vs <code>django-otp</code> vs allauth MFA</td><td><code>django-two-factor-auth</code></td><td>Delays AUTH-05; different session-state wiring</td></tr>
+        <tr><td>2</td><td>Brute-force protection: <code>django-axes</code> vs custom DRF throttle</td><td><code>django-axes</code> + DRF rate throttle</td><td>Changes <code>requirements.txt</code> + <code>INSTALLED_APPS</code></td></tr>
+        <tr><td>3</td><td>Allauth Headless API vs custom JSON auth endpoints for SPA login</td><td>Allauth Headless (already in baseline)</td><td>Frontend login code; CSRF bootstrap path</td></tr>
+        <tr><td>4</td><td>PayPal SDK choice for sandbox execution</td><td>TBD &mdash; recommend <code>paypalcheckout</code> or <code>paypalrestsdk</code></td><td>Backend payments module; webhook parser</td></tr>
+        <tr><td>5</td><td>Background job scheduler: <code>Procrastinate</code> vs <code>Celery</code></td><td><code>Procrastinate</code> (per implementation plan)</td><td>Worker infra, <code>run.sh</code>, deployment</td></tr>
+        <tr><td>6</td><td>Org auto-assignment: single-tenant demo mode vs invite-code multi-tenant</td><td>Demo mode (auto-assign to <code>DEMO_ORG_NAME</code> as viewer)</td><td>New-user onboarding; <code>OrgMembership</code> signal hooks</td></tr>
+        <tr><td>7</td><td>Audit verify command ownership &mdash; keep <code>backend/engine/</code> pure-Python invariant</td><td>No changes to <code>backend/engine/</code></td><td>Architecture-contract enforcement</td></tr>
+      </tbody>
+    </table>
+
+    <hr>
+
+    <p style="font-size: 0.8rem; color: var(--color-text-muted);">
+      Document created: 2026-10-27 &nbsp;|&nbsp;
+      Worktree: <code>.kilo/worktrees/intergration</code> &nbsp;|&nbsp;
+      Reference baseline: <code>integration/auth-crud</code> @ <code>3d6fef9</code> &nbsp;|&nbsp;
+      Branch: <code>intergration</code> &nbsp;|&nbsp;
+      Related reference: INT-01 "Auth + CRUD Integration" exists on the <code>integration/auth-crud</code> worktree only.
+    </p>
+
+  </main>
+</body>
+</html>

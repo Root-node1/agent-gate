@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backend CRUD Contract &mdash; AgentGate</title>
+  <meta name="description" content="Implementation-ready API contract for AgentGate dashboard CRUD endpoints.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Backend CRUD Contract</h1>
+    <p class="subtitle">AgentGate Django 6.1 + DRF 3.18 &middot; Contract date: 2026-10-27 &middot; Worktree: feat/backend-crud</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <table of contents="">
+      <nav class="toc" aria-label="Table of contents">
+        <h3>Contents</h3>
+        <ul>
+          <li><a href="#inventory">1. Existing models and endpoint inventory</a></li>
+          <li><a href="#contracts">2. Proposed API request/response contracts</a></li>
+          <li><a href="#permissions">3. Permissions matrix</a></li>
+          <li><a href="#apikey-lifecycle">4. API key lifecycle</a></li>
+          <li><a href="#org-isolation">5. Organization isolation requirements</a></li>
+          <li><a href="#migrations">6. Model or migration changes required</a></li>
+          <li><a href="#frontend-deps">7. Frontend integration dependencies</a></li>
+          <li><a href="#task-plan">8. CRUD-02 through CRUD-06 task plan</a></li>
+          <li><a href="#acceptance">9. Acceptance criteria and test commands</a></li>
+          <li><a href="#decisions">10. Open decisions requiring Tech Lead approval</a></li>
+        </ul>
+      </nav>
+    </table>
+
+    <div class="callout note">
+      <p>
+        <strong>Scope</strong>: This contract covers the <em>inspection and planning</em> phase only.
+        No application source code is modified, no migrations are generated, and no
+        authentication changes are made in this worktree. All proposed endpoints are
+        specified against the existing models and infrastructure in the repository at
+        <code>bc698</code> (baseline <code>bc6987e</code>).
+      </p>
+    </div>
+
+    <h2 id="inventory">1. Existing models and endpoint inventory</h2>
+
+    <h3>Agent models <code>(backend/apps/agents/models.py)</code></h3>
+
+    <table>
+      <thead><tr><th>Model</th><th>Fields</th><th>Constraints</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>Agent</code></td>
+          <td>UUID PK; FK <code>organization</code> (CASCADE); <code>name</code> (CharField 100); <code>status</code> (CharField 10, choices: <code>active</code>/<code>suspended</code>, default <code>active</code>); <code>created_at</code>, <code>updated_at</code></td>
+          <td>Unique <code>unique_agent_name_per_org</code> on (<code>organization</code>, <code>name</code>); ordering by <code>name</code></td>
+        </tr>
+        <tr>
+          <td><code>ApiKey</code></td>
+          <td>UUID PK; FK <code>agent</code> (CASCADE, related_name <code>api_keys</code>); <code>prefix</code> (CharField 16, unique); <code>key_hash</code> (CharField 64, SHA-256 hex); <code>last_used_at</code> (nullable DateTimeField); <code>revoked_at</code> (nullable DateTimeField); <code>created_at</code>, <code>updated_at</code></td>
+          <td>Ordering by <code>-created_at</code>; prefix is 12 chars starting with <code>agk_</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h4>Agent model methods <code>(backend/apps/agents/models.py:33-69)</code></h4>
+
+    <dl>
+      <dt><code>Agent.create_with_key(name, organization)</code></dt>
+      <dd>@classmethod, @transaction.atomic. Creates an agent and its first ApiKey in one atomic block. Returns <code>(agent, raw_key)</code>. The raw key is generated and returned but never persisted in plaintext.</dd>
+      <dt><code>ApiKey.create_key(agent)</code></dt>
+      <dd>@classmethod. Creates a new ApiKey for an existing agent. Returns <code>(api_key, raw_key)</code>.</dd>
+      <dt><code>hash_key(raw_key)</code></dt>
+      <dd>SHA-256 hex digest stored in <code>key_hash</code>. (<code>backend/apps/agents/keys.py:11</code>)</dd>
+      <dt><code>key_prefix(raw_key)</code></dt>
+      <dd>First 12 characters of the raw key, used for DB indexing. (<code>backend/apps/agents/keys.py:16</code>)</dd>
+      <dt><code>new_raw_key()</code></dt>
+      <dd>Generates <code>agk_</code> + 32 bytes of URL-safe random. (<code>backend/apps/agents/keys.py:21</code>)</dd>
+      <dt><code>hash_matches(raw_key, stored_hash)</code></dt>
+      <dd>Constant-time comparison via <code>hmac.compare_digest</code>. (<code>backend/apps/agents/keys.py:26</code>)</dd>
+    </dl>
+
+    <h4>Agent authentication <code>(backend/apps/agents/authentication.py)</code></h4>
+
+    <p><code>AgentKeyAuthentication</code> reads <code>Authorization: Bearer &lt;key&gt;</code>, extracts the first 12 chars as the prefix, looks up the <code>ApiKey</code> row where <code>revoked_at IS NULL</code> and <code>agent.status = 'active'</code>, then does a constant-time hash comparison. It updates <code>last_used_at</code> at most once per minute.</p>
+
+    <h4>Agent throttling <code>(backend/apps/agents/throttling.py)</code></h4>
+
+    <p><code>AgentKeyRateThrottle</code> scopes to <code>agent</code> rate (<code>THROTTLE_AGENT</code>, default <code>60/min</code>) keyed by <code>agent.pk</code>.</p>
+
+    <div class="callout danger">
+      <p>
+        <strong>No CRUD layer exists for agents.</strong> There is no
+        <code>agents/urls.py</code>, no <code>agents/views.py</code>, no
+        <code>agents/serializers.py</code>. Agent creation is handled solely via the
+        <code>create_agent</code> and <code>seed_demo</code> management commands.
+        Dashboard CRUD endpoints are entirely absent from the URL configuration
+        (<code>backend/config/urls.py:29-31</code>).
+      </p>
+    </div>
+
+    <h3>Policy models <code>(backend/apps/policies/models.py)</code></h3>
+
+    <table>
+      <thead><tr><th>Model</th><th>Key fields</th><th>Constraints</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>Policy</code></td>
+          <td>UUID PK; FK <code>organization</code>, <code>agent</code>; <code>name</code> (default "Default policy"); <code>version</code> (PositiveIntegerField, default 1); <code>currency</code> (CharField 3, default USD); <code>per_transaction_cap_minor</code> (default 10000); <code>daily_budget_minor</code> (default 50000); <code>weekly_budget_minor</code> (default 200000); <code>monthly_budget_minor</code> (default 500000); <code>approval_threshold_minor</code> (default 5000); <code>merchant_mode</code> (allowlist_only/blocklist); <code>velocity_max_count</code>, <code>velocity_window_seconds</code> (min 1); <code>merchant_window_cap_minor</code>; <code>new_payee_cooldown_hours</code>; <code>untrusted_source_action</code> (needs_approval/deny); <code>injection_escalate_threshold</code> (0-100); <code>classifier_required</code> (bool); <code>approval_ttl_minutes</code> (default 60); <code>timezone</code> (default Africa/Nairobi); timestamps</td>
+          <td>Unique <code>unique_policy_version_per_agent</code> on (<code>agent</code>, <code>version</code>); check <code>policy_threshold_lte_cap</code>; check <code>policy_injection_threshold_range</code>; check <code>policy_velocity_window_positive</code>; index <code>policy_org_agent_idx</code> on (<code>organization</code>, <code>agent</code>)</td>
+        </tr>
+        <tr>
+          <td><code>MerchantRule</code></td>
+          <td>UUID PK; FK <code>policy</code> (related_name <code>merchant_rules</code>); <code>merchant_ref</code> (CharField 255); <code>kind</code> (allow/block); <code>note</code> (CharField 255, blank); timestamps</td>
+          <td>Unique <code>unique_merchant_per_policy</code> on (<code>policy</code>, <code>merchant_ref</code>); ordering by <code>merchant_ref</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h4>Existing policy view <code>(backend/apps/policies/views.py)</code></h4>
+
+    <p>Only <code>PolicyListView</code> exists: <code>GET /v1/policies/</code> with <code>SessionAuthentication</code> + <code>IsDashboardUser</code>. It filters by <code>organization__memberships__user</code>, supports <code>?agent=&lt;UUID&gt;</code>, and uses <code>DashboardPagination</code>.</p>
+
+    <h4>Existing policy serializer <code>(backend/apps/policies/serializers.py)</code></h4>
+
+    <p><code>PolicySerializer</code> is fully read-only (all fields including <code>read_only_fields</code>). It nests <code>MerchantRuleSerializer</code> (id, merchant_ref, kind, note) under the <code>merchant_rules</code> array. All budget fields are in integer minor units.</p>
+
+    <div class="callout warning">
+      <p>
+        <strong>Missing write layer.</strong> No <code>POST /v1/policies/</code>,
+        no <code>PATCH /v1/policies/{id}/</code>, no merchant-rule create/delete
+        endpoints. The <code>PolicySerializer</code> is read-only; a writable serializer
+        or a new create/update serializer must be introduced.
+      </p>
+    </div>
+
+    <h3>Spend request model <code>(backend/apps/spend/models.py)</code></h3>
+
+    <p>The <code>SpendRequest</code> model is comprehensive (see audit for full field list). Key fields for the dashboard contract:</p>
+
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>UUID PK</td><td>&mdash;</td></tr>
+        <tr><td><code>organization</code></td><td>FK → Organization</td><td>Org tenancy boundary</td></tr>
+        <tr><td><code>agent</code></td><td>FK → Agent (PROTECT)</td><td>&mdash;</td></tr>
+        <tr><td><code>policy</code></td><td>FK → Policy (PROTECT)</td><td>&mdash;</td></tr>
+        <tr><td><code>policy_version</code></td><td>PositiveIntegerField</td><td>Snapshotted at creation</td></tr>
+        <tr><td><code>amount_minor</code></td><td>PositiveBigIntegerField</td><td>Integer minor units</td></tr>
+        <tr><td><code>currency</code></td><td>CharField 3</td><td>ISO-4217, normalized uppercase</td></tr>
+        <tr><td><code>merchant_ref</code></td><td>CharField 255</td><td>Normalized (lowercase, no scheme/www)</td></tr>
+        <tr><td><code>destination_type</code></td><td>CharField 20</td><td>Choices in <code>payees.models.DestinationType</code></td></tr>
+        <tr><td><code>destination_value</code></td><td>CharField 500</td><td>Normalized value</td></tr>
+        <tr><td><code>destination_fingerprint</code></td><td>CharField 64</td><td>SHA-256 of normalized destination</td></tr>
+        <tr><td><code>purpose</code></td><td>CharField 2000</td><td>&mdash;</td></tr>
+        <tr><td><code>source_type</code></td><td>CharField 20</td><td>trusted/untrusted/web_page/email/invoice/tool_output/unknown</td></tr>
+        <tr><td><code>evidence_excerpt</code></td><td>CharField 4096</td><td>&mdash;</td></tr>
+        <tr><td><code>risk_score</code></td><td>PositiveSmallField</td><td>0-100</td></tr>
+        <tr><td><code>decision</code></td><td>CharField 15</td><td>allow/deny/needs_approval; immutable after save (<code>models.py:116-120</code>)</td></tr>
+        <tr><td><code>status</code></td><td>CharField 20</td><td>Forward-only lifecycle</td></tr>
+        <tr><td><code>reasons</code></td><td>JSONField</td><td>List of <code>{"code": "Rxx_...", "message": "..."}</code></td></tr>
+        <tr><td><code>matched_rules</code></td><td>JSONField</td><td>List of rule code strings</td></tr>
+        <tr><td><code>paypal_reference</code></td><td>CharField 100 (nullable)</td><td>Unique when non-null</td></tr>
+        <tr><td><code>paypal_status</code></td><td>CharField 50</td><td>&mdash;</td></tr>
+        <tr><td><code>decided_at</code></td><td>DateTimeField (nullable)</td><td>&mdash;</td></tr>
+        <tr><td><code>executed_at</code></td><td>DateTimeField (nullable)</td><td>&mdash;</td></tr>
+        <tr><td><code>created_at</code></td><td>auto_now_add</td><td>&mdash;</td></tr>
+        <tr><td><code>updated_at</code></td><td>auto_now</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+
+    <p class="callout">Status lifecycle (forward-only): <code>pending_approval → approved → executing → succeeded</code>, or <code>pending_approval → denied/rejected/expired</code>. Budget counting only applies to <code>APPROVED, EXECUTING, SUCCEEDED</code> (<code>models.py:42</code>).</p>
+
+    <h4>Existing spend endpoints <code>(backend/apps/spend/views.py, urls.py)</code></h4>
+
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Permission</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>POST</td><td><code>/v1/spend-requests/</code></td><td>AgentKeyAuthentication</td><td>&mdash;</td><td>Live</td></tr>
+        <tr><td>GET</td><td><code>/v1/spend-requests/{id}/</code></td><td>AgentKeyAuthentication</td><td>&mdash;</td><td>Live (agent-scoped)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <p>
+        <strong>No dashboard spend-request list endpoint exists.</strong>
+        The existing <code>GET /v1/spend-requests/{id}/</code> is agent-scoped
+        (filters by <code>agent=request.user.agent</code>, returns 404 for others).
+        A dashboard org-scope listing is planned but unimplemented.
+      </p>
+    </div>
+
+    <h3>Endpoint inventory summary</h3>
+
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Permission</th><th>Status</th><th>Handler</th></tr></thead>
+      <tbody>
+        <tr><td colspan="6"><strong>Live</strong></td></tr>
+        <tr><td>POST</td><td><code>/v1/spend-requests/</code></td><td>Agent key</td><td>&mdash;</td><td>Live</td><td><code>SpendRequestCreateView</code></td></tr>
+        <tr><td>GET</td><td><code>/v1/spend-requests/{id}/</code></td><td>Agent key</td><td>&mdash;</td><td>Live</td><td><code>SpendRequestDetailView</code></td></tr>
+        <tr><td>GET</td><td><code>/v1/approvals/</code></td><td>Session</td><td>IsApprover</td><td>Live</td><td><code>ApprovalListView</code></td></tr>
+        <tr><td>GET</td><td><code>/v1/approvals/{id}/</code></td><td>Session</td><td>IsApprover</td><td>Live</td><td><code>ApprovalDetailView</code></td></tr>
+        <tr><td>POST</td><td><code>/v1/approvals/{id}/approve/</code></td><td>Session</td><td>IsApprover</td><td>Live</td><td><code>ApprovalApproveView</code></td></tr>
+        <tr><td>POST</td><td><code>/v1/approvals/{id}/deny/</code></td><td>Session</td><td>IsApprover</td><td>Live</td><td><code>ApprovalDenyView</code></td></tr>
+        <tr><td>GET</td><td><code>/v1/policies/</code></td><td>Session</td><td>IsDashboardUser</td><td>Live</td><td><code>PolicyListView</code></td></tr>
+        <tr><td>GET</td><td><code>/v1/audit/</code></td><td>Session</td><td>IsDashboardUser</td><td>Live</td><td><code>AuditListView</code></td></tr>
+        <tr><td>GET</td><td><code>/v1/audit/verify/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Live</td><td><code>AuditVerifyView</code></td></tr>
+        <tr><td colspan="6"><strong>Missing (contract)</strong></td></tr>
+        <tr><td>GET</td><td><code>/v1/agents/</code></td><td>Session</td><td>IsDashboardUser</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>POST</td><td><code>/v1/agents/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>GET</td><td><code>/v1/agents/{id}/</code></td><td>Session</td><td>IsDashboardUser</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>PATCH</td><td><code>/v1/agents/{id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>POST</td><td><code>/v1/agents/{id}/rotate-key</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>POST</td><td><code>/v1/agents/{id}/revoke-key</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>POST</td><td><code>/v1/policies/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>GET</td><td><code>/v1/policies/{id}/</code></td><td>Session</td><td>IsDashboardUser</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>PATCH</td><td><code>/v1/policies/{id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>POST</td><td><code>/v1/policies/{id}/merchant-rules/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>DELETE</td><td><code>/v1/policies/{id}/merchant-rules/{rule_id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>GET</td><td><code>/v1/spend-requests/</code> (dashboard)</td><td>Session</td><td>IsDashboardUser</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td>GET</td><td><code>/v1/spend-requests/{id}/</code> (dashboard)</td><td>Session</td><td>IsDashboardUser</td><td>Contract</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="contracts">2. Proposed API request/response contracts</h2>
+
+    <h3>Agents</h3>
+
+    <h4>GET /v1/agents/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsDashboardUser</p>
+    <p><strong>Query params</strong>:</p>
+    <dl>
+      <dt><code>limit</code></dt><dd>Integer, 1-200, default 50.</dd>
+      <dt><code>offset</code></dt><dd>Integer, default 0.</dd>
+    </dl>
+
+    <p>Response (200): paginated list of agents scoped to the caller's organizations. Returns only agents where the caller has at least one <code>OrgMembership</code>.</p>
+    <pre><code class="language-json">{
+  "count": 3,
+  "next": "http://localhost:8000/v1/agents/?limit=50&offset=50",
+  "previous": null,
+  "results": [
+    {
+      "id": "uuid",
+      "name": "billing-agent",
+      "status": "active",
+      "created_at": "2026-10-27T12:00:00Z",
+      "updated_at": "2026-10-27T12:00:00Z",
+      "current_key_prefix": "agk_1a2b3c4d5e6f"
+    }
+  ]
+}</code></pre>
+
+    <p><strong>Security note</strong>: <code>current_key_prefix</code> returns only the indexed prefix (12 chars). The full key hash is never exposed. If the agent has no non-revoked keys, the field is <code>null</code>.</p>
+
+    <h4>POST /v1/agents/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsOrganizationAdmin</p>
+    <p>Creates an agent and its first API key in one atomic operation (reuses <code>Agent.create_with_key</code>).</p>
+
+    <p>Request body:</p>
+    <pre><code class="language-json">{
+  "name": "billing-agent",
+  "organization": "uuid"
+}</code></pre>
+
+    <p><strong>Validation</strong>:</p>
+    <ul>
+      <li><code>name</code>: required, 1-100 characters, no leading/trailing whitespace.</li>
+      <li><code>organization</code>: required, must be a valid UUID belonging to an org the caller administers.</li>
+      <li>Name uniqueness per organization is enforced by the <code>unique_agent_name_per_org</code> database constraint; duplicate submissions return 400.</li>
+    </ul>
+
+    <p>Response (201):</p>
+    <pre><code class="language-json">{
+  "id": "uuid",
+  "name": "billing-agent",
+  "organization": "uuid",
+  "status": "active",
+  "created_at": "2026-10-27T12:00:00Z",
+  "updated_at": "2026-10-27T12:00:00Z",
+  "api_key": "agk_1a2b3c4d5e6f..."
+}</code></pre>
+
+    <div class="callout danger">
+      <p>
+        <strong>Display-once semantics</strong>: The <code>api_key</code> field in the response body
+        contains the raw key string (e.g. <code>agk_...</code>). This is the <em>only</em> time the
+        full key is ever returned. It is never stored in the database in plaintext &mdash; only the
+        prefix and SHA-256 hash are persisted (<code>backend/apps/agents/keys.py:11-13</code>).
+        The frontend must show the key once and never request it again.
+      </p>
+    </div>
+
+    <h4>GET /v1/agents/{id}/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsDashboardUser</p>
+
+    <p>Response (200):</p>
+    <pre><code class="language-json">{
+  "id": "uuid",
+  "name": "billing-agent",
+  "organization": "uuid",
+  "organization_name": "Acme Corp",
+  "status": "active",
+  "created_at": "2026-10-27T12:00:00Z",
+  "updated_at": "2026-10-27T12:00:00Z",
+  "current_key": {
+    "prefix": "agk_1a2b3c4d5e6f",
+    "created_at": "2026-10-27T12:00:00Z",
+    "last_used_at": "2026-10-27T12:00:01Z"
+  },
+  "policies": [
+    {
+      "id": "uuid",
+      "version": 1,
+      "name": "Default policy",
+      "currency": "USD"
+    }
+  ],
+  "recent_spend_requests": 12,
+  "today_spend_minor": 2500,
+  "currency": "USD"
+}</code></pre>
+
+    <p><strong>Security note</strong>: <code>current_key</code> returns only the prefix, creation timestamp, and last-used timestamp. <code>key_hash</code> and <code>revoked_at</code> are never exposed over the API. Returns 404 if the agent is outside the caller's organizations.</p>
+
+    <h4>PATCH /v1/agents/{id}/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsOrganizationAdmin</p>
+
+    <p>Update agent fields. Primary use: suspend/reactivate.</p>
+
+    <p>Request body (partial update):</p>
+    <pre><code class="language-json">{
+  "name": "billing-agent-renamed",
+  "status": "suspended"
+}</code></pre>
+
+    <p><strong>Validation</strong>:</p>
+    <ul>
+      <li><code>status</code> accepts only <code>active</code> or <code>suspended</code>.</li>
+      <li>Rename is permitted but must not collide with another active agent in the same organization.</li>
+      <li>If status changes from <code>active</code> to <code>suspended</code>, the agent's key is effectively invalidated (the authentication layer already rejects suspended agents &mdash; <code>authentication.py:40</code>).</li>
+      <li>If status changes to <code>active</code>, no key is regenerated automatically; the existing key continues to work.</li>
+    </ul>
+
+    <p>Response (200): same shape as GET /v1/agents/{id}/.</p>
+
+    <div class="callout note">
+      <p>
+        <strong>Audit logging</strong>: PATCH must record an <code>AuditEvent</code> with
+        <code>event_type</code> indicating the change. The existing <code>AuditEvent.EventType</code>
+        enum (<code>backend/apps/audit/models.py:27-31</code>) does not yet have an
+        <code>AGENT_UPDATED</code> type. A new event type is recommended (see <code>#migrations</code>).
+        Alternatively, the existing agent auth events (<code>agent.created</code>, <code>key.created</code>,
+        <code>key.revoked</code>) are logged by the management commands; the CRUD views should
+        add <code>agent.updated</code> and <code>agent.suspended</code>.
+      </p>
+    </div>
+
+    <h4>POST /v1/agents/{id}/rotate-key</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsOrganizationAdmin</p>
+
+    <p>Creates a new API key for the agent and revokes the previous key. The raw key is returned once.</p>
+
+    <p>Response (200):</p>
+    <pre><code class="language-json">{
+  "id": "uuid",
+  "name": "billing-agent",
+  "status": "active",
+  "current_key": {
+    "prefix": "agk_9f8e7d6c5b4a",
+    "created_at": "2026-10-27T12:00:00Z",
+    "last_used_at": null
+  },
+  "api_key": "agk_9f8e7d6c5b4a..."
+}</code></pre>
+
+    <p><strong>Behavior</strong>:</p>
+    <ul>
+      <li>Creates a new <code>ApiKey</code> row via <code>ApiKey.create_key(agent)</code>.</li>
+      <li>Sets <code>revoked_at=now</code> on the previous non-revoked key.</li>
+      <li>Both operations in a single <code>@transaction.atomic</code> block.</li>
+      <li>Records <code>key.revoked</code> audit event for the old key and <code>key.created</code> for the new key.</li>
+    </ul>
+
+    <h4>POST /v1/agents/{id}/revoke-key</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsOrganizationAdmin</p>
+
+    <p>Revokes the agent's current non-revoked API key. The key is soft-deleted (marked via <code>revoked_at</code>); it is never purged from the database.</p>
+
+    <p>Request body: empty.</p>
+    <p>Response (200):</p>
+    <pre><code class="language-json">{
+  "id": "uuid",
+  "name": "billing-agent",
+  "status": "active",
+  "current_key": null,
+  "revoked_key": {
+    "prefix": "agk_1a2b3c4d5e6f",
+    "revoked_at": "2026-10-27T12:00:00Z"
+  }
+}</code></pre>
+
+    <p>After revocation, the key prefix is still returned for identification but the full key is permanently inaccessible. The agent's key prefix in list/detail responses becomes <code>null</code>. If the agent has no key at all, the endpoint returns 400 with <code>{"detail": "No active API key to revoke."}</code>.</p>
+
+    <h3>Policies</h3>
+
+    <h4>POST /v1/policies/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsOrganizationAdmin</p>
+
+    <p>Creates a new policy version for an existing agent. The <code>version</code> field is auto-incremented from the agent's latest policy version + 1; it may not be set by the client.</p>
+
+    <p>Request body:</p>
+    <pre><code class="language-json">{
+  "agent": "uuid",
+  "name": "Restrictive policy",
+  "currency": "USD",
+  "per_transaction_cap_minor": 10000,
+  "daily_budget_minor": 50000,
+  "weekly_budget_minor": 200000,
+  "monthly_budget_minor": 500000,
+  "approval_threshold_minor": 5000,
+  "merchant_mode": "blocklist",
+  "velocity_max_count": 5,
+  "velocity_window_seconds": 3600,
+  "merchant_window_cap_minor": 10000,
+  "new_payee_cooldown_hours": 24,
+  "untrusted_source_action": "needs_approval",
+  "injection_escalate_threshold": 60,
+  "classifier_required": false,
+  "approval_ttl_minutes": 60,
+  "timezone": "UTC",
+  "merchant_rules": [
+    {"merchant_ref": "acme.com", "kind": "allow", "note": "Primary vendor"},
+    {"merchant_ref": "evil.com", "kind": "block"}
+  ]
+}</code></pre>
+
+    <p><strong>Validation</strong> (mirrors <code>create_agent</code> management command, <code>backend/apps/agents/management/commands/create_agent.py:54-70</code>):</p>
+    <ul>
+      <li><code>approval_threshold_minor &le; per_transaction_cap_minor</code> (DB check <code>policy_threshold_lte_cap</code>).</li>
+      <li><code>velocity_window_seconds &ge; 1</code> (DB check <code>policy_velocity_window_positive</code>).</li>
+      <li><code>injection_escalate_threshold</code> in 0-100 (DB check <code>policy_injection_threshold_range</code>).</li>
+      <li>Currency normalized to uppercase ISO-4217 (<code>apps/common/currency.py:34</code>).</li>
+      <li>No merchant may appear in both allow and block rules (application-level check, matching the management command).</li>
+      <li>Merchant refs are normalized via <code>engine.normalize_merchant()</code> before storage.</li>
+    </ul>
+
+    <p>Response (201): returns the new <code>PolicySerializer</code> representation with <code>version = latest + 1</code>.</p>
+
+    <h4>GET /v1/policies/{id}/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsDashboardUser</p>
+
+    <p>Returns the single policy version with its nested <code>merchant_rules</code>. Returns 404 if the policy's organization is outside the caller's memberships.</p>
+
+    <p>Response (200): same shape as a single entry in <code>PolicySerializer</code>.</p>
+
+    <h4>PATCH /v1/policies/{id}/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsOrganizationAdmin</p>
+
+    <p><strong>Creates a new policy version</strong>. Does NOT mutate the existing row. A new <code>Policy</code> is inserted with <code>version = old.version + 1</code>, copying all fields from the latest version of the same agent and applying the patch. All <code>MerchantRule</code> rows are recreated on the new policy version.</p>
+
+    <p>Request body (partial):</p>
+    <pre><code class="language-json">{
+  "daily_budget_minor": 75000,
+  "approval_threshold_minor": 2500,
+  "merchant_rules": [
+    {"merchant_ref": "newvendor.com", "kind": "allow"},
+    {"merchant_ref": "evil.com", "kind": "block"}
+  ]
+}</code></pre>
+
+    <div class="callout danger">
+      <p>
+        <strong>Policy versioning is immutable</strong>: The existing <code>Policy</code> row is never
+        updated in-place. A new row with an incremented <code>version</code> is created
+        (<code>backend/apps/policies/models.py:16-17</code> states "Editing a policy inserts a new row").
+        The unique constraint <code>unique_policy_version_per_agent</code> guarantees version ordering.
+        The agent's latest version (highest <code>version</code>) is used for evaluation
+        (<code>backend/apps/spend/services.py:51</code>).
+      </p>
+    </div>
+
+    <p>Response (200): the new <code>PolicySerializer</code> representation.</p>
+
+    <h4>POST /v1/policies/{id}/merchant-rules/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsOrganizationAdmin</p>
+
+    <p>Adds a single merchant rule to the latest policy version for an agent. This is a convenience endpoint; PATCH can also update the full set.</p>
+
+    <p>Request body:</p>
+    <pre><code class="language-json">{
+  "merchant_ref": "newvendor.com",
+  "kind": "allow",
+  "note": "Primary vendor"
+}</code></pre>
+
+    <p>Response (201): the new <code>MerchantRuleSerializer</code> representation.</p>
+
+    <h4>DELETE /v1/policies/{id}/merchant-rules/{rule_id}/</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsOrganizationAdmin</p>
+
+    <p>Removes a merchant rule from the policy. Soft deletion is not used; the rule row is deleted. The policy version is preserved (only the rule is removed, not the policy). Returns 204 No Content.</p>
+
+    <h3>Organization transactions</h3>
+
+    <h4>GET /v1/spend-requests/ (dashboard)</h4>
+    <p><strong>Auth</strong>: SessionAuthentication &middot; <strong>Permission</strong>: IsDashboardUser</p>
+
+    <p>Returns all spend requests across all organizations the caller belongs to.</p>
+
+    <p><strong>Query params</strong>:</p>
+    <dl>
+      <dt><code>limit</code></dt><dd>Integer, 1-200, default 50.</dd>
+      <dt><code>offset</code></dt><dd>Integer, default 0.</dd>
+      <dt><code>agent</code></dt><dd>UUID, filter to a specific agent.</dd>
+      <dt><code>status</code></dt><dd>Enum: <code>pending_approval</code>, <code>denied</code>, <code>approved</code>, <code>executing</code>, <code>succeeded</code>, <code>failed</code>, <code>rejected</code>, <code>expired</code>, <code>reversed</code>, or <code>all</code> (default <code>all</code>).</dd>
+      <dt><code>decision</code></dt><dd>Enum: <code>allow</code>, <code>deny</code>, <code>needs_approval</code>, or <code>all</code> (default <code>all</code>).</dd>
+      <dt><code>currency</code></dt><dd>ISO-4217 code (uppercase normalized).</dd>
+      <dt><code>created_after</code></dt><dd>ISO-8601 datetime; filter requests created after this time.</dd>
+      <dt><code>created_before</code></dt><dd>ISO-8601 datetime; filter requests created before this time.</dd>
+    </dl>
+
+    <p>Response (200):</p>
+    <pre><code class="language-json">{
+  "count": 150,
+  "next": "http://localhost:8000/v1/spend-requests/?limit=50&offset=50",
+  "previous": null,
+  "results": [
+    {
+      "id": "uuid",
+      "organization": "uuid",
+      "agent": "uuid",
+      "agent_name": "billing-agent",
+      "amount": "10.00",
+      "currency": "USD",
+      "merchant": "acme.com",
+      "purpose": "API credits",
+      "source": "trusted",
+      "destination_type": "paypal_email",
+      "destination_value": "seller@example.com",
+      "risk_score": 0,
+      "decision": "allow",
+      "status": "succeeded",
+      "reasons": [],
+      "matched_rules": [],
+      "paypal_reference": "5O3V45J3H7X89012",
+      "paypal_status": "COMPLETED",
+      "decided_at": "2026-10-27T12:00:00Z",
+      "created_at": "2026-10-27T12:00:00Z"
+    }
+  ]
+}</code></pre>
+
+    <div class="callout">
+      <p>
+        <strong>Read-only</strong>: No write operations are permitted on this endpoint.
+        The <code>DecisionMixin</code> and <code>SpendMixin</code> patterns
+        (<code>backend/apps/spend/models.py:119-120</code>) enforce decision immutability at
+        the model level. Sorting must be safe: only <code>created_at</code> descending is
+        supported by default; arbitrary column ordering is rejected.
+      </p>
+    </div>
+
+    <h3>Frontend/backend merchant-rule representation mismatch</h3>
+
+    <p><strong>Backend model</strong> (<code>backend/apps/policies/serializers.py:9</code>):</p>
+    <pre><code class="language-json">{
+  "merchant_rules": [
+    {"id": "uuid", "merchant_ref": "acme.com", "kind": "allow", "note": "Primary vendor"}
+  ]
+}</code></pre>
+
+    <p><strong>Frontend demo type</strong> (<code>frontend/src/demo/types.ts</code>, documented in
+    <code>integration-gap-analysis.html:158-194</code>):</p>
+    <pre><code class="language-json">{
+  "allowed_merchants": ["acme.com"],
+  "blocked_merchants": ["badactor.com"]
+}</code></pre>
+
+    <p><strong>Resolution</strong>: The backend <code>merchant_rules[]</code> array is the canonical
+    representation. During the frontend integration phase, the frontend must transform
+    <code>merchant_rules</code> into <code>allowed_merchants</code> and
+    <code>blocked_merchants</code> arrays based on <code>kind</code>. This transformation is performed
+    client-side only; the backend response shape remains unchanged.</p>
+
+    <h2 id="permissions">3. Permissions matrix</h2>
+
+    <p>Permission classes are defined in <code>backend/apps/accounts/permissions.py</code>. All
+      check <code>user.memberships</code> via <code>membership_exists()</code>
+      (<code>permissions.py:10-16</code>), which performs a database query for the current
+      <code>request.user</code>. These classes are usable immediately once AUTH-01 provides an
+      authenticated session user with memberships.</p>
+
+    <table>
+      <thead><tr><th>Endpoint</th><th>Permission</th><th>Role required</th><th>Object-level</th></tr></thead>
+      <tbody>
+        <tr><td>GET /v1/agents/</td><td>IsDashboardUser</td><td>Any member role</td><td>Org-scoped</td></tr>
+        <tr><td>POST /v1/agents/</td><td>IsOrganizationAdmin</td><td>admin</td><td>Org-scoped (org field must be administered)</td></tr>
+        <tr><td>GET /v1/agents/{id}/</td><td>IsDashboardUser</td><td>Any member role</td><td>Org-scoped</td></tr>
+        <tr><td>PATCH /v1/agents/{id}/</td><td>IsOrganizationAdmin</td><td>admin</td><td>Org-scoped</td></tr>
+        <tr><td>POST /v1/agents/{id}/rotate-key</td><td>IsOrganizationAdmin</td><td>admin</td><td>Org-scoped</td></tr>
+        <tr><td>POST /v1/agents/{id}/revoke-key</td><td>IsOrganizationAdmin</td><td>admin</td><td>Org-scoped</td></tr>
+        <tr><td>GET /v1/policies/</td><td>IsDashboardUser</td><td>Any member role</td><td>Org-scoped</td></tr>
+        <tr><td>POST /v1/policies/</td><td>IsOrganizationAdmin</td><td>admin</td><td>Agent's org must be administered</td></tr>
+        <tr><td>GET /v1/policies/{id}/</td><td>IsDashboardUser</td><td>Any member role</td><td>Org-scoped</td></tr>
+        <tr><td>PATCH /v1/policies/{id}/</td><td>IsOrganizationAdmin</td><td>admin</td><td>Agent's org must be administered</td></tr>
+        <tr><td>POST /v1/policies/{id}/merchant-rules/</td><td>IsOrganizationAdmin</td><td>admin</td><td>Agent's org must be administered</td></tr>
+        <tr><td>DELETE /v1/policies/{id}/merchant-rules/{rule_id}/</td><td>IsOrganizationAdmin</td><td>admin</td><td>Agent's org must be administered</td></tr>
+        <tr><td>GET /v1/spend-requests/ (dashboard)</td><td>IsDashboardUser</td><td>Any member role</td><td>Org-scoped (all orgs the user belongs to)</td></tr>
+        <tr><td>GET /v1/spend-requests/{id}/ (dashboard)</td><td>IsDashboardUser</td><td>Any member role</td><td>Org-scoped</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Role definitions</h3>
+
+    <table>
+      <thead><tr><th>Role</th><th>Description</th><th>Defined in</th></tr></thead>
+      <tbody>
+        <tr><td><code>admin</code></td><td>Full access to all organization resources: create/suspend agents, create/update policies, approve/deny, audit verify, manage team.</td><td><code>accounts/models.py:35-37</code></td></tr>
+        <tr><td><code>approver</code></td><td>Read-only access to agents/policies/transactions/audit. Can approve/deny pending requests.</td><td><code>accounts/models.py:35-37</code></td></tr>
+        <tr><td><code>viewer</code></td><td>Read-only access to all dashboard resources. Cannot approve/deny or make changes.</td><td><code>accounts/models.py:35-37</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3>Permission classes</h3>
+
+    <table>
+      <thead><tr><th>Class</th><arg_key>File</key><th>Allows</th></tr></thead>
+      <tbody>
+        <tr><td><code>IsDashboardUser</code></td><td><code>accounts/permissions.py:20</code></td><td>Any authenticated user with at least one <code>OrgMembership</code></td></tr>
+        <tr><td><code>IsApprover</code></td><td><code>accounts/permissions.py:27</code></td><td>User with <code>admin</code> or <code>approver</code> role in at least one org</td></tr>
+        <tr><td><code>IsOrganizationAdmin</code></td><td><code>accounts/permissions.py:34</code></td><td>User with <code>admin</code> role in at least one org</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Object-level authorization</h3>
+
+    <p>All dashboard views enforce org-level scoping in the queryset, not via DRF's
+      <code>has_object_permission</code>. The pattern is:</p>
+    <pre><code># From approval_queryset (approvals/views.py:17-24)
+Approval.objects.filter(
+    organization__memberships__user=user,
+    organization__memberships__role__in=(ADMIN, APPROVER),
+).select_related(...)
+
+# From PolicyListView (policies/views.py:23)
+Policy.objects.filter(
+    organization__memberships__user=request.user
+).select_related("agent")
+
+# From AuditListView (audit/views.py:18-21)
+AuditEvent.objects.filter(
+    organization__memberships__user=user
+).select_related("organization")</code></pre>
+
+    <p>This pattern must be replicated in all new views: filter by
+      <code>&lt;Model&gt;.objects.filter(organization__memberships__user=request.user)</code>.
+      If a record is outside the user's organizations, the queryset returns no match and
+      <code>get_object_or_404</code> returns 404 (not 403, to avoid resource enumeration).</p>
+
+    <h2 id="apikey-lifecycle">4. API key lifecycle</h2>
+
+    <p>Agent API keys are the only machine credentials in the system. Their lifecycle is:</p>
+
+    <h3>Generation</h3>
+    <ol>
+      <li><code>keys.py:new_raw_key()</code> generates <code>agk_</code> + 32 bytes of <code>secrets.token_urlsafe(32)</code>.</li>
+      <li><code>keys.py:hash_key()</code> computes SHA-256 hex of the full raw key.</li>
+      <li><code>keys.py:key_prefix()</code> extracts the first 12 characters for DB lookup.</li>
+      <li>The <code>ApiKey</code> row stores <code>prefix</code> (indexed, unique) and <code>key_hash</code> (not the raw key).</li>
+    </ol>
+
+    <h3>Display (once)</h3>
+    <p>The raw key is returned ONLY at creation time:
+      <ul>
+        <li>On agent creation via <code>Agent.create_with_key()</code> (used by management commands).</li>
+        <li>On key rotation via the proposed <code>POST /v1/agents/{id}/rotate-key</code> endpoint.</li>
+      </ul>
+      After the API response, the raw key is irretrievable. If a user loses it, they must rotate.</p>
+
+    <h3>Authentication</h3>
+    <ol>
+      <li>Client sends <code>Authorization: Bearer agk_...</code>.</li>
+      <li><code>AgentKeyAuthentication.authenticate()</code> (<code>authentication.py:27-46</code>) extracts the first 12 chars.</li>
+      <li>Queries <code>ApiKey.objects.select_related("agent").get(prefix=..., revoked_at__isnull=True, agent__status="active")</code>.</li>
+      <li>If no match, raises <code>AuthenticationFailed("Invalid or inactive agent key.")</code> (401).</li>
+      <li>If match found, calls <code>hash_matches()</code> &mdash; constant-time <code>hmac.compare_digest</code> comparison (<code>keys.py:26-28</code>).</li>
+      <li>If hash does not match, raises <code>AuthenticationFailed</code> (401).</li>
+      <li>Updates <code>last_used_at</code> at most once per minute (<code>authentication.py:48-51</code>).</li>
+    </ol>
+
+    <h3>Rotation</h3>
+    <ol>
+      <li><code>POST /v1/agents/{id}/rotate-key</code> creates a new <code>ApiKey</code> row.</li>
+      <li>The previous non-revoked key gets <code>revoked_at=now</code> set before the new key is created (within the same transaction).</li>
+      <li>Old key immediately stops working (excluded by <code>revoked_at__isnull=True</code> filter).</li>
+      <li>New key returned once in the response body.</li>
+      <li>Audit events: <code>key.revoked</code> for the old key, <code>key.created</code> for the new key.</li>
+    </ol>
+
+    <h3>Revocation (standalone)</h3>
+    <ol>
+      <li><code>POST /v1/agents/{id}/revoke-key</code> sets <code>revoked_at=now</code> on the current non-revoked key.</li>
+      <li>The old key immediately stops working.</li>
+      <li>No new key is created &mdash; the agent has zero active keys after this.</li>
+      <li>To restore API access, the caller must rotate (which creates a new key).</li>
+      <li>Audit event: <code>key.revoked</code>.</li>
+    </ol>
+
+    <h3>Suspension</h3>
+    <ol>
+      <li><code>PATCH /v1/agents/{id}/</code> with <code>status: "suspended"</code> sets <code>agent.status = "suspended"</code>.</li>
+      <li>The authentication layer filters on <code>agent__status="active"</code>, so all keys stop working immediately.</li>
+      <li>No keys are revoked or rotated &mdash; the suspended status blocks authentication at the <code>select_for_update</code> query level.</li>
+      <li>Reactivating restores authentication.</li>
+    </ol>
+
+    <div class="callout danger">
+      <p>
+        <strong>Security guarantees</strong>:
+      </p>
+      <ul>
+        <li><code>key_hash</code> (SHA-256) is never returned in any API response or logged (<code>agents/admin.py:30</code> makes it read-only in Django admin).</li>
+        <li><code>key_hash</code> is never logged anywhere in the codebase.</li>
+        <li>No plaintext key is stored in any database column.</li>
+        <li>Revocation is a soft delete (<code>revoked_at</code>); rows are preserved for audit integrity.</li>
+      </ul>
+    </div>
+
+    <h2 id="org-isolation">5. Organization isolation requirements</h2>
+
+    <p>Organization is the tenancy boundary. All dashboard endpoints must scope queries by
+      <code>organization__memberships__user=request.user</code>. This pattern is used consistently
+      in existing views (<code>approvals/views.py:17</code>, <code>policies/views.py:23</code>,
+      <code>audit/views.py:18</code>).</p>
+
+    <h3>Agent isolation</h3>
+    <ul>
+      <li>List agents return only those whose <code>organization</code> is in the caller's memberships.</li>
+      <li>Create agents: the <code>organization</code> field must reference an org the caller administers. The API must reject attempts to create agents in foreign organizations.</li>
+      <li>Detail/update/rotate/revoke: fetch the agent, then verify the caller has at least a viewer membership; admin permission required for writes.</li>
+    </ul>
+
+    <h3>Policy isolation</h3>
+    <ul>
+      <li>Policies are always linked to both <code>organization</code> and <code>agent</code>. Queries must filter on <code>organization__memberships__user</code>.</li>
+      <li>Creating a policy requires the specified agent's organization to be administered by the caller.</li>
+      <li>PATCH (new version) creates a policy row on the same agent; the agent's org isolation applies transitively.</li>
+    </ul>
+
+    <h3>Spend request isolation</h3>
+    <ul>
+      <li>Dashboard list returns all spend requests from all orgs the user belongs to.</li>
+      <li>Dashboard detail returns 404 if the spend request's organization is outside the user's memberships (not 403, to prevent enumeration).</li>
+      <li>No cross-org access is possible because the queryset filter is applied at the database level.</li>
+    </ul>
+
+    <h3>Cross-organization access risks</h3>
+    <table>
+      <thead><tr><th>Risk</th><th>Mitigation</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Admin from org A views org B's agents</td><td>Queryset filtered by <code>organization__memberships__user</code></td><td><code>approvals/views.py:18-24</code> pattern</td></tr>
+        <tr><td>Agent API key from org A accesses org B's data</td><td>AgentKeyAuthentication binds user to <code>agent</code>; all agent-scoped queries filter by <code>agent=request.user.agent</code></td><td><code>spend/views.py:72</code></td></tr>
+        <tr><td>IDOR on policy/agent/resource</td><td><code>get_object_or_404(queryset, pk=...)</code> returns 404 for foreign records</code></td><td><code>approvals/views.py:53</code></td></tr>
+        <tr><td>New agent created in foreign org</td><td>POST /v1/agents/ must validate <code>organization</code> is in caller's admin memberships</td><td>Contract section: <code>#contracts</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3>Concurrency considerations</h3>
+    <p>The existing spend and approval services use a strict lock order
+      (<code>backend/apps/spend/services.py:143-144</code>,
+      <code>backend/apps/approvals/services.py:64-71</code>):</p>
+    <pre><code>1. Agent          (select_for_update)
+2. Policy         (select_for_update)
+3. SpendRequest   (select_for_update)
+4. Approval       (select_for_update)
+5. Organization   (select_for_update, for audit chain)
+
+New CRUD endpoints for agents and policies must respect this ordering when they touch
+shared state. Agent PATCH and key rotation should lock the agent row. Policy creation
+should lock the agent to ensure version monotonicity.</code></pre>
+
+    <h3>Audit logging expectations</h3>
+    <p>Every state-changing CRUD operation must record an <code>AuditEvent</code>. The existing
+      <code>AuditEvent.record()</code> classmethod (<code>backend/apps/audit/models.py:96-117</code>)
+      creates an append-only, hash-chained event in the same transaction as the state change.
+      Event types that fire on every record:</p>
+
+    <table>
+      <thead><tr><th>Operation</th><th>Event type</th><th>Actor</th></tr></thead>
+      <tbody>
+        <tr><td>Create agent</td><td><code>agent.created</code></td><td>USER (admin who created it)</td></tr>
+        <tr><td>Rotate key</td><td><code>key.created</code> + <code>key.revoked</code></td><td>USER</td></tr>
+        <tr><td>Revoke key</td><td><code>key.revoked</code></td><td>USER</td></tr>
+        <tr><td>Suspend agent</td><td><code>agent.updated</code> (recommended, see #migrations)</td><td>USER</td></tr>
+        <tr><td>Create policy</td><td><code>policy.changed</code></td><td>USER</td></tr>
+        <tr><td>Update policy (new version)</td><td><code>policy.changed</code></td><td>USER</td></tr>
+        <tr><td>Add/remove merchant rule</td><td><code>policy.changed</code></td><td>USER</td></tr>
+        <tr><td colspan="3"><em>Dashboard spend request list: read-only, no audit events (queries only)</em></td></tr>
+      </tbody>
+    </table>
+
+    <h3>Validation requirements</h3>
+    <ul>
+      <li>Unknown fields in request bodies must be rejected (DRF serializer strict validation, matching <code>spend/serializers.py:44-50</code>).</li>
+      <li>All money fields arrive as major-unit decimals (e.g. <code>"10.00"</code>) and are converted to minor units server-side via <code>apps.common.money.to_minor()</code> (<code>common/money.py:8</code>).</li>
+      <li>Currency must pass ISO-4217 validation via <code>apps.common.currency.normalize_currency()</code> (<code>common/currency.py:34</code>).</li>
+      <li>UUID path and query params must be validated (matching <code>policies/views.py:29-34</code> pattern).</li>
+      <li>Request body size limit: 64 KiB (<code>base.py:160</code>).</li>
+    </ul>
+
+    <h2 id="migrations">6. Model or migration changes required</h2>
+
+    <p>After inspection of all model definitions and migrations, the following changes are recommended.
+      None are strictly required to implement the contract; all are listed for completeness.
+      <strong>No migrations are generated in this task.</strong></p>
+
+    <h4>Recommended: new audit event types</h4>
+    <p>The existing <code>AuditEvent.EventType</code> enum
+      (<code>backend/apps/audit/models.py:17-31</code>) includes <code>agent.created</code>,
+      <code>key.created</code>, <code>key.revoked</code>, and <code>policy.changed</code>, but lacks
+      an <code>agent.updated</code> type for suspension/reactivation and rename. This would be a
+      <code>CharField</code> addition to the existing <code>event_type</code> choices:</p>
+    <pre><code class="language-python">AGENT_UPDATED = "agent.updated", "Agent updated"
+AGENT_SUSPENDED = "agent.suspended", "Agent suspended"
+AGENT_ACTIVATED = "agent.activated", "Agent activated"</code></pre>
+    <p>This requires a migration in <code>apps/audit/migrations/</code>.</p>
+
+    <h4>Recommended: key rotation helper</h4>
+    <p>The <code>ApiKey</code> model has <code>create_key()</code> but no <code>rotate()</code> or
+      <code>revoke()</code> method. A new method on the model or a service function would centralize
+      the rotation+revoke transaction:</p>
+    <pre><code class="language-python">@classmethod
+@transaction.atomic
+def rotate_key(cls, agent):
+    """Revoke the current key and create a replacement. Returns (new_key, raw_key)."""
+    current = cls.objects.filter(agent=agent, revoked_at__isnull=True).first()
+    if current:
+        current.revoke()
+    new_key, raw_key = cls.create_key(agent)
+    return new_key, raw_key
+
+def revoke(self):
+    self.revoked_at = timezone.now()
+    self.save(update_fields=["revoked_at", "updated_at"])</code></pre>
+    <p>This does not require a migration; it is a model method addition.</p>
+
+    <h4>Assessment: no schema-breaking changes needed</h4>
+    <ul>
+      <li>All fields needed for agent CRUD (<code>Agent.name</code>, <code>Agent.status</code>, <code>Organization</code>) already exist.</li>
+      <li>All fields needed for policy CRUD (<code>Policy</code> fields, <code>MerchantRule</code>) already exist.</li>
+      <li>All fields needed for dashboard spend request listing (<code>SpendRequest</code> fields) already exist; only a new serializer is needed for dashboard output.</li>
+      <li>The <code>ApiKey</code> model already tracks <code>revoked_at</code> for revocation semantics.</li>
+    </ul>
+
+    <h2 id="frontend-deps">7. Frontend integration dependencies</h2>
+
+    <h3>Authentication (blocked on AUTH-01)</h3>
+    <p>All dashboard endpoints require <code>SessionAuthentication</code> with a Django-authenticated
+      user who has at least one <code>OrgMembership</code>. The smallest interface required from
+      AUTH-01 is:</p>
+    <ol>
+      <li><code>POST /api-auth/login/</code> (or allauth <code>/accounts/login/</code>) that sets <code>sessionid</code> and <code>csrftoken</code> cookies.</li>
+      <li><code>GET /api/auth/user/</code> returning the current user with their <code>memberships</code> array (each containing <code>organization_id</code>, <code>organization_name</code>, <code>role</code>).</li>
+    </ol>
+    <p>Until AUTH-01 delivers these, the permission classes cannot be exercised end-to-end. However,
+      the views and serializers can be written now because they depend only on
+      <code>request.user</code> being a Django <code>User</code> with a <code>memberships</code>
+      related manager &mdash; this relationship already exists on the <code>User</code> model
+      (<code>accounts/models.py:10-13</code>, <code>AbstractUser</code> with
+      <code>related_name="memberships"</code> on <code>OrgMembership</code>).</p>
+
+    <h3>Existing endpoints the frontend already consumes</h3>
+    <table>
+      <thead><tr><th>Endpoint</th><th>Handler</th><th>Frontend consumer</th></tr></thead>
+      <tbody>
+        <tr><td><code>POST /v1/spend-requests/</code></td><td><code>SpendRequestCreateView</code></td><td><code>SimulatePage.tsx</code> (only screen using real API)</td></tr>
+        <tr><td><code>GET /v1/spend-requests/{id}/</code></td><td><code>SpendRequestDetailView</code></td><td><code>SimulatePage.tsx</code>, <code>RequestsPage.tsx</code> (demo)</td></tr>
+        <tr><td><code>GET /v1/approvals/</code></td><td><code>ApprovalListView</code></td><td>Demo store only (needs API client)</td></tr>
+        <tr><td><code>GET /v1/policies/</code></td><td><code>PolicyListView</code></td><td>Demo store only (shape mismatch)</td></tr>
+        <tr><td><code>GET /v1/audit/</code></td><td><code>AuditListView</code></td><td>Demo store only (param mismatch)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Frontend screens that will consume the new CRUD endpoints</h3>
+    <table>
+      <thead><tr><th>Screen</th><th>New endpoint needed</th></tr></thead>
+      <tbody>
+        <tr><td><code>AgentsPage.tsx</code></td><td><code>GET /v1/agents/</code>, <code>POST /v1/agents/</code></td></tr>
+        <tr><td><code>AgentDetailPage.tsx</code></td><td><code>GET /v1/agents/{id}/</code>, <code>POST /v1/agents/{id}/rotate-key</code></td></tr>
+        <tr><td><code>KeyReveal.tsx</code></td><td><code>POST /v1/agents/{id}/revoke-key</code></td></tr>
+        <tr><td><code>AgentDetailPage.tsx</code> (suspend)</td><td><code>PATCH /v1/agents/{id}/</code></td></tr>
+        <tr><td><code>PoliciesPage.tsx</code></td><td><code>GET /v1/policies/</code> (exists, needs shape alignment)</td></tr>
+        <tr><td><code>PolicyEditPage.tsx</code></td><td><code>GET /v1/policies/{id}/</code>, <code>PATCH /v1/policies/{id}/</code>, <code>POST /v1/policies/{id}/merchant-rules/</code>, <code>DELETE /v1/policies/{id}/merchant-rules/{rule_id}/</code></td></tr>
+        <tr><td><code>TransactionsPage.tsx</code></td><td><code>GET /v1/spend-requests/</code> (dashboard org-scoped)</td></tr>
+        <tr><td><code>TransactionDetailPage.tsx</code></td><td><code>GET /v1/spend-requests/{id}/</code> (dashboard org-scoped)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Contract mismatches to resolve</h3>
+    <table>
+      <thead><tr><th>Issue</th><th>Backend</th><th>Frontend</th><th>Resolution</th></tr></thead>
+      <tbody>
+        <tr><td>Policy merchant representation</td><td><code>merchant_rules[]</code> with <code>{merchant_ref, kind, note}</code></td><td><code>allowed_merchants[]</code> / <code>blocked_merchants[]</code></td><td>Frontend transforms on read; backend canonical shape unchanged</td></tr>
+        <tr><td>Money format</td><td>Minor units (ints) in PolicySerializer</td><td>Major units (decimals) in demo types</td><td>Backend provides <code>decimal_major()</code> SerializerMethodField on dashboard serializer</td></tr>
+        <tr><td>PK type</td><td>UUID strings</td><td>Numeric IDs in demo types</td><td>Frontend types updated to UUID</td></tr>
+        <tr><td>Spend request detail</td><td>Agent-scoped only</td><td>Dashboard expects org-scoped</td><td>Dashboard endpoint returns full fields including destination, payment status</td></tr>
+        <tr><td>Audit params</td><td><code>event_type</code> (single), <code>agent</code>, <code>spend_request</code>, <code>after</code> (int cursor)</td><td>Frontend groups event types, wants date-range, uses page/offset</td><td>API client maps frontend params to backend params</td></tr>
+      </tbody>
+    </table>
+
+    <h3>CSS class for new agent serializer (dashboard response shape)</h3>
+    <p>The new <code>AgentDashboardSerializer</code> must expose <code>current_key_prefix</code> (or null)
+      rather than <code>key_hash</code> or raw secrets. The existing <code>Agent</code> model
+      has a reverse relation <code>api_keys</code> (<code>agents/models.py:46</code>) with
+      <code>ordering = ["-created_at"]</code>, so <code>agent.api_keys.first()</code> yields the
+      most recent key.</p>
+
+    <h2 id="task-plan">8. CRUD-02 through CRUD-06 task plan</h2>
+
+    <p>CRUD-01 is this contract document. The following tasks implement the endpoints in
+      dependency order. Each task is scoped to avoid touching AUTH-01 files.</p>
+
+    <h3>CRUD-02 &mdash; Agent serializers, views, and URLs</h3>
+    <p><strong>Files to create</strong>:</p>
+    <ul>
+      <li><code>backend/apps/agents/serializers.py</code> &mdash; <code>AgentSerializer</code> (list/detail), <code>AgentCreateSerializer</code> (accepts <code>name</code>, <code>organization</code>), <code>AgentUpdateSerializer</code> (partial <code>name</code>, <code>status</code>).</li>
+      <li><code>backend/apps/agents/views.py</code> &mdash; <code>AgentListView</code>, <code>AgentCreateView</code>, <code>AgentDetailView</code>, <code>AgentUpdateView</code>, <code>AgentRotateKeyView</code>, <code>AgentRevokeKeyView</code>.</li>
+      <li><code>backend/apps/agents/urls.py</code> &mdash; URL patterns for all six endpoints.</li>
+    </ul>
+    <p><strong>Files to modify</strong>:</p>
+    <ul>
+      <li><code>backend/config/urls.py</code> &mdash; add <code>path("v1/", include("apps.agents.urls"))</code>.</li>
+      <li><code>backend/apps/agents/models.py</code> &mdash; add <code>rotate_key()</code> and <code>revoke_current_key()</code> methods (no migration needed).</li>
+    </ul>
+    <p><strong>Acceptance</strong>: All six endpoints return correct serialization, 404 for foreign orgs, 403 for non-admins, 201 + raw key for create/rotate, 200 for revoke/suspend.</p>
+    <p><strong>Test command</strong>: <code>python manage.py test tests.test_agents_api</code></p>
+
+    <h3>CRUD-03 &mdash; Policy write and merchant rule management</h3>
+    <p><strong>Files to create</strong>:</p>
+    <ul>
+      <li><code>backend/apps/policies/serializers.py</code> &mdash; add <code>PolicyCreateSerializer</code> (writable, includes nested <code>merchant_rules</code>), <code>PolicyUpdateSerializer</code> (writable, partial). Make <code>PolicySerializer</code> the read-only base.</li>
+      <li><code>backend/apps/policies/views.py</code> &mdash; add <code>PolicyCreateView</code>, <code>PolicyDetailView</code>, <code>PolicyUpdateView</code>, <code>MerchantRuleCreateView</code>, <code>MerchantRuleDeleteView</code>.</li>
+    </ul>
+    <p><strong>Files to modify</strong>:</p>
+    <ul>
+      <li><code>backend/apps/policies/urls.py</code> &mdash; add URL patterns.</li>
+    </ul>
+    <p><strong>Acceptance</strong>: Creating a policy version increments <code>version</code>; PATCH creates a new version; merchant rules are recreated on the new version; allow/block overlap is rejected.</p>
+    <p><strong>Test command</strong>: <code>python manage.py test tests.test_policies_write_api</code></p>
+
+    <h3>CRUD-04 &mdash; Dashboard spend request list and detail</h3>
+    <p><strong>Files to create</strong>:</p>
+    <ul>
+      <li><code>backend/apps/spend/serializers.py</code> &mdash; add <code>SpendRequestDashboardSerializer</code> with major-unit <code>amount</code>, <code>destination_type</code>/<code>destination_value</code>, <code>source_ref</code>, <code>evidence_excerpt</code>, <code>paypal_status</code>, <code>decided_at</code>.</li>
+      <li><code>backend/apps/spend/views.py</code> &mdash; add <code>SpendRequestDashboardListView</code> and <code>SpendRequestDashboardDetailView</code>.</li>
+    </ul>
+    <p><strong>Files to modify</strong>:</p>
+    <ul>
+      <li><code>backend/apps/spend/urls.py</code> &mdash; add dashboard URL patterns.</li>
+    </ul>
+    <p><strong>Acceptance</strong>: List returns all spend requests across caller's orgs; detail returns full fields; read-only (405 for POST/PUT/DELETE); 404 for foreign org records.</p>
+    <p><strong>Test command</strong>: <code>python manage.py test tests.test_spend_dashboard_api</code></p>
+
+    <h3>CRUD-05 &mdash; Audit event types and agent update events</h3>
+    <p><strong>Files to modify</strong>:</p>
+    <ul>
+      <li><code>backend/apps/audit/models.py</code> &mdash; add <code>AGENT_UPDATED</code>, <code>AGENT_SUSPENDED</code> event types.</li>
+      <li><code>backend/apps/agents/views.py</code> &mdash; emit audit events on PATCH, rotate-key, revoke-key.</li>
+    </ul>
+    <p><strong>Files to create</strong>:</p>
+    <ul>
+      <li>New migration in <code>backend/apps/audit/migrations/0005_...</code>.</li>
+    </ul>
+    <p><strong>Acceptance</strong>: Every agent CRUD mutation produces an audit event with actor type USER and the admin's user ID.</p>
+    <p><strong>Test command</strong>: <code>python manage.py test tests.test_audit_agent_events</code></p>
+
+    <h3>CRUD-06 &mdash; Frontend API client and integration tests</h3>
+    <p><strong>Files to create</strong>:</p>
+    <ul>
+      <li><code>frontend/src/api/agents.ts</code> &mdash; typed API client for agent CRUD.</li>
+      <li><code>frontend/src/api/policies.ts</code> &mdash; typed API client for policy CRUD + merchant rules.</li>
+      <li><code>frontend/src/api/spendRequests.ts</code> &mdash; add <code>getSpendRequests()</code> and <code>getDashboardSpendRequest()</code> functions.</li>
+      <li><code>backend/tests/test_agents_api.py</code>, <code>backend/tests/test_policies_write_api.py</code>, <code>backend/tests/test_spend_dashboard_api.py</code>.</li>
+    </ul>
+    <p><strong>Acceptance</strong>: Contract tests pass on SQLite; integration tests pass on PostgreSQL (lock ordering verified); frontend client types compile.</p>
+    <p><strong>Test command</strong>: <code>python manage.py test && npm run lint && npm run build</code></p>
+
+    <div class="callout note">
+      <p>
+        <strong>Dependency graph</strong>: CRUD-02 (agents) and CRUD-04 (spend dashboard) are
+        independent. CRUD-03 (policies) depends on CRUD-05 for audit event types.
+        CRUD-06 (frontend) depends on all backend tasks being complete and AUTH-01 delivering
+        session authentication. CRUD-05 has a migration dependency that requires careful
+        ordering of the append-only audit trigger.
+      </p>
+    </div>
+
+    <h2 id="acceptance">9. Acceptance criteria and test commands</h2>
+
+    <h3>Backend acceptance criteria</h3>
+    <table>
+      <thead><tr><th>#</th><th>Criterion</th><th>Test command</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Agent list returns only org-scoped agents for the session user.</td><td><code>python manage.py test tests.test_agents_api -v 2</code></td></tr>
+        <tr><td>2</td><td>Agent creation returns raw key once; key_hash is never in the response.</td><td><code>python manage.py test tests.test_agents_api::AgentCreateTests</code></td></tr>
+        <tr><td>3</td><td>Agent suspension immediately blocks API key authentication.</td><td><code>python manage.py test tests.test_agents_api::AgentSuspendTests</code></td></tr>
+        <tr><td>4</td><td>Key rotation revokes the old key and returns a new raw key.</td><td><code>python manage.py test tests.test_agents_api::AgentRotateTests</code></td></tr>
+        <tr><td>5</td><td>Key revocation sets <code>revoked_at</code>; old key returns 401.</td><td><code>python manage.py test tests.test_agents_api::AgentRevokeTests</code></td></tr>
+        <tr><td>6</td><td>Policy PATCH creates a new version row; original is unchanged.</td><td><code>python manage.py test tests.test_policies_write_api</code></td></tr>
+        <tr><td>7</td><td>Merchant rule allow/block overlap is rejected with 400.</td><td><code>python manage.py test tests.test_policies_write_api::PolicyMerchantRuleTests</code></td></tr>
+        <tr><td>8</td><td>Dashboard spend request list returns all orgs' requests, scoped by membership.</td><td><code>python manage.py test tests.test_spend_dashboard_api</code></td></tr>
+        <tr><td>9</td><td>Dashboard spend request detail returns full destination + payment fields.</td><td><code>python manage.py test tests.test_spend_dashboard_api::DashboardDetailTests</code></td></tr>
+        <tr><td>10</td><td>All write endpoints return 403 for viewers and 401 for unauthenticated users.</td><td><code>python manage.py test tests.test_agents_api::PermissionTests</code></td></tr>
+        <tr><td>11</td><td>Unknown fields in request bodies are rejected with 400.</td><td><code>python manage.py test tests.test_api -v 2</code> (existing pattern)</td></tr>
+        <tr><td>12</td><td>Audit events are created for every agent CRUD mutation.</td><td><code>python manage.py test tests.test_audit_agent_events</code></td></tr>
+        <tr><td>13</td><td><code>makemigrations --check --dry-run</code> reports no missing migrations after implementation.</td><td><code>python manage.py makemigrations --check --dry-run</code></td></tr>
+        <tr><td>14</td><td>Ruff linting passes on all new files.</td><td><code>ruff check backend/apps/agents backend/apps/policies backend/apps/spend</code></td></tr>
+        <tr><td>15</td><td>Import-linter confirms engine remains Django-free.</td><td><code>lint-imports</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3>Frontend acceptance criteria</h3>
+    <table>
+      <thead><tr><th>#</th><th>Criterion</th><th>Test command</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Typed API client for agents compiles with TypeScript.</td><td><code>npx tsc --noEmit</code></td></tr>
+        <tr><td>2</td><td>Policy list response transformer converts <code>merchant_rules[]</code> to <code>allowed_merchants[]</code>/<code>blocked_merchants[]</code>.</td><td><code>npx jest --testPathPattern=policies</code></td></tr>
+        <tr><td>3</td><td>Transactions page uses cursor/offset pagination matching backend.</td><td><code>npx tsc --noEmit</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="decisions">10. Open decisions requiring Tech Lead approval</h2>
+
+    <table>
+      <thead><tr><th>#</th><th>Decision</th><th>Options</th><th>Default recommendation</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><strong>Dashboard spend request URL path</strong>: Should the dashboard listing be at <code>/v1/spend-requests/</code> (same as the agent endpoint, differentiated by auth method) or at a separate path like <code>/v1/dashboard/spend-requests/</code>?</td>
+          <td><ul><li><code>/v1/spend-requests/</code> (same path, session vs agent auth disambiguates)</li><li><code>/v1/dashboard/spend-requests/</code> (separate path, explicit)</li></ul></td>
+          <td>Separate path <code>/v1/dashboard/spend-requests/</code> &mdash; clearer intent, avoids accidental agent-key access to org-wide data, matches <code>api-integration.html:85</code> which notes the dashboard variant is planned separately.</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td><strong>Agent detail <code>current_key</code> field name</strong>: The contract returns the raw key on create/rotate in a field called <code>api_key</code>, and the prefix in <code>current_key_prefix</code>. Should there be a consistent <code>current_key</code> object across all responses, or separate flat fields?</td>
+          <td><ul><li>Flat fields: <code>api_key</code> (create/rotate only), <code>current_key_prefix</code> (all reads)</li><li>Object: <code>current_key</code> with <code>{prefix, created_at, last_used_at, revoked_at}</code></li></ul></td>
+          <td>Object form (<code>current_key</code>) &mdash; richer data for the AgentDetailPage, prefix only, no hash.</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><strong>Policy PATCH semantics</strong>: Should PATCH create a new version automatically (immutable row), or should there be a separate <code>POST /v1/policies/{id}/versions/</code> endpoint for version creation?</td>
+          <td><ul><li>PATCH creates new version (backend audit says "Editing a policy inserts a new row")</li><li>Separate versions endpoint (REST purist)</li></ul></td>
+          <td>PATCH creates new version &mdash; matches existing model contract (<code>policies/models.py:16-17</code>) and audit documentation (<code>security-audit.html:145</code>).</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td><strong>New audit event types</strong>: Adding <code>agent.updated</code> / <code>agent.suspended</code> requires a new migration. Should CRUD-05 add these, or should all agent mutations reuse existing event types (<code>agent.created</code> + <code>key.revoked</code>)?</td>
+          <td><ul><li>Add new event types + migration</li><li>Reuse existing types with richer payloads</li></ul></td>
+          <td>Add new event types &mdash; audit integrity requires semantic precision; reusing <code>agent.created</code> for a rename would be misleading.</td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td><strong>Agent rename</strong>: Should the PATCH endpoint allow renaming an agent (changing <code>name</code>), or should rename be a separate endpoint to avoid confusion with status changes?</td>
+          <td><ul><li>Allow <code>name</code> in PATCH /v1/agents/{id}/</li><li>Separate <code>PATCH /v1/agents/{id}/rename/</code> endpoint</li></ul></td>
+          <td>Allow in PATCH &mdash; simpler REST, name uniqueness is enforced at the DB level.</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td><strong>Dashboard spend request ordering</strong>: The list endpoint must support safe ordering. Which fields are allowed?</td>
+          <td><ul><li><code>created_at</code> desc only (default)</li><li><code>created_at</code>, <code>amount</code>, <code>status</code>, <code>decision</code></li></ul></td>
+          <td><code>created_at</code> desc (default) with optional <code>-created_at</code> and <code>-amount</code> &mdash; prevents DoS via unindexed field ordering; existing tables have index on <code>created_at</code> desc.</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td><strong>Policy create: require <code>merchant_rules</code> at creation</strong>: Should a new policy be creatable without any merchant rules, or should at least one rule be required?</td>
+          <td><ul><li>Allow empty merchant rules (default blocklist mode blocks nothing)</li><li>Require at least one rule</li></ul></td>
+          <td>Allow empty &mdash; matches current <code>Policy.objects.create(agent=agent)</code> default (<code>seed_demo.py:34</code>, <code>services.py:116</code>); the management command allows empty allow/block lists.</td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <td><strong>Frontend API client architecture</strong>: Should the frontend use a shared <code>apiClient.ts</code> with interceptors for CSRF token fetching, or separate client functions per resource?</td>
+          <td><ul><li>Centralized <code>apiClient.ts</code> with CSRF + session handling</li><li>Separate client files (current pattern: <code>spendRequests.ts</code>)</li></ul></td>
+        <td>Centralized client &mdash; CSRF token fetching is cross-cutting; a single interceptor avoids duplication across 6+ resource files. However, <code>spendRequests.ts</code> (agent-key auth) must remain separate.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <h4>AUTH-01 blocking summary</h4>
+      <p>
+        The following endpoints are usable immediately once AUTH-01 delivers an authenticated
+        session user with <code>memberships</code>:
+      </p>
+      <ul>
+        <li>All agent CRUD endpoints &mdash; depend on <code>IsDashboardUser</code> / <code>IsOrganizationAdmin</code> checking <code>request.user.memberships</code>.</li>
+        <li>All policy write endpoints &mdash; same permission dependency.</li>
+        <li>Dashboard spend request list/detail &mdash; same permission dependency.</li>
+      </ul>
+      <p>
+        <strong>None of these endpoints invent temporary authentication.</strong> They use
+        <code>SessionAuthentication</code> exactly as the existing <code>PolicyListView</code>,
+        <code>ApprovalListView</code>, and <code>AuditListView</code> do. The permission classes
+        already exist and query <code>user.memberships</code> directly.
+      </p>
+    </div>
+
+    <h2 id="source-references">Appendix A: Source code references</h2>
+
+    <dl>
+      <dt>Agent model</dt><dd><code>backend/apps/agents/models.py</code></dd>
+      <dt>Agent key generation</dt><dd><code>backend/apps/agents/keys.py</code></dd>
+      <dt>Agent authentication</dt><dd><code>backend/apps/agents/authentication.py</code></dd>
+      <dt>Agent throttling</dt><dd><code>backend/apps/agents/throttling.py</code></dd>
+      <dt>Agent admin</dt><dd><code>backend/apps/agents/admin.py</code></dd>
+      <dt>Agent management commands</dt><dd><code>backend/apps/agents/management/commands/create_agent.py</code>, <code>seed_demo.py</code></dd>
+      <dt>Agent migrations</dt><dd><code>backend/apps/agents/migrations/0001_initial.py</code>, <code>0002_alter_apikey_key_hash_alter_apikey_prefix.py</code></dd>
+      <dt>Account models</dt><dd><code>backend/apps/accounts/models.py</code></dd>
+      <dt>Account permissions</dt><dd><code>backend/apps/accounts/permissions.py</code></dd>
+      <dt>Account admin</dt><dd><code>backend/apps/accounts/admin.py</code></dd>
+      <dt>Policy models</dt><dd><code>backend/apps/policies/models.py</code></dd>
+      <dt>Policy serializer & views</dt><dd><code>backend/apps/policies/serializers.py</code>, <code>views.py</code>, <code>urls.py</code></dd>
+      <dt>Policy migrations</dt><dd><code>backend/apps/policies/migrations/0001-0004</code></dd>
+      <dt>Spend models & serializer</dt><dd><code>backend/apps/spend/models.py</code>, <code>serializers.py</code></dd>
+      <dt>Spend service (lock order, idempotency)</dt><dd><code>backend/apps/spend/services.py</code>, <code>idempotency.py</code></dd>
+      <dt>Spend views & URLs</dt><dd><code>backend/apps/spend/views.py</code>, <code>urls.py</code></dd>
+      <dt>Spend migrations</dt><dd><code>backend/apps/spend/migrations/0001-0003</code></dd>
+      <dt>Approval models, serializer, views, URLs, services</dt><dd><code>backend/apps/approvals/{models,serializers,views,urls,services}.py</code></dd>
+      <dt>Audit models, serializers, views, URLs, services, chain</dt><dd><code>backend/apps/audit/{models,serializers,views,urls,services,chain}.py</code></dd>
+      <dt>Payee models</dt><dd><code>backend/apps/payees/models.py</code></dd>
+      <dt>Common: pagination, currency, money, validation</dt><dd><code>backend/apps/common/{pagination,currency,money,validation}.py</code></dd>
+      <dt>Engine: rules, decision, context, screening</dt><dd><code>backend/engine/{rules,decision,context}.py</code>, <code>screening/patterns.py</code></dd>
+      <dt>Config: settings, URLs</dt><dd><code>backend/config/settings/{base,dev,test,prod}.py</code>, <code>backend/config/urls.py</code></dd>
+      <dt>CI workflow</dt><dd><code>.github/workflows/ci.yml</code></dd>
+      <dt>Test base</dt><dd><code>backend/tests/base.py</code></dd>
+      <dt>Operations</dt><dd><code>backend/OPERATIONS.md</code></dd>
+    </dl>
+
+    <h2 id="validation">Appendix B: Validation results</h2>
+
+    <p>The following checks were performed after composing this contract. No application source
+      was modified.</p>
+
+    <table>
+      <thead><tr><th>Check</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>HTML document structure (well-formed tags, matching nav)</td><td>Verified &mdash; all HTML files use the same <code>&lt;!DOCTYPE html&gt;</code> skeleton, <code>doc-header</code>, <code>doc-container</code>, and <code>doc-nav</code> patterns from <code>docs/index.html</code> and <code>docs/backend-audit.html</code></td></tr>
+        <tr><td>Internal links point to existing docs pages</td><td>Verified &mdash; all <code>href="*.html"</code> links in the nav match files in <code>docs/</code></td></tr>
+        <tr><td>Existing source references</td><td>Verified &mdash; every file path referenced in this document exists in the worktree</td></tr>
+        <tr><td>No application source modifications</td><td>Verified &mdash; <code>git status --short</code> shows only <code>docs/backend-crud-contract.html</code></td></tr>
+        <tr><td>No migrations generated</td><td>Verified &mdash; no files in <code>backend/apps/*/migrations/</code> created or modified</td></tr>
+        <tr><td>No authentication changes</td><td>Verified &mdash; <code>apps/accounts/</code> untouched; no <code>django-allauth</code> or <code>django-two-factor-auth</code> dependencies added</td></tr>
+        <tr><td><code>git diff --check</code></td><td>Clean (no trailing whitespace, no conflict markers)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <h4>Navigation</h4>
+      <p>
+        Related documentation:
+        <a href="index.html">Documentation Home</a> &bull;
+        <a href="backend-audit.html">Backend Audit</a> &bull;
+        <a href="frontend-audit.html">Frontend Audit</a> &bull;
+        <a href="integration-gap-analysis.html">Integration Gap Analysis</a> &bull;
+        <a href="api-integration.html">API Integration</a> &bull;
+        <a href="security-audit.html">Security Audit</a> &bull;
+        <a href="authentication-architecture.html">Authentication Architecture</a> &bull;
+        <a href="implementation-plan.html">Implementation Plan</a> &bull;
+        <a href="deployment-readiness.html">Deployment Readiness</a> &bull;
+        <a href="developer-setup.html">Developer Setup</a>
+      </p>
+    </div>
+
+  </main>
+</body>
+</html>

@@ -3,9 +3,37 @@ from datetime import timedelta
 from django.utils import timezone
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
+from rest_framework.authentication import SessionAuthentication
 
 from .keys import PREFIX_LENGTH, hash_matches
 from .models import ApiKey
+
+
+class DashboardSessionAuthentication(SessionAuthentication):
+    """Session auth that returns 401 for unauthenticated users instead of 403."""
+
+    def authenticate(self, request):
+        user = getattr(request._request, "user", None)
+        if user is None or not user.is_active:
+            raise exceptions.AuthenticationFailed("Authentication credentials were not provided.")
+        self.enforce_csrf(request)
+        return (user, None)
+
+    def authenticate_header(self, request):
+        return "Session"
+
+
+class DashboardSessionScheme(OpenApiAuthenticationExtension):
+    target_class = "apps.agents.authentication.DashboardSessionAuthentication"
+    name = "Session"
+
+    def get_security_definition(self, auto_schema):
+        return {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": "sessionid",
+            "description": "Django session cookie for dashboard users.",
+        }
 
 
 class AgentPrincipal:

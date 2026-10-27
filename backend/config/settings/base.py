@@ -202,6 +202,27 @@ ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
 ACCOUNT_EMAIL_VERIFICATION = "mandatory"
 ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
+# Send "your password was reset/changed" notification emails so a compromised
+# account alerts its owner. Defaults to False in allauth.
+ACCOUNT_EMAIL_NOTIFICATIONS = True
 ACCOUNT_ADAPTER = "apps.accounts.adapters.CustomAccountAdapter"
 LOGIN_REDIRECT_URL = os.environ.get("LOGIN_REDIRECT_URL", "/app/")
 LOGOUT_REDIRECT_URL = os.environ.get("LOGOUT_REDIRECT_URL", "/login/")
+
+# Django (not allauth) governs reset-link expiry. Unset means tokens never
+# expire, so a 1-hour lifetime is mandatory for the recovery flow.
+PASSWORD_RESET_TIMEOUT = 3600
+
+# SPA origins for allauth Headless user-facing links (reset/confirm-signup).
+# Read once from the environment; dev/test fall back to localhost:5173.
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
+HEADLESS_FRONTEND_URLS = {
+    "account_reset_password": f"{FRONTEND_ORIGIN}/forgot-password",
+    "account_reset_password_from_key": f"{FRONTEND_ORIGIN}/reset-password/{{key}}",
+    "account_signup": f"{FRONTEND_ORIGIN}/signup",
+}
+
+# Sender for all allauth/transactional email.
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL", "AgentGate <no-reply@example.com>"
+)

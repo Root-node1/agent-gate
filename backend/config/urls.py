@@ -20,19 +20,28 @@ def ready(request):
     return JsonResponse({"status": "ok"})
 
 
-def _without_password_change(patterns):
-    """allauth bundles password-change routes (for logged-in users). AUTH-01 only
-    ships signup, login, logout and email confirmation. Password reset routes are
-    kept because the account adapter uses them for 'account already exists' emails.
-    Password change is excluded to avoid exposing it prematurely (AUTH-03)."""
-    return [
-        pattern
-        for pattern in patterns
-        if not str(pattern.pattern).replace("^", "").startswith("password/change")
-    ]
+def _headless_only_account_patterns(patterns):
+    """Allauth bundles HTML-form routes under ``/accounts/``. AUTH-01 mounts only
+    the headless JSON endpoints at ``/api/auth/headless/`` as the SPA contract.
+
+    The password-change form is excluded (not exposed prematurely; AUTH-03), and
+    the non-headless password-reset forms (``password/reset/``, ``.../key/...``)
+    are excluded too: they are redundant now that the Headless JSON contract
+    exists and would otherwise present a competing form-based reset surface that
+    bypasses the SPA's CSRF + link handling. The reset link email uses the
+    ``HEADLESS_FRONTEND_URLS["account_reset_password"]`` SPA link instead of
+    ``reverse("account_reset_password")``, so removing these routes is safe.
+    """
+    stripped = []
+    for pattern in patterns:
+        name = str(pattern.pattern).replace("^", "")
+        if name.startswith("password/change") or name.startswith("password/reset"):
+            continue
+        stripped.append(pattern)
+    return stripped
 
 
-allauth_patterns = _without_password_change(allauth_account_urls.urlpatterns)
+allauth_patterns = _headless_only_account_patterns(allauth_account_urls.urlpatterns)
 
 headless_patterns = allauth_headless_urls.urlpatterns
 

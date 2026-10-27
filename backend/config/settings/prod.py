@@ -41,6 +41,19 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 
+prod_email_host = os.environ.get("EMAIL_HOST", "").strip()
+if prod_email_host:
+    EMAIL_HOST = prod_email_host
+    EMAIL_PORT = env_int("EMAIL_PORT", 587)
+    EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+    EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+    EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    if "DEFAULT_FROM_EMAIL" in os.environ:
+        DEFAULT_FROM_EMAIL = os.environ["DEFAULT_FROM_EMAIL"]
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
 
 CACHES = {

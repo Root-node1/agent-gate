@@ -1,0 +1,453 @@
+{
+  "info": {
+    "_postman_id": "agentgate-api-0.1.0",
+    "name": "AgentGate API",
+    "description": "Spending firewall between AI agents and PayPal. Agents authenticate with Bearer keys (agk_...). Dashboard users authenticate with Django session cookies via /api-auth/login/.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    }
+  },
+  "item": [
+    {
+      "name": "Health & Readiness",
+      "item": [
+        {
+          "name": "Liveness check (GET /healthz)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/healthz",
+              "host": ["{{base_url}}"],
+              "path": ["healthz"]
+            },
+            "description": "Liveness probe — returns 200 without database access."
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness check (GET /readyz)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/readyz",
+              "host": ["{{base_url}}"],
+              "path": ["readyz"]
+            },
+            "description": "Readiness probe — returns 200 if the database is reachable, 503 otherwise."
+          },
+          "response": []
+        },
+        {
+          "name": "Health alias (GET /api/health/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/health/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "health", ""]
+            },
+            "description": "Compatibility alias for the liveness endpoint."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "OpenAPI Schema",
+      "item": [
+        {
+          "name": "Download schema (GET /api/schema/)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/schema/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "schema", ""]
+            },
+            "description": "drf-spectacular generated OpenAPI schema (JSON or YAML via ?format=yaml)."
+          },
+          "response": []
+        },
+        {
+          "name": "Swagger UI (GET /api/docs/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/docs/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "docs", ""]
+            },
+            "description": "Interactive Swagger UI rendering of the schema."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard Authentication",
+      "item": [
+        {
+          "name": "Login (POST /api-auth/login/)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api-auth/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api-auth", "login", ""]
+            },
+            "description": "Django REST Framework session login. Sets a session cookie used by all dashboard endpoints. Requires a user with an OrgMembership (admin, approver, or viewer)."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout (POST /api-auth/logout/)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api-auth/logout/",
+              "host": ["{{base_url}}"],
+              "path": ["api-auth", "logout", ""]
+            },
+            "description": "Destroys the current session."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Agent: Spend Requests",
+      "item": [
+        {
+          "name": "Submit spend request (POST /v1/spend-requests/)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer agk_YOUR_AGENT_KEY"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "7f2c9d1e-4a3b-4c5d-8e9f-0a1b2c3d4e5f"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": \"10.00\",\n  \"currency\": \"USD\",\n  \"merchant\": \"acme.com\",\n  \"purpose\": \"API credits\",\n  \"source\": \"trusted\",\n  \"source_ref\": \"\",\n  \"evidence_excerpt\": \"\",\n  \"destination_type\": \"paypal_email\",\n  \"destination_value\": \"seller@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/spend-requests/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "spend-requests", ""]
+            },
+            "description": "Submit a spend request authenticated by agent key. The Idempotency-Key header is required (1-255 printable chars). The response is HTTP 201 for EVERY decision — read the `decision` field (allow, deny, or needs_approval), never the status code alone.\n\nStatus codes:\n- 201: Request processed (read `decision` in body)\n- 400: Missing/invalid Idempotency-Key or validation error\n- 401: Invalid agent key\n- 409: Agent has no policy, or Idempotency-Key reused with a different body\n- 429: Rate limited (60/min per agent key)\n\nIf the same Idempotency-Key and body are replayed, the response includes `Idempotent-Replayed: true`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get spend request (GET /v1/spend-requests/{id}/)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer agk_YOUR_AGENT_KEY"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/spend-requests/{{spend_request_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "spend-requests", "{{spend_request_id}}", ""]
+            },
+            "description": "Retrieve one of the calling agent's own spend requests. Returns 404 if the ID does not belong to this agent."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard: Approvals",
+      "item": [
+        {
+          "name": "List approvals (GET /v1/approvals/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/approvals/?outcome=pending&limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "approvals", ""],
+              "query": [
+                {
+                  "key": "outcome",
+                  "value": "pending",
+                  "description": "Filter: pending | approved | denied | expired | all. Default: pending"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Page size (max 200, default 50)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Page offset"
+                }
+              ]
+            },
+            "description": "List approvals scoped to the caller's organizations and roles. Requires SessionAuthentication with approver or admin role. Results are paginated via limit/offset."
+          },
+          "response": []
+        },
+        {
+          "name": "Get approval detail (GET /v1/approvals/{id}/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/approvals/{{approval_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "approvals", "{{approval_id}}", ""]
+            },
+            "description": "Retrieve a single approval. The caller must have approver or admin role in the approval's organization."
+          },
+          "response": []
+        },
+        {
+          "name": "Approve request (POST /v1/approvals/{id}/approve/)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"note\": \"Approved after review\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/approvals/{{approval_id}}/approve/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "approvals", "{{approval_id}}", "approve", ""]
+            },
+            "description": "Approve a pending request. The backend re-runs the CURRENT policy and budget as a recheck before deciding. If a hard rule now denies the request, or the payee destination fingerprint changed, the API returns 409 with `rules` in the body and leaves the approval pending.\n\nStatus codes:\n- 200: Approval executed successfully\n- 404: Approval not found\n- 409: Approval expired, or recheck failed (hard deny or destination change)\n- 429: Rate limited"
+          },
+          "response": []
+        },
+        {
+          "name": "Deny request (POST /v1/approvals/{id}/deny/)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"note\": \"Denied by human review\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/approvals/{{approval_id}}/deny/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "approvals", "{{approval_id}}", "deny", ""]
+            },
+            "description": "Deny a pending request. Idempotent: re-sending the same decision is safe."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard: Policies",
+      "item": [
+        {
+          "name": "List policies (GET /v1/policies/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/policies/?limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "policies", ""],
+              "query": [
+                {
+                  "key": "agent",
+                  "value": "",
+                  "description": "Optional UUID to filter by agent"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Page size (max 200, default 50)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Page offset"
+                }
+              ]
+            },
+            "description": "List policy versions for the caller's organizations. Requires SessionAuthentication with any org membership (viewer+). Response includes nested `merchant_rules` array — transform to `allowed_merchants` and `blocked_merchants` arrays on the frontend."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard: Audit Log",
+      "item": [
+        {
+          "name": "List audit events (GET /v1/audit/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/audit/?event_type=request.received&agent={{agent_uuid}}&spend_request={{spend_request_uuid}}&after=0&limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "audit", ""],
+              "query": [
+                {
+                  "key": "event_type",
+                  "value": "request.received",
+                  "description": "Filter by event type (single value)"
+                },
+                {
+                  "key": "agent",
+                  "value": "{{agent_uuid}}",
+                  "description": "UUID of the agent"
+                },
+                {
+                  "key": "spend_request",
+                  "value": "{{spend_request_uuid}}",
+                  "description": "UUID of the spend request"
+                },
+                {
+                  "key": "after",
+                  "value": "0",
+                  "description": "Cursor: return events with id greater than this integer"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Page size (max 200, default 50)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Page offset"
+                }
+              ]
+            },
+            "description": "List audit events for the caller's organizations. Requires SessionAuthentication with any org membership (viewer+). Event types: request.received, decision.made, approval.requested, approval.approved, approval.denied, approval.expired, demo.reset.\n\nNote: actor filtering and date-range filtering are NOT supported by the current API — these are frontend demo store features that have no backend equivalent."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify audit chain (GET /v1/audit/verify/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/audit/verify/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "audit", "verify", ""]
+            },
+            "description": "Verify audit hash chains for all organizations where the caller is an admin. Returns 409 if any chain is broken (tamper-evident). Returns 200 with checked/organizations counts on success."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [],
+  "variable": [
+    {
+      "id": "base_url",
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "id": "spend_request_id",
+      "key": "spend_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "id": "approval_id",
+      "key": "approval_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "id": "agent_uuid",
+      "key": "agent_uuid",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "id": "spend_request_uuid",
+      "key": "spend_request_uuid",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

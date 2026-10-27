@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Implementation Plan &mdash; AgentGate</title>
+  <meta name="description" content="AgentGate implementation plan: 10-phase roadmap with parallel tasks and ownership boundaries.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Implementation Plan</h1>
+    <p class="subtitle">10-phase roadmap with parallel tasks and ownership boundaries</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="overview">Overview</h2>
+
+    <p>
+      This document breaks down the remaining work into 10 implementation phases. Each phase is
+      internally sequential, but phases are designed to unblock specific parallel workstreams.
+      Ownership is split between two developers with clear boundaries to avoid merge conflicts.
+      Production deployment targets the existing <strong>Contaba VPS</strong> infrastructure.
+    </p>
+
+    <div class="callout note">
+      <strong>Scope note</strong>: Authentication (including 2FA) and Gemini chatbot integration are
+      documented as architectural requirements with task breakdowns (AUTH-01 through AUTH-06).
+      Their implementation (code changes) is out of scope for this phase. See the individual
+      architecture documents for spec details.
+    </div>
+
+    <h2 id="phases">Phases</h2>
+
+    <h3 id="phase-1">Phase 1 &mdash; Foundation (Backend API completeness)</h3>
+
+    <p><strong>Owner</strong>: Backend developer</p>
+    <p><strong>Goal</strong>: Implement all missing backend endpoints identified in the API gap analysis.</p>
+
+    <ol>
+      <li>Create <code>/v1/dashboard/spend-requests/</code> list endpoint with org-scope filtering</li>
+      <li>Create <code>/v1/dashboard/spend-requests/{id}/</code> detail endpoint</li>
+      <li>Create <code>/v1/dashboard/stats/</code> endpoint for dashboard charts</li>
+      <li>Create <code>/v1/dashboard/merchants/</code> endpoint for allow/block management</li>
+      <li>Implement agent CRUD endpoints:
+        <ul>
+          <li><code>GET /v1/agents/</code> &mdash; list</li>
+          <li><code>POST /v1/agents/</code> &mdash; create</li>
+          <li><code>GET /v1/agents/{id}/</code> &mdash; detail</li>
+          <li><code>PATCH /v1/agents/{id}/</code> &mdash; suspend/reactivate</li>
+          <li><code>POST /v1/agents/{id}/rotate-key</code></li>
+          <li><code>POST /v1/agents/{id}/revoke-key</code></li>
+        </ul>
+      </li>
+      <li>Implement policy management:
+        <ul>
+          <li><code>POST /v1/policies/</code> &mdash; create new version</li>
+          <li><code>PATCH /v1/policies/{id}/</code> — update (new version)</li>
+          <li><code>POST /v1/policies/{id}/merchant-rules/</code></li>
+          <li><code>DELETE /v1/policies/{id}/merchant-rules/{rule_id}/</code></li>
+        </ul>
+      </li>
+      <li>Implement settings endpoints (workspace, team, PayPal)</li>
+    </ol>
+
+    <h3 id="phase-2">Phase 2 &mdash; Authentication (Backend), AUTH-01 through AUTH-06</h3>
+
+    <p><strong>Owner</strong>: Backend developer</p>
+    <p><strong>Goal</strong>: Implement email/password, GitHub OAuth, email verification, secure
+      logout, password reset, 2FA (TOTP + recovery codes), and authentication rate limiting.</p>
+
+    <p>Authentication is broken into six independent, sequential tasks (AUTH-01 through AUTH-06).
+      Each task has its own acceptance criteria and verification commands.</p>
+
+    <h4 id="auth-01">AUTH-01 &mdash; Email/password signup and login</h4>
+    <p><strong>Dependencies</strong>: None</p>
+    <ul>
+      <li>Add <code>django-allauth</code> to <code>requirements.txt</code></li>
+      <li>Configure allauth in <code>settings/base.py</code> with <code>ACCOUNT_EMAIL_VERIFICATION</code></li>
+      <li>Implement <code>/accounts/signup/</code> and <code>/accounts/login/</code> endpoints</li>
+      <li>Create custom signup adapter restricting domains to allowlisted org domains</li>
+    </ul>
+    <p><strong>Acceptance criteria</strong>: Users can sign up with email + password; account is
+      created but inactive until email verification; login works but redirects to verification page.</p>
+    <p><strong>Verification</strong>: <code>pytest tests/test_auth_signup_login.py</code></p>
+
+    <h4 id="auth-02">AUTH-02 &mdash; Email verification and secure logout</h4>
+    <p><strong>Dependencies</strong>: AUTH-01</p>
+    <ul>
+      <li>Configure email templates (confirmation, password reset)</li>
+      <li>Implement <code>/accounts/logout/</code> endpoint (clears session, CSRF token)</li>
+      <li>Wire <code>EmailBackend</code> to SMTP (Mailgun or local console in dev)</li>
+    </ul>
+    <p><strong>Acceptance criteria</strong>: Unverified users cannot log in; verified users can log out securely.</p>
+    <p><strong>Verification</strong>: <code>pytest tests/test_auth_verification_logout.py</code></p>
+
+    <h4 id="auth-03">AUTH-03 &mdash; Password reset and change</h4>
+    <p><strong>Dependencies</strong>: AUTH-02</p>
+    <ul>
+      <li>Implement password reset with expiring, single-use links</li>
+      <li>Implement password change endpoint (requires current password)</li>
+      <li>Integrate allauth password reset adapter with rate-limited token generation</li>
+    </ul>
+    <p><strong>Acceptance criteria</strong>: Password reset links expire after 1 hour and can only be used once; password change requires current password.</p>
+    <p><strong>Verification</strong>: <code>pytest tests/test_auth_password.py</code></p>
+
+    <h4 id="auth-04">AUTH-04 &mdash; GitHub OAuth</h4>
+    <p><strong>Dependencies</strong>: AUTH-01</p>
+    <ul>
+      <li>Register GitHub OAuth app</li>
+      <li>Configure <code>SOCIALACCOUNT_PROVIDERS</code> in settings</li>
+      <li>Implement <code>SOCIALACCOUNT_LOGIN_BY_CODE_REQUIRED = True</code> (for SPA flow)</li>
+      <li>Create custom social account adapter for org domain restriction</li>
+    </ul>
+    <p><strong>Acceptance criteria</strong>: Users can log in via GitHub; callback URL verified; social account linked to User model.</p>
+    <p><strong>Verification</strong>: <code>pytest tests/test_auth_github.py</code></p>
+
+    <h4 id="auth-05">AUTH-05 &mdash; TOTP two-factor authentication</h4>
+    <p><strong>Dependencies</strong>: AUTH-02</p>
+    <ul>
+      <li>Add <code>django-two-factor-auth</code> or <code>dj-totp</code> to <code>requirements.txt</argcode></li>
+      <li>Implement TOTP setup: generate secret, QR code, verify 6-digit code</li>
+      <li>Generate recovery codes (10 single-use backup codes)</li>
+      <li>Implement second-factor verification after both password and GitHub login</li>
+      <li>Enforce 2FA for administrators and payment approvers</li>
+    </ul>
+    <p><strong>Acceptance criteria</strong>: Users can enroll TOTP via QR code; 2FA required for admin/approver roles after primary login; 10 recovery codes generated (single-use); 2FA can be disabled only after re-verification.</p>
+    <p><strong>Verification</strong>: <code>pytest tests/test_auth_2fa.py</code></p>
+
+    <h4 id="auth-06">AUTH-06 &mdash; Organization-scoped RBAC and rate limiting</h4>
+    <p><strong>Dependencies</strong>: AUTH-05</p>
+    <ul>
+      <li>Implement <code>OrgMembership</code> signal handler for auto-assignment on signup/login</li>
+      <li>Add <code>IsDashboardUser</code>, <code>IsApprover</code>, <code>IsOrganizationAdmin</code> permission classes</li>
+      <li>Add <code>GET /api/auth/user/</code> session endpoint (returns user + orgs + roles)</li>
+      <li>Implement authentication rate limiting (Django Ratelimit or DRF throttles)</li>
+      <li>Configure <code>django-axes</code> or custom brute-force protection</li>
+    </ul>
+    <p><strong>Acceptance criteria</strong>: User is auto-assigned to organization based on email domain; permissions checked per request; brute-force login attempts are rate-limited (5 failures &rarr; 15-minute lockout).</p>
+    <p><strong>Verification</strong>: <code>pytest tests/test_auth_rbac.py && pytest tests/test_auth_rate_limit.py</code></p>
+
+    <div class="callout">
+      <p>See <a href="authentication-architecture.html">Authentication Architecture</a> for the full design
+        including 2FA, session management, CSRF protection, and RBAC details.</p>
+    </div>
+
+    <h3 id="phase-3">Phase 3 &mdash; Authentication (Frontend)</h3>
+
+    <p><strong>Owner</strong>: Frontend developer</p>
+    <p><strong>Goal</strong>: Add login/logout/signup UI with 2FA support and provider redirect flow.</p>
+
+    <ol>
+      <li>Create <code>/login</code> page with email/password form and GitHub OAuth button</li>
+      <li>Create <code>/signup</code> page with email verification flow</li>
+      <li>Create <code>/2fa/setup</code> page with TOTP QR code scanner</li>
+      <li>Create <code>/2fa/verify</code> page for second-factor entry after primary login</li>
+      <li>Create <code>/recovery-codes</code> page to display and manage backup codes</li>
+      <li>Create <code>/password/reset</code> and <code>/password/change</code> pages</li>
+      <li>Replace <code>SessionProvider</code> implementation to use session cookie (not demo)
+        <ul>
+          <li>On mount: <code>GET /api/auth/user/</code> to establish current user + orgs + roles + 2FA status</li>
+          <li><code>logout()</code> calls <code>/accounts/logout/</code></li>
+          <li>CSRF token handling via <code>X-CSRFToken</code> header</li>
+        </ul>
+      </li>
+      <li>Convert <code>demo/store.ts</code> calls to real API calls</li>
+      <li>Guard all routes with auth (except /login, /signup)</li>
+      <li>Add role-based UI (admin controls only visible to admins/approvers)</li>
+      <li>Add <code>Require2FA</code> wrapper component for admin/approver routes</li>
+    </ol>
+
+    <h3 id="phase-4">Phase 4 &mdash; Frontend-Backend Integration (Parity)</h3>
+
+    <p><strong>Owners</strong>: Frontend developer (primary), Backend developer (API fixes)</p>
+    <p><strong>Goal</strong>: Replace all demo store calls with real API.</p>
+
+    <ol>
+      <li>Fix type mismatch: backend rule objects use <code>code</code> (string) + <code>message</code> (string),
+          frontend expects <code>code: object</code> with <code>rule_code</code>. Update frontend types.</li>
+      <li>Fix pagination mismatch: frontend uses <code>page</code> parameter, backend uses <code>offset</code>/<code>limit</code>.
+          Update frontend to match backend.</li>
+      <li>Fix audit response mismatch: backend returns string timestamps, frontend expects numbers.
+          Update frontend or serializer.</li>
+      <li>Implement spend request list/detail via real API</li>
+      <li>Implement approval list/approve/deny via real API</li>
+      <li>Implement dashboard stats via real API</li>
+      <li>Implement merchant management via real API</li>
+      <li>Implement agent management via real API (admin-only views)</li>
+      <li>Implement policy management via real API (admin-only views)</li>
+    </ol>
+
+    <div class="callout warning">
+      <strong>Barrier to production</strong>: All 11/17 dashboard screens must use the real API, not the demo store.
+      This is the single largest integration task.
+    </div>
+
+    <h3 id="phase-5">Phase 5 &mdash; PayPal Integration</h3>
+
+    <p><strong>Owner</strong>: Backend developer</p>
+    <p><strong>Goal</strong>: Implement PayPal payment execution on approved spend requests.</p>
+
+    <ol>
+      <li>Add PayPal SDK dependency (<code>paypalcheckoutsdk</code> or new REST SDK)</li>
+      <li>Create <code>apps/payments/services.py</code> with <code>execute_payment(spend_request)</code></li>
+      <li>Implement <code>PaymentService.execute_payment()</code>:
+        <ul>
+          <li>Generate PayPal order via API</li>
+          <li>Return approval URL (for agent-side approval flow)</li>
+          <li>Capture funds when approved</li>
+          <li>Handle PayPal webhooks for payment status updates</li>
+        </ul>
+      </li>
+      <li>Add PayPal webhook model and endpoint: <code>POST /v1/payments/webhook/paypal/</code></li>
+      <li>Link payment to spend request in audit log</li>
+    </ol>
+
+    <h3 id="phase-6">Phase 6 &mdash; Gemini Chatbot Integration</h3>
+
+    <p><strong>Owner</strong>: Backend developer</p>
+    <p><strong>Goal</strong>: Implement backend chatbot endpoint that proxies to Gemini.</p>
+
+    <ol>
+      <li>Add <code>google-genai</code> SDK to <code>requirements.txt</code></li>
+      <li>Create <code>apps/chat/services.py</code> with <code>chat(message, conversation_id, user)</code></li>
+      <li>Implement conversation model (<code>apps/chat/models.py</code>) with per-user scoping</li>
+      <li>Implement <code>POST /v1/chat/</code> endpoint (session-authenticated)</li>
+      <li>System prompt with read-only guardrails (see Gemini architecture doc)</li>
+      <li>Add per-user rate limiting (30 requests/minute)</li>
+      <li>Add request/response logging to audit trail</li>
+    </ol>
+
+    <div class="callout">
+      <p>See <a href="gemini-chatbot-integration.html">Gemini Chatbot Integration</a> for the full design.</p>
+    </div>
+
+    <h3 id="phase-7">Phase 7 &mdash; Gemini Chatbot (Frontend)</h3>
+
+    <p><strong>Owner</strong>: Frontend developer</p>
+    <p><strong>Goal</strong>: Create chat UI in the dashboard.</p>
+
+    <ol>
+      <li>Create <code>/chat</code> route with message-input + conversation panel</li>
+      <li>Implement <code>ChatClient</code> in <code>src/api/</code> calling <code>/v1/chat/</code></li>
+      <li>Add streaming support (Server-Sent Events or WebSocket) for real-time responses</li>
+      <li>Display token usage in the UI</li>
+      <li>Conversation history scoped to current user session</li>
+    </ol>
+
+    <h3 id="phase-8">Phase 8 &mdash; Testing & Validation</h3>
+
+    <p><strong>Owners</strong>: Both developers</p>
+    <p><strong>Goal</strong>: Comprehensive test coverage for new features.</p>
+
+    <ol>
+      <li>Backend: add tests for all new endpoints (authentication, agents, policies, chatbot, PayPal webhooks)</li>
+      <li>Backend: integration tests for auth + permissions + org scoping</li>
+      <li>Frontend: component tests for login/signup/chat UI</li>
+      <li>Frontend: e2e tests for full spend-request-submission flow</li>
+      <li>Security: run <code>pip-audit</code> + <code>npm audit</code>, fix vulnerabilities</li>
+      <li>Security: run OWASP ZAP or similar against staging</li>
+      <li>Audit: verify <code>verify_audit</code> command passes with new data</li>
+    </ol>
+
+    <h3 id="phase-9">Phase 9 &mdash; Environment Configuration</h3>
+
+    <p><strong>Owners</strong>: Both developers (shared ops concern)</p>
+    <p><strong>Goal</strong>: Align staging and production configuration.</p>
+
+    <ol>
+      <li>Update <code>backend/.env.example</code> with new variables (allauth, PayPal, Gemini, TOTP)</li>
+      <li>Configure environment variables on the Contabo VPS:</li>
+      <ul>
+        <li><code>DJANGO_ALLOWED_HOSTS</code> (staging + production)</li>
+        <li><code>CSRF_TRUSTED_ORIGINS</code> (staging + production)</li>
+        <li><code>DATABASE_URL</code> (Neon staging branch + production)</li>
+        <li><code>TRUSTED_PROXY_COUNT=1</code> (Caddy fronting Gunicorn)</li>
+        <li><code>DJANGO_ADMIN_PATH</code> (custom admin path in production)</li>
+        <li>PayPal sandbox credentials (staging) / live credentials (prod)</li>
+        <li>Gemini API key (staging + prod)</li>
+        <li>GitHub OAuth app ID/secret (staging + prod)</li>
+      </ul>
+      <li>Configure email delivery (Mailgun or SMTP) for staging and production</li>
+      <li>Set <code>DJANGO_SETTINGS_MODULE=config.settings.prod</code> in Docker Compose env file</li>
+      <li>Verify <code>DATABASE_URL</code> configuration: Neon pooled URL for web, direct URL for Procrastinate worker</li>
+    </ol>
+
+    <h3 id="phase-10">Phase 10 &mdash; Final Validation & Go/No-Go</h3>
+
+    <p><strong>Owner</strong>: Both developers + coordinator review</p>
+    <p><strong>Goal</strong>: Final checklist before production deployment.</p>
+
+    <ol>
+      <li>✅ All CI checks pass (backend tests on PostgreSQL, frontend lint + build)</li>
+      <li>✅ Security audit clean (pip-audit, npm audit, OWASP ZAP)</li>
+      <li>✅ All dashboard screens use real API (demo store removed)</li>
+      <li>✅ Authentication working (email/password + GitHub OAuth + 2FA for admin/approver)</li>
+      <li>✅ PayPal integration tested against sandbox</li>
+      <li>✅ Gemini chatbot tested with guardrail prompts</li>
+      <li>✅ Audit log integrity verified (<code>verify_audit</code> passes)</li>
+      <li>✅ Staging environment deployed and smoke-tested</li>
+      <li>✅ Rollback plan documented</li>
+      <li>✅ Monitoring alerts configured</li>
+    </ol>
+
+    <div class="callout success">
+      <h4>Go/No-Go Decision</h4>
+      <p>This checklist gates production deployment. All criteria must pass.</p>
+    </div>
+
+    <h2 id="parallel-work">Parallel work opportunities</h2>
+
+    <p>The following workstreams can proceed in parallel once their dependencies are satisfied:</p>
+
+    <table>
+      <thead><tr><th>Phase</th><th>Can parallel with</th><th>Conditions</th></tr></thead>
+      <tbody>
+        <tr><td>Phase 5 (PayPal)</td><td>Phase 2-3 (Auth, Frontend integration)</td><td>PayPal work is admin-only, doesn't conflict with user-facing auth</td></tr>
+        <tr><td>Phase 6 (Gemini backend)</td><td>Phase 4 (Frontend integration)</td><td>Chat endpoint doesn't share models; frontend integration focused on spend/approval screens</td></tr>
+        <tr><td>Phase 9 (Env config)</td><td>Phase 5-7 (PayPal, Chatbot)</td><td>Environment variables can be configured as features develop</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="ownership">Ownership boundaries</h2>
+
+    <p>To minimize merge conflicts and coordinate work:</p>
+
+    <table>
+      <thead><tr><th>Area</th><th>Primary owner</th><th>Touches</th></tr></thead>
+      <tbody>
+        <tr><td>Backend API (models, views, serializers, services)</td><td>Backend developer</td><td>All <code>backend/</code> except settings files</td></tr>
+        <tr><td>Backend auth (allauth, permissions)</td><td>Backend developer</td><td><code>apps/accounts/</code>, <code>config/settings/</code></td></tr>
+        <tr><td>PayPal integration</td><td>Backend developer</td><td><code>apps/payments/</code>, <code>apps/payees/</code></td></tr>
+        <tr><td>Gemini chatbot (backend)</td><td>Backend developer</td><td>New <code>apps/chat/</code></td></tr>
+        <tr><td>Frontend UI (components, pages, demo store migration)</td><td>Frontend developer</td><td>All <code>frontend/src/</code></td></tr>
+        <tr><td>Frontend auth (SessionProvider, login/2FA UI)</td><td>Frontend developer</td><td><code>frontend/src/session/</code>, <code>frontend/src/pages/</code>, <code>frontend/src/components/2fa/</code></td></tr>
+        <tr><td>Frontend chat UI</td><td>Frontend developer</td><td><code>frontend/src/pages/Chat.tsx</code>, <code>frontend/src/api/chat.ts</code></td></tr>
+        <tr><td>Shared config, CI, environment (Contaba VPS)</td><td>Both (coordinate)</td><td><code>.github/</code>, <code>backend/.env.example</code>, Caddyfile, docker-compose.yml</td></tr>
+        <tr><td>Documentation</td><td>Both (coordinate)</td><td><code>docs/*.html</code>, <code>README.md</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="timeline">Estimated timeline</h2>
+
+    <table>
+      <thead><tr><th>Phase</th><th>Backend (hrs)</th><th>Frontend (hrs)</th><th>Parallel?</th><th>Total elapsed</th></tr></thead>
+      <tbody>
+        <tr><td>1. Foundation</td><td>16</td><td>&mdash;</td><td>No</td><td>2 days</td></tr>
+        <tr><td>2. Auth (backend, AUTH-01 to AUTH-06)</td><td>18</td><td>&mdash;</td><td>Yes (with 4)</td><td>2 days</td></tr>
+        <tr><td>3. Auth (frontend, incl. 2FA UI)</td><td>&mdash;</td><td>20</td><td>Yes (with 4)</td><td>2.5 days</td></tr>
+        <tr><td>4. Parity</td><td>6</td><td>20</td><td>Partial</td><td>3 days</td></tr>
+        <tr><td>5. PayPal</td><td>12</td><td>&mdash;</td><td>Yes (with 2-3)</td><td>1.5 days</td></tr>
+        <tr><td>6. Gemini (backend)</td><td>8</td><td>&mdash;</td><td>Yes (with 4)</td><td>1 day</td></tr>
+        <tr><td>7. Gemini (frontend)</td><td>&mdash;</td><td>10</td><td>After 6</td><td>1.5 days</td></tr>
+        <tr><td>8. Testing</td><td>10</td><td>8</td><td>Yes</td><td>1.5 days</td></tr>
+        <tr><td>9. Environment</td><td>4</td><td>2</td><td>Yes (with 8)</td><td>0.5 day</td></tr>
+        <tr><td>10. Final validation</td><td>4</td><td>2</td><td>No</td><td>1 day</td></tr>
+        <tr><td><strong>Total (sequential)</strong></td><td><strong>78</strong></td><td><strong>76</strong></td><td></td><td><strong>~16 working days</strong></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <h4>Navigation</h4>
+      <p>
+        Related documentation:
+        <a href="index.html">Documentation Home</a> &bull;
+        <a href="integration-gap-analysis.html">Integration Gaps</a> &bull;
+        <a href="api-integration.html">API Integration</a> &bull;
+        <a href="deployment-readiness.html">Deployment Readiness</a> &bull;
+        <a href="project-current-state.html">Project State</a>
+      </p>
+    </div>
+
+  </main>
+</body>
+</html>

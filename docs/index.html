@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentGate — Documentation</title>
+  <meta name="description" content="AgentGate: a spending firewall between AI agents and PayPal. Documentation homepage.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>AgentGate Documentation</h1>
+    <p class="subtitle">Spending firewall between AI agents and PayPal. <em>Status: work in progress for the PayPal AI hackathon.</em></p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="project-current-state.html">Project Current State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gap Analysis</a>
+      <a href="authentication-architecture.html">Authentication Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot Integration</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+    <h2 id="overview">Overview</h2>
+    <p>
+      AgentGate is a deterministic spending firewall. AI agents submit spend requests;
+      a pure-Python rule engine decides <strong>allow</strong>, <strong>deny</strong>, or
+      <strong>needs human approval</strong>. Approved payments execute through PayPal (planned),
+      and every decision is written to a tamper-evident, hash-chained audit log.
+    </p>
+
+    <div class="callout note">
+      <h4>Documentation scope</h4>
+      <p>
+        This documentation covers the pre-deployment audit and the integration plan that follows it.
+        Audit Markdown files in <code>docs/</code> have been migrated to canonical HTML equivalents.
+        Machine-readable files (Postman collection, GitHub Actions workflows, application configuration)
+        remain in their native formats.
+      </p>
+    </div>
+
+    <h2 id="reading-guide">Reading guide</h2>
+    <p>
+      New readers should follow this sequence:
+    </p>
+
+    <ol>
+      <li><a href="project-current-state.html">Project Current State</a> — high-level status and readiness verdict.</li>
+      <li><a href="frontend-audit.html">Frontend Audit</a> — screen-by-screen inventory and data flow.</li>
+      <li><a href="backend-audit.html">Backend Audit</a> — module-by-module assessment.</li>
+      <li><a href="integration-gap-analysis.html">Integration Gap Analysis</a> — every frontend API call traced to its backend route.</li>
+      <li><a href="authentication-architecture.html">Authentication Architecture</a> — email/password, GitHub OAuth, TOTP 2FA, sessions, CSRF, RBAC, rate limiting (AUTH-01 through AUTH-06).</li>
+      <li><a href="gemini-chatbot-integration.html">Gemini Chatbot Integration</a> — backend Gemini proxy (planned).</li>
+      <li><a href="security-audit.html">Security Audit</a> — attack surface and hardening checklist.</li>
+      <li><a href="api-integration.html">API Integration</a> — endpoint contracts, request/response formats, Postman collection.</li>
+      <li><a href="implementation-plan.html">Implementation Plan</a — 10-phase roadmap with ownership boundaries.</li>
+      <li><a href="deployment-readiness.html">Deployment Readiness</a> — staging checklist and production requirements.</li>
+      <li><a href="developer-setup.html">Developer Setup</a> — prerequisites, quick start, and conventions.</li>
+    </ol>
+
+    <h2 id="architecture-diagram">Architecture diagram</h2>
+    <pre><code>
+  AI agent  -->  AgentGate API (Django + DRF)  -->  PayPal (sandbox &mdash; planned)
+                     |
+                     +--> Rule engine (budgets, caps, merchant lists, thresholds)
+                     +--> Injection screening (deterministic phrases, NFKC)
+                     +--> Approval queue (human in the React dashboard)
+                     +--> Audit log (append-only, hash-chained, DB trigger)
+                     +--> Gemini chatbot proxy (planned, read-only advisory)
+                     +--> Auth: email/password + GitHub OAuth + TOTP 2FA (planned)
+
+  Dashboard (React 19 + TypeScript + Vite) &lt;--&gt; Session auth (Django)
+                                                            &lt;--&gt; GitHub OAuth (django-allauth, planned)
+                                                            &lt;--&gt; TOTP 2FA (django-two-factor-auth, planned)
+
+  Deployment: Contabo VPS --&gt; Caddy (HTTPS) --&gt; Gunicorn --&gt; Neon PostgreSQL
+
+  Agent API:  Authorization: Bearer agk_... (constant-time hash compare)
+  Dashboard:  Session cookie (CSRF-protected, role-based, 2FA-enforced for admin/approver)
+  Chatbot:    Dashboard session cookie (CSRF-protected, server-side Gemini key)
+    </code></pre>
+
+    <h2 id="repository-layout">Repository layout</h2>
+    <table>
+      <thead>
+        <tr><th>Path</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>backend/</code></td><td>Django + DRF application (policy engine, API, audit log)</td></tr>
+        <tr><td><code>backend/engine/</code></td><td>Pure-Python rule engine (no Django imports, enforced by import-linter)</td></tr>
+        <tr><td><code>backend/apps/</code></td><td>Django apps: accounts, agents, approvals, audit, payees, payments, policies, spend</td></tr>
+        <tr><td><code>backend/config/</code></td><td>Settings (base / dev / test / prod), URLs, WSGI/ASGI</td></tr>
+        <tr><td><code>frontend/</code></td><td>React + TypeScript dashboard (Vite, react-router v7)</td></tr>
+        <tr><td><code>frontend/src/api/</code></td><td>API client (agent-authenticated spend requests only)</td></tr>
+        <tr><td><code>frontend/src/demo/</code></td><td>In-memory demo store (mock data, not yet wired to real API)</td></tr>
+        <tr><td><code>docs/</code></td><td>Developer documentation (HTML), Postman collection</td></tr>
+        <tr><td><code>.github/workflows/ci.yml</code></td><td>CI: backend tests (PostgreSQL), frontend build, security audit</td></tr>
+      </tbody>
+    </table>
+
+    <hr>
+
+    <p style="font-size: 0.8rem; color: var(--color-text-muted);">
+      Audit date: 2026-10-27 &nbsp;|&nbsp; Auditor: Kilo (Senior Software Architect) &nbsp;|&nbsp;
+      Branch: <code>audit/agentgate-predeployment-readiness</code>
+    </p>
+  </main>
+</body>
+</html>

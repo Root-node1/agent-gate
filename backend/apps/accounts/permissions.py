@@ -1,5 +1,6 @@
 """Role checks and organization scoping for dashboard principals."""
 
+from rest_framework.exceptions import NotAuthenticated
 from rest_framework.permissions import BasePermission
 
 from .models import OrgMembership
@@ -14,7 +15,6 @@ def membership_exists(user, *, roles=None) -> bool:
     if roles is not None:
         memberships = memberships.filter(role__in=roles)
     return memberships.exists()
-
 
 
 class IsDashboardUser(BasePermission):
@@ -36,3 +36,15 @@ class IsOrganizationAdmin(BasePermission):
 
     def has_permission(self, request, view):
         return membership_exists(request.user, roles=(OrgMembership.Role.ADMIN,))
+
+
+class IsAuthenticatedOr401(BasePermission):
+    """
+    Return 401 Unauthenticated for unauthenticated requests,
+    403 Forbidden for authenticated but unauthorized requests.
+    """
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            raise NotAuthenticated()
+        return True

@@ -802,10 +802,11 @@ should lock the agent to ensure version monotonicity.</code></pre>
     <table>
       <thead><tr><th>Operation</th><th>Event type</th><th>Actor</th></tr></thead>
       <tbody>
-        <tr><td>Create agent</td><td><code>agent.created</code></td><td>USER (admin who created it)</td></tr>
-        <tr><td>Rotate key</td><td><code>key.created</code> + <code>key.revoked</code></td><td>USER</td></tr>
+        <tr><td>Create agent</td><td><code>agent.created</code> + <code>key.created</code></td><td>USER (admin who created it)</td></tr>
+        <tr><td>Rename agent</td><td><code>agent.updated</code></td><td>USER</td></tr>
+        <tr><td>Suspend/re-activate agent</td><td><code>agent.suspended</code></td><td>USER</td></tr>
+        <tr><td>Rotate key</td><td><code>key.revoked</code> + <code>key.created</code></td><td>USER</td></tr>
         <tr><td>Revoke key</td><td><code>key.revoked</code></td><td>USER</td></tr>
-        <tr><td>Suspend agent</td><td><code>agent.updated</code> (recommended, see #migrations)</td><td>USER</td></tr>
         <tr><td>Create policy</td><td><code>policy.changed</code></td><td>USER</td></tr>
         <tr><td>Update policy (new version)</td><td><code>policy.changed</code></td><td>USER</td></tr>
         <tr><td>Add/remove merchant rule</td><td><code>policy.changed</code></td><td>USER</td></tr>
@@ -825,21 +826,24 @@ should lock the agent to ensure version monotonicity.</code></pre>
     <h2 id="migrations">6. Model or migration changes required</h2>
 
     <p>After inspection of all model definitions and migrations, the following changes are recommended.
-      None are strictly required to implement the contract; all are listed for completeness.
-      <strong>No migrations are generated in this task.</strong></p>
+       None are strictly required to implement the core CRUD-02 contract; all are listed for completeness.</p>
 
-    <h4>Recommended: new audit event types</h4>
-    <p>The existing <code>AuditEvent.EventType</code> enum
-      (<code>backend/apps/audit/models.py:17-31</code>) includes <code>agent.created</code>,
-      <code>key.created</code>, <code>key.revoked</code>, and <code>policy.changed</code>, but lacks
-      an <code>agent.updated</code> type for suspension/reactivation and rename. This would be a
-      <code>CharField</code> addition to the existing <code>event_type</code> choices:</p>
-    <pre><code class="language-python">AGENT_UPDATED = "agent.updated", "Agent updated"
-AGENT_SUSPENDED = "agent.suspended", "Agent suspended"
-AGENT_ACTIVATED = "agent.activated", "Agent activated"</code></pre>
-    <p>This requires a migration in <code>apps/audit/migrations/</code>.</p>
+    <h4>Implemented: new audit event types (CRUD-02A)</h4>
+    <p><span class="badge">Done</span>
+      The <code>AuditEvent.EventType</code> enum (<code>backend/apps/audit/models.py:16-33</code>) now
+      includes <code>agent.updated</code> and <code>agent.suspended</code> alongside the existing
+      <code>agent.created</code>, <code>key.created</code>, and <code>key.revoked</code> types.
+      These were added as new choices on the existing <code>CharField</code>, generating migration
+      <code>0005_alter_auditevent_event_type</code> (application-level only; no database schema change).
+      PATCH operations now record:</p>
+    <ul>
+      <li>Name change: <code>agent.updated</code> with <code>payload = {field: "name", old_value, new_value}</code></li>
+      <li>Status change: <code>agent.suspended</code> with <code>payload = {from_status, to_status}</code></li>
+    </ul>
+    <p>All agent mutation audit events are recorded within the same <code>transaction.atomic()</code>
+      block as the model change, ensuring rollback on failure.</p>
 
-    <h4>Recommended: key rotation helper</h4>
+    <h4>Recommended (not yet implemented): key rotation helper</h4>
     <p>The <code>ApiKey</code> model has <code>create_key()</code> but no <code>rotate()</code> or
       <code>revoke()</code> method. A new method on the model or a service function would centralize
       the rotation+revoke transaction:</p>
@@ -976,17 +980,15 @@ def revoke(self):
     <p><strong>Test command</strong>: <code>python manage.py test tests.test_spend_dashboard_api</code></p>
 
     <h3>CRUD-05 &mdash; Audit event types and agent update events</h3>
-    <p><strong>Files to modify</strong>:</p>
+    <p><span class="badge badge-complete">Done</span>
+      <strong>Files modified</strong>:</p>
     <ul>
-      <li><code>backend/apps/audit/models.py</code> &mdash; add <code>AGENT_UPDATED</code>, <code>AGENT_SUSPENDED</code> event types.</li>
-      <li><code>backend/apps/agents/views.py</code> &mdash; emit audit events on PATCH, rotate-key, revoke-key.</li>
+      <li><code>backend/apps/audit/models.py</code> &mdash; added <code>AGENT_UPDATED</code>, <code>AGENT_SUSPENDED</code> event types.</li>
+      <li><code>backend/apps/audit/migrations/0005_alter_auditevent_event_type.py</code> &mdash; new migration (choice-only, no schema change).</li>
+      <li><code>backend/apps/agents/views.py</code> &mdash; emit audit events on PATCH (rename &rarr; <code>agent.updated</code>, status change &rarr; <code>agent.suspended</code>).</li>
     </ul>
-    <p><strong>Files to create</strong>:</p>
-    <ul>
-      <li>New migration in <code>backend/apps/audit/migrations/0005_...</code>.</li>
-    </ul>
-    <p><strong>Acceptance</strong>: Every agent CRUD mutation produces an audit event with actor type USER and the admin's user ID.</p>
-    <p><strong>Test command</strong>: <code>python manage.py test tests.test_audit_agent_events</code></p>
+    <p><strong>Acceptance</strong>: Every agent mutation produces an audit event with actor type USER and the admin's user ID. The mutation and audit event share a <code>transaction.atomic()</code> block; on audit failure the mutation is rolled back.</p>
+    <p><strong>Test command</strong>: <code>python manage.py test tests.test_agents_api.AgentAuditTests</code></p>
 
     <h3>CRUD-06 &mdash; Frontend API client and integration tests</h3>
     <p><strong>Files to create</strong>:</p>

@@ -26,6 +26,8 @@ class AuditEvent(models.Model):
         WEBHOOK_RECEIVED = "webhook.received", "Webhook received"
         POLICY_CHANGED = "policy.changed", "Policy changed"
         AGENT_CREATED = "agent.created", "Agent created"
+        AGENT_UPDATED = "agent.updated", "Agent updated"
+        AGENT_SUSPENDED = "agent.suspended", "Agent suspended"
         KEY_CREATED = "key.created", "Key created"
         KEY_REVOKED = "key.revoked", "Key revoked"
         DEMO_RESET = "demo.reset", "Demo reset"

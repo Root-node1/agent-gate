@@ -298,6 +298,103 @@ class AgentRevokeKeyTests(AgentApiTestBase):
         self.assertEqual(response.status_code, 403)
 
 
+class AgentAuditTests(AgentApiTestBase):
+    """CRUD-02A: audit logging completeness for agent mutations."""
+
+    def _audit_events(self):
+        return AuditEvent.objects.filter(agent=self.agent).order_by("id")
+
+    def test_rename_produces_audit_event(self):
+        before = self._audit_events().count()
+        self.client.patch(f"/v1/agents/{self.agent.id}/", {"name": "renamed-agent"})
+        events = self._audit_events()
+        self.assertEqual(events.count(), before + 1)
+        event = events.last()
+        self.assertEqual(event.event_type, AuditEvent.EventType.AGENT_UPDATED)
+        self.assertEqual(event.actor_type, AuditEvent.ActorType.USER)
+        self.assertEqual(event.actor_id, str(self.admin.id))
+        self.assertEqual(event.payload["field"], "name")
+        self.assertEqual(event.payload["new_value"], "renamed-agent")
+
+    def test_suspend_produces_audit_event(self):
+        before = self._audit_events().count()
+        self.client.patch(f"/v1/agents/{self.agent.id}/", {"status": "suspended"})
+        events = self._audit_events()
+        self.assertEqual(events.count(), before + 1)
+        event = events.last()
+        self.assertEqual(event.event_type, AuditEvent.EventType.AGENT_SUSPENDED)
+        self.assertEqual(event.payload["from_status"], Agent.Status.ACTIVE)
+        self.assertEqual(event.payload["to_status"], Agent.Status.SUSPENDED)
+
+    def test_reactivate_produces_audit_event(self):
+        self.client.patch(f"/v1/agents/{self.agent.id}/", {"status": "suspended"})
+        before = self._audit_events().count()
+        self.client.patch(f"/v1/agents/{self.agent.id}/", {"status": "active"})
+        events = self._audit_events()
+        self.assertEqual(events.count(), before + 1)
+        event = events.last()
+        self.assertEqual(event.event_type, AuditEvent.EventType.AGENT_SUSPENDED)
+        self.assertEqual(event.payload["from_status"], Agent.Status.SUSPENDED)
+        self.assertEqual(event.payload["to_status"], Agent.Status.ACTIVE)
+
+    def test_failed_update_no_audit_event(self):
+        before = self._audit_events().count()
+        self.client.patch(f"/v1/agents/{self.agent.id}/", {"status": "malicious"})
+        self.assertEqual(self._audit_events().count(), before)
+
+    def test_cross_org_update_no_audit_event(self):
+        self.client.force_authenticate(user=self.other_admin)
+        before = AuditEvent.objects.filter(agent=self.other_agent).count()
+        self.client.patch(
+            f"/v1/agents/{self.agent.id}/", {"status": "suspended"}
+        )
+        self.assertEqual(AuditEvent.objects.filter(agent=self.other_agent).count(), before)
+
+    def test_audit_entry_contains_no_sensitive_data(self):
+        self.client.patch(f"/v1/agents/{self.agent.id}/", {"name": "audit-check"})
+        event = self._audit_events().last()
+        serialized = str(event.__dict__)
+        self.assertNotIn(self.raw_key, serialized)
+        self.assertNotIn("key_hash", serialized)
+
+    def test_audit_chain_verifies(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        self.client.post(
+            "/v1/agents/",
+            {"name": "chain-test", "organization": str(self.organization.id)},
+        )
+        self.client.patch(f"/v1/agents/{self.agent.id}/", {"name": "chain-rename"})
+        out = StringIO()
+        call_command("verify_audit", stdout=out)
+        self.assertIn("verified", out.getvalue().lower())
+
+    def test_audit_event_rolls_back_on_failure(self):
+        """If the audit recording fails, the agent mutation must be rolled back."""
+        from unittest.mock import patch
+
+        from apps.audit.models import AuditEvent as AE
+
+        original_record = AE.record.__func__
+
+        def failing_record(cls, event_type, *, organization, **kwargs):
+            if event_type == cls.EventType.AGENT_UPDATED:
+                raise RuntimeError("simulated audit failure")
+            return original_record(cls, event_type, organization=organization, **kwargs)
+
+        self.client.raise_request_exception = False
+        with patch.object(AuditEvent, "record", classmethod(failing_record)):
+            response = self.client.patch(
+                f"/v1/agents/{self.agent.id}/", {"name": "rollback-test"}
+            )
+        self.assertEqual(response.status_code, 500)
+        self.agent.refresh_from_db()
+        self.assertNotEqual(self.agent.name, "rollback-test")
+        self.assertEqual(self._audit_events().count(), 0)
+
+
 class SpendApiRegressionTests(AgentApiTestBase):
     def test_existing_agent_key_still_works(self):
         self.client.force_authenticate(user=None)

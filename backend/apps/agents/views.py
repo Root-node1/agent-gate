@@ -119,12 +119,39 @@ class AgentDetailView(APIView):
     @extend_schema(request=AgentUpdateSerializer, responses={200: AgentSerializer})
     def patch(self, request, pk):
         agent = get_object_or_404(agent_queryset(request.user), pk=pk)
+        old_name = agent.name
+        old_status = agent.status
+
         serializer = AgentUpdateSerializer(agent, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
 
-        # Note: AGENT_UPDATED / AGENT_SUSPENDED audit event types are added
-        # in CRUD-05. Until then, no audit event is recorded for agent updates.
+        with transaction.atomic():
+            serializer.save()
+            validated = serializer.validated_data
+
+            if "name" in validated and validated["name"] != old_name:
+                AuditEvent.record(
+                    AuditEvent.EventType.AGENT_UPDATED,
+                    organization=agent.organization,
+                    agent=agent,
+                    actor_type=AuditEvent.ActorType.USER,
+                    actor_id=str(request.user.id),
+                    field="name",
+                    old_value=old_name,
+                    new_value=validated["name"],
+                )
+
+            if "status" in validated and validated["status"] != old_status:
+                AuditEvent.record(
+                    AuditEvent.EventType.AGENT_SUSPENDED,
+                    organization=agent.organization,
+                    agent=agent,
+                    actor_type=AuditEvent.ActorType.USER,
+                    actor_id=str(request.user.id),
+                    from_status=old_status,
+                    to_status=validated["status"],
+                )
+
         agent.refresh_from_db()
         return Response(AgentSerializer(agent).data)
 

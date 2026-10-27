@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   backend:
@@ -63,3 +64,18 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+
+  security-audit:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan Python dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.txt
+      - name: Audit Node.js dependencies
+        run: |
+          cd frontend
+          npm ci
+          npm audit --audit-level=moderate

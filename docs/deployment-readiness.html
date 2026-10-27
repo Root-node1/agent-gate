@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deployment Readiness &mdash; AgentGate</title>
+  <meta name="description" content="AgentGate deployment readiness: Contabo VPS, Docker Compose, gunicorn, Caddy, PostgreSQL, backups, CI/CD.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Deployment Readiness</h1>
+    <p class="subtitle">Contabo VPS deployment, Docker Compose, CI/CD, and monitoring</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="overview">Overview</h2>
+
+    <p>
+      AgentGate targets two deployment environments: <strong>staging</strong> (for testing) and
+      <strong>production</strong> (for live traffic). The backend runs on a
+      <strong>Contabo VPS</strong> using <strong>Docker Compose</strong> with <strong>Gunicorn</strong>
+      as the WSGI server, <strong>Caddy</strong> as the reverse proxy with automatic HTTPS, and
+      <strong>PostgreSQL</strong> on <strong>Neon</strong> as the database. A separate
+      <strong>Procrastinate worker</strong> handles background jobs. Continuous integration runs on
+      GitHub Actions, with deployment via GitHub Actions or an operator on the Contabo host.
+    </p>
+
+    <div class="callout note">
+      <p><strong>Historical note</strong>: This document previously referenced Fly.io and Render as
+        deployment targets. Those references have been corrected to match the actual Contabo VPS
+        infrastructure. See <code>backend/OPERATIONS.md</code> for the canonical operations guide.</p>
+    </div>
+
+    <h2 id="infrastructure">Infrastructure overview</h2>
+
+    <figure class="diagram">
+      <pre><code>Internet
+    │
+    │ TLS 1.2+ (Let's Encrypt via Caddy)
+    ▼
+┌──────────────────────┐
+│  Contabo VPS         │
+│  ┌────────────────┐  │
+│  │  Caddy (443)   │  │─── staticfiles/
+│  │  (reverse proxy)│  │    healthz, readyz
+│  └──────┬─────────┘  │    ──> 127.0.0.1:8000
+│         │            │
+│  ┌──────┴─────────┐  │
+│  │  Gunicorn      │  │─── workers: 4 (sync)
+│  │  (Django 6.1) │  │
+│  └────────────────┘  │
+│                      │
+│  ┌────────────────┐ │
+│  │  Procrastinate │ │
+│  │  Worker        │ │
+│  └────────────────┘  │
+│                      │
+│  ┌────────────────┐ │
+│  │  Redis (cache) │ │
+│  └────────────────┘  │
+└──────────────────────┘
+    │
+    │ DATABASE_URL (direct)
+    ▼
+┌──────────────────────┐
+│  Neon PostgreSQL     │
+│  (managed, pg17)     │
+│  + PITR + replicas   │
+└──────────────────────┘</code></pre>
+      <figcaption>AgentGate production architecture (Contabo VPS + Neon)</figcaption>
+    </figure>
+
+    <h3 id="infrastructure-table">Infrastructure components</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Provider / Tool</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Backend application</td><td>Contabo VPS</td><td>Django 6.1 + DRF 3.18, served by Gunicorn via Docker Compose</td></tr>
+        <tr><td>Reverse proxy / TLS</td><td>Caddy</td><td>Automatic HTTPS (Let's Encrypt), 64 KiB body limit, static file serving, health checks</td></tr>
+        <tr><td>Background worker</td><td>Procrastinate</td><td>Runs on Contabo VPS, connected to Neon via direct DATABASE_URL</td></tr>
+        <tr><td>Database</td><td>Neon PostgreSQL 17</td><td>Point-in-time recovery; connection pooling via Neon proxy for web, direct URL for worker</td></tr>
+        <tr><td>Frontend</td><td>Static files</td><td>Built via <code>npm run build</code>; served by Caddy from <code>staticfiles/</code></td></tr>
+        <tr><td>Cache / rate-limit</td><td>Redis (optional)</td><td>Database-backed cache as fallback; <code>createcachetable</code> must be run once in production</td></tr>
+        <tr><td>Email</td><td>SMTP (Mailgun or equivalent)</td><td>Domain verified, SPF/DKIM configured</td></tr>
+        <tr><td>Secrets</td><td>Docker env / host <code>.env</code></td><td>Never committed to git; managed on Contabo host</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="docker-compose">Docker Compose</h2>
+
+    <p>
+      The production deployment uses Docker Compose to orchestrate the backend, worker, and Caddy.
+      The <code>docker-compose.yml</code> file lives at the repository root.
+    </p>
+
+    <h3 id="compose-file">Reference docker-compose.yml</h3>
+
+    <pre><code>services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - staticfiles:/app/staticfiles
+    depends_on:
+      - web
+
+  web:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - backend/.env.production
+    volumes:
+      - staticfiles:/app/staticfiles
+    expose:
+      - "8000"
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - backend/.env.production
+    command: python manage.py procrastinate_worker
+    volumes:
+      - staticfiles:/app/staticfiles
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  staticfiles:</code></pre>
+
+    <h3 id="caddyfile">Reference Caddyfile</h3>
+
+    <pre><code>your-domain.com {
+    encode gzip
+
+    # Static files
+    file_server /static/*
+
+    # Health checks (plain HTTP, exempt from SSL redirect)
+    handle_path /healthz /readyz {
+        reverse_proxy web:8000
+    }
+
+    # Everything else
+    reverse_proxy web:8000
+}</code></pre>
+
+    <h2 id="vps-deploy">VPS deployment procedure</h2>
+
+    <p>To deploy on a fresh Contabo VPS:</p>
+
+    <ol>
+      <li>Provision Ubuntu 24.04 LTS VPS on Contabo</li>
+      <li>Install Docker and Docker Compose:
+        <pre><code>apt update && apt install -y docker.io docker-compose
+systemctl enable docker && systemctl start docker</code></pre>
+      </li>
+      <li>Clone the repository:
+        <pre><code>git clone git@github.com:Root-node1/agent-gate.git
+cd agent-gate</code></pre>
+      </li>
+      <li>Create <code>backend/.env.production</code> with production secrets (see environment variables below)</li>
+      <li>Build and start services:
+        <pre><code>docker compose build
+docker compose up -d</code></pre>
+      </li>
+      <li>Run migrations and collectstatic:
+        <pre><code>docker compose run --rm web python manage.py migrate --noinput
+docker compose run --rm web python manage.py createcachetable
+docker compose run --rm web python manage.py collectstatic --noinput</code></pre>
+      </li>
+      <li>Restart services:
+        <pre><code>docker compose up -d</code></pre>
+      </li>
+    </ol>
+
+    <h2 id="staging-checklist">Staging environment checklist</h2>
+
+    <p>Staging mirrors production on a separate Contabo VPS or staging environment:</p>
+
+    <ul class="checklist">
+      <li><input type="checkbox" disabled> Repository cloned to staging Contabo host</li>
+      <li><input type="checkbox" disabled> <code>backend/.env.staging</code> created with staging values</li>
+      <li><input type="checkbox" disabled> <code>DJANGO_SETTINGS_MODULE=config.settings.prod</code> set</li>
+      <li><input type="checkbox" disabled> <code>DJANGO_ALLOWED_HOSTS</code> set to staging domain</li>
+      <li><input type="checkbox" disabled> <code>CSRF_TRUSTED_ORIGINS</code> includes staging frontend origin</li>
+      <li><input type="checkbox" disabled> <code>SECURE_SSL_REDIRECT=True</code></li>
+      <li><input type="checkbox" disabled> <code>DATABASE_URL</code> set to Neon staging branch</li>
+      <li><input type="checkbox" disabled> Database migrations applied (<code>python manage.py migrate --noinput</code>)</li>
+      <li><input type="checkbox" disabled> Static files collected (<code>python manage.py collectstatic --noinput</code>)</li>
+      <li><input type="checkbox" disabled> Caddy serving HTTPS with Let's Encrypt</li>
+      <li><input type="checkbox" disabled> Gunicorn workers started (4 workers)</li>
+      <li><input type="checkbox" disabled> Procrastinate worker started</li>
+      <li><input type="checkbox" disabled> Health checks pass: <code>/healthz</code>, <code>/readyz</code></li>
+      <li><input type="checkbox" disabled> Email delivery configured and tested</li>
+      <li><input type="checkbox" disabled> GitHub OAuth app configured with staging callback URL</li>
+      <li><input type="checkbox" disabled> PayPal sandbox credentials configured and tested</li>
+      <li><input type="checkbox" disabled> Gemini API key configured with quota</li>
+    </ul>
+
+    <h3 id="staging-smoke-test">Staging smoke test</h3>
+
+    <ol>
+      <li><strong>Health check</strong>: <code>GET /healthz</code> returns 200</li>
+      <li><strong>Readiness</strong>: <code>GET /readyz</code> returns 200 with database connected</li>
+      <li><strong>Login</strong>: User can log in via email/password and GitHub OAuth</li>
+      <li><strong>Agent key</strong>: Valid agent can submit a spend request</li>
+      <li><strong>Demonate</strong>: A spend request triggers rules correctly</li>
+      <li><strong>Approval</strong>: Approver can approve/deny a request</li>
+      <li><strong>Audit</strong>: Audit log entries are written with hash chaining</li>
+      <li><strong>Chatbot</strong>: Authenticated user can send/receive chat messages</li>
+    </ol>
+
+    <h2 id="production-requirements">Production requirements</h2>
+
+    <div class="callout warning">
+      <strong>Important</strong>: Production secrets must NEVER be committed to the repository.
+      Use environment files on the Contabo host, protected by filesystem permissions (600).
+    </div>
+
+    <h3 id="security">Security requirements</h3>
+
+    <ul>
+      <li><code>DJANGO_SECRET_KEY</code> &mdash; random 50+ chars, never committed to git</li>
+      <li><code>DJANGO_ALLOWED_HOSTS</code> &mdash; set to production domain(s)</li>
+      <li><code>CSRF_TRUSTED_ORIGINS</code> &mdash; set to production frontend origin</li>
+      <li><code>DEBUG=False</code></li>
+      <li>HTTPS everywhere (TLS 1.2+, managed by Caddy/Let's Encrypt)</li>
+      <li><code>SESSION_COOKIE_SECURE=True</code>, <code>CSRF_COOKIE_SECURE=True</code></li>
+      <li><code>SECURE_HSTS_SECONDS=31536000</code></li>
+      <li><code>SECURE_CONTENT_TYPE_NOSNIFF=True</code></li>
+      <li><code>X_FRAME_OPTIONS=DENY</code> (set in prod settings)</li>
+      <li>PayPal web webhook endpoint verified with signature check</li>
+      <li>API keys stored as hashes (SHA-256), never plaintext</li>
+      <li>All inputs validated at serializer level</li>
+      <li>Rate limiting active on all endpoints (60/min agent, 20/min anon)</li>
+      <li><code>/admin/</code> behind IP allowlist or not publicly routed</li>
+    </ul>
+
+    <h3 id="environment-variables">Production environment variables</h3>
+
+    <table>
+      <thead><tr><th>Variable</th><th>Required</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>DJANGO_SECRET_KEY</code></td><td>yes</td><td>Random secret key (50+ chars)</td></tr>
+        <tr><td><code>DJANGO_ALLOWED_HOSTS</code></td><td>yes</td><td>Production domain(s), comma-separated</td></tr>
+        <tr><td><code>CSRF_TRUSTED_ORIGINS</code></td><td>yes</td><td>Frontend origin(s) for CSRF</td></tr>
+        <tr><td><code>DATABASE_URL</code></td><td>yes</td><td>Neon PostgreSQL URL (pooled for web)</td></tr>
+        <tr><td><code>DJANGO_ADMIN_PATH</code></td><td>yes</td><td>Custom admin path (not <code>/admin/</code>)</td></tr>
+        <tr><td><code>TRUSTED_PROXY_COUNT</code></td><td>yes</td><td>Number of trusted proxies (1 for Caddy)</td></tr>
+        <tr><td><code>PAYPAL_CLIENT_ID</code></td><td>yes (after PayPal integration)</td><td>PayPal live client ID</td></tr>
+        <tr><td><code>PAYPAL_CLIENT_SECRET</code></td><td>yes (after PayPal integration)</td><td>PayPal live secret</td></tr>
+        <tr><td><code>GEMINI_API_KEY</code></td><td>yes (after chatbot integration)</td><td>Google Gemini API key</td></tr>
+        <tr><td><code>ACCOUNT_EMAIL_VERIFICATION</code></td><td>yes (after auth)</td><td>Set to <code>mandatory</code></td></tr>
+        <tr><td><code>GITHUB_CLIENT_ID</code></td><td>yes (after auth)</td><td>GitHub OAuth app ID</td></tr>
+        <tr><td><code>GITHUB_CLIENT_SECRET</code></td><td>yes (after auth)</td><td>GitHub OAuth app secret</td></tr>
+        <tr><td><code>EMAIL_HOST</code></td><td>yes</td><td>SMTP server (Mailgun or equivalent)</td></tr>
+        <tr><td><code>EMAIL_HOST_USER</code></td><td>yes</td><td>SMTP username</td></tr>
+        <tr><td><code>EMAIL_HOST_PASSWORD</code></td><td>yes</td><td>SMTP password/token</td></tr>
+        <tr><td><code>TOTP_ENABLED</code></td><td>no</td><td><code>True</code> to enable TOTP 2FA</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="ci-cd">CI/CD pipeline</h2>
+
+    <h3 id="github-actions">GitHub Actions</h3>
+
+    <p>The CI pipeline (<code>.github/workflows/ci.yml</code>) has three jobs, plus a manual
+      deployment workflow:</p>
+
+    <figure class="diagram">
+      <pre><code>on: [push, pull_request, workflow_dispatch]
+
+┌──────────────┐
+│   backend    │
+│              │
+│  1. Start   │
+│     PostgreSQL (service)
+│  2. ruff check
+│  3. import-linter
+│  4. Django checks (--deploy)
+│  5. makemigrations --check
+│  6. Full test suite
+└──────┬──────┘
+       │pass
+┌──────▼──────┐
+│  frontend   │
+│              │
+│  1. npm ci
+│  2. ESLint
+│  3. TypeScript build
+└──────┬──────┘
+       │pass
+┌──────▼──────┐
+│ security-   │
+│ audit       │
+│              │
+│  1. pip-audit (Python deps)
+│  2. npm audit (Node deps)
+└──────────────┘</code></pre>
+      <figcaption>CI pipeline flowchart</figcaption>
+    </figure>
+
+    <h3 id="deploy-workflow">Deployment workflow</h3>
+
+    <p>Deployment is performed by the operator on the Contabo host or via a manual GitHub Actions
+      dispatch. The <code>workflow_dispatch</code> trigger in <code>ci.yml</code> enables on-demand
+      deployment runs.</p>
+
+    <pre><code># Operator deployment (manual)
+cd /opt/agent-gate  # deployment directory on Contabo VPS
+git pull origin main
+docker compose build
+docker compose up -d --wait
+
+# Apply migrations
+docker compose run --rm web python manage.py migrate --noinput
+docker compose run --rm web python manage.py createcachetable
+
+# Verify
+curl -sI https://your-domain.com/healthz</code></pre>
+
+    <h2 id="database">Database operations</h2>
+
+    <h3 id="migrations">Migrations</h3>
+
+    <p>All migrations are applied via <code>docker compose run --rm web python manage.py migrate</code>.
+      The migration check in CI (<code>makemigrations --check --dry-run</code>) prevents drift.</p>
+
+    <h3 id="backups">Encrypted off-server backups</h3>
+
+    <p>Backups are performed using <code>pg_dump</code> with encryption, stored on off-server storage:</p>
+
+    <pre><code>#!/bin/bash
+# backup.sh &mdash; run daily via cron on Contabo VPS
+# Requires: GPG key for encryption, off-server storage (S3 / Hetzner Storage Box)
+
+set -euo pipefail
+
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="agentgate_${DATE}.dump"
+ENCRYPTED_FILE="${BACKUP_FILE}.gpg"
+
+# Take a consistent snapshot
+pg_dump "$DATABASE_URL" --format=custom --file="$BACKUP_FILE"
+
+# Encrypt with GPG (recipient is ops team key)
+gpg --encrypt --recipient ops@your-domain.com "$BACKUP_FILE"
+
+# Upload to off-server storage
+aws s3 cp "$ENCRYPTED_FILE" s3://agentgate-backups/
+
+# Remove local copies
+rm -f "$BACKUP_FILE" "$ENCRYPTED_FILE"
+
+echo "Backup complete: $ENCRYPTED_FILE" | mail -s "Backup OK" ops@your-domain.com</code></pre>
+
+    <p>Cron entry (daily at 2 AM):</p>
+    <pre><code>0 2 * * * /opt/agent-gate/backup.sh</code></pre>
+
+    <h3 id="backup-restore">Restore procedure</h3>
+
+    <p>To restore from an encrypted backup:</p>
+
+    <pre><code>#!/bin/bash
+# restore.sh &mdash; restore from backup
+
+set -euo pipefail
+
+BACKUP_FILE=$1  # e.g., agentgate_20261027_020000.dump.gpg
+
+# Download from off-server storage
+aws s3 cp "s3://agentgate-backups/$BACKUP_FILE" .
+
+# Decrypt
+gpg --decrypt "$BACKUP_FILE" > "agentgate_restore.dump"
+
+# Restore (requires database downtime)
+pg_restore "$DATABASE_URL" --clean --if-exists --no-owner "agentgate_restore.dump"
+
+# Clean up
+rm -f "$BACKUP_FILE" "agentgate_restore.dump"</code></pre>
+
+    <h3 id="restore-verification">Restore verification</h3>
+
+    <p>After restoring, verify integrity:</p>
+
+    <ol>
+      <li>Run <code>python manage.py verify_audit</code> &mdash; audit chain must pass</li>
+      <li>Spot-check spend request counts: <code>SELECT COUNT(*) FROM apps_spend_spendrequest</code></li>
+      <li>Verify approvals are intact: <code>SELECT COUNT(*) FROM apps_approvals_approval</code></li>
+      <li>Confirm agent API keys still work (submit test spend request)</li>
+    </ol>
+
+    <h2 id="rollback">Rollback procedures</h2>
+
+    <h3 id="application-rollback">Application rollback</h3>
+
+    <p>Docker Compose rollback by reverting the container image:</p>
+
+    <pre><code># Stop current services
+docker compose down
+
+# Revert to previous commit
+git reset --hard HEAD~1
+
+# Rebuild and restart
+docker compose build
+docker compose up -d</code></pre>
+
+    <div class="callout warning">
+      <strong>Warning</strong>: Application rollbacks do not roll back database migrations.
+      If the previous version is incompatible with the current database schema, you must
+      also restore from backup. <strong>Always test migrations before deploying.</strong>
+    </div>
+
+    <h3 id="database-rollback">Database rollback</h3>
+
+    <p>Django migrations are forward-only by default. For a destructive rollback:</p>
+
+    <ol>
+      <li>Identify the target migration:
+        <pre><code>docker compose run --rm web python manage.py showmigrations</code></pre>
+      </li>
+      <li>Roll back to the target migration:
+        <pre><code>docker compose run --rm web python manage.py migrate apps_spend 0005_previous_migration</code></pre>
+      </li>
+      <li>If rollback is not possible, restore from encrypted off-server backup (see above)</li>
+    </ol>
+
+    <h2 id="monitoring">Monitoring and alerting</h2>
+
+    <h3 id="health-checks">Health checks</h3>
+
+    <p>The application exposes health check endpoints served by Caddy:</p>
+
+    <table>
+      <thead><tr><th>Endpoint</th><th>Check</th><th>Failure threshold</th></tr></thead>
+      <tbody>
+        <tr><td><code>/healthz</code></td><td>Process listening (Caddy &rarr; Gunicorn)</td><td>3 consecutive failures (30s)</td></tr>
+        <tr><td><code>/readyz</code></td><td>Database connection + migrations applied</td><td>3 consecutive failures (30s)</td></tr>
+        <tr><td>Background: <code>verify_audit</code></td><td>Audit log hash chain integrity</td><td>Run hourly; alert on non-zero exit</td></tr>
+      </tbody>
+    </table>
+
+    <p>Caddy health check configuration:
+      <pre><code># In Caddyfile
+health_path /healthz
+health_interval 10s</code></pre>
+    </p>
+
+    <h3 id="logging">Logging</h3>
+
+    <p>Backend logs (via Docker stdout): Gunicorn and Django logs are captured by Docker and
+      can be forwarded to a log aggregator (e.g., Loki, Papertrail) via Docker logging driver:</p>
+
+    <pre><code># docker-compose.yml
+services:
+  web:
+    # ...
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"</code></pre>
+
+    <p>Log categories:</p>
+    <ul>
+      <li><strong>Access logs</strong> &mdash; request method, path, status, duration</li>
+      <li><strong>Auth events</strong> &mdash; login, logout, failed attempts, 2FA verification</li>
+      <li><strong>Spend requests</strong> &mdash; every decision (allow/deny/approve), matched rules</li>
+      <li><strong>Audit events</strong> &mdash; appended to audit log table</li>
+      <li><strong>Payment events</strong> &mdash; PayPal webhook events, status changes</li>
+      <li><strong>Errors</strong> &mdash; unhandled exceptions with traceback</li>
+    </ul>
+
+    <h3 id="alerts">Alert rules</h3>
+
+    <table>
+      <thead><tr><th>Alert</th><th>Threshold</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td>Health check failing</td><td>/healthz returns non-200 for &gt;30s</td><td>SSH notification to on-call</td></tr>
+        <tr><td>Database unreachable</td><td>/readyz fails for &gt;60s</td><td>SSH notification to on-call</td></tr>
+        <tr><td>High error rate</td><td><code>5xx</code> &gt;1% of requests over 5 min</td><td>Email to ops team</td></tr>
+        <tr><td>Rate limit hit</td><td>Agent gets 429 &gt;5/min average</td><td>Email to ops team</td></tr>
+        <tr><td>Audit chain broken</td><td><code>verify_audit</code> exits non-zero</td><td>SSH notification to on-call</td></tr>
+        <tr><td>Low PayPal balance</td><td>PayPal available balance &lt; $100</td><td>Email to ops team</td></tr>
+        <tr><td>Gemini quota exceeded</td><td>429 from Gemini API &gt;5/min</td><td>Email to ops team</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="monitor-script">Audit verification script</h2>
+
+    <p>Run the audit chain verification periodically (hourly via cron on Contabo host):</p>
+
+    <pre><code>#!/bin/bash
+# verify-audit.sh &mdash; hourly cron
+set -e
+
+docker compose run --rm web python manage.py verify_audit --all
+
+if [ $? -ne 0 ]; then
+  echo "ERROR: Audit chain verification failed" | \
+    mail -s "Audit verification FAILED" ops@your-domain.com
+  exit 1
+fi
+
+echo "Audit chain verified OK"</code></pre>
+
+    <p>Cron entry (hourly):</p>
+    <pre><code>0 * * * * /opt/agent-gate/verify-audit.sh</code></pre>
+
+    <h2 id="readiness-checklist">Deployment readiness checklist</h2>
+
+    <div class="checklist-container">
+
+      <h3>Code &amp; CI</h3>
+      <ul class="checklist">
+        <li><input type="checkbox" disabled> All tests pass on PostgreSQL (Neon staging)</li>
+        <li><input type="checkbox" disabled> Lint passes (<code>ruff check</code>, <code>npm run lint</code>)</li>
+        <li><input type="checkbox" disabled> TypeScript builds (<code>npm run build</code>)</li>
+        <li><input type="checkbox" disabled> Import linter passes (<code>.importlinter</code>)</li>
+        <li><input type="checkbox" disabled> Migration check passes (<code>makemigrations --check --dry-run</code>)</li>
+        <li><input type="checkbox" disabled> Security scan clean (<code>pip-audit</code>, <code>npm audit</code>)</li>
+      </ul>
+
+      <h3>Backend (Contao VPS)</h3>
+      <ul class="checklist">
+        <li><input type="checkbox" disabled> <code>DJANGO_SECRET_KEY</code> set (random, not committed)</li>
+        <li><input type="checkbox" disabled> <code>DJANGO_ALLOWED_HOSTS</code> includes production domain</li>
+        <li><input type="checkbox" disabled> <code>DJANGO_ADMIN_PATH</code> set (not <code>/admin/</code>)</li>
+        <li><input type="checkbox" disabled> <code>DEBUG=False</code></li>
+        <li><input type="checkbox" disabled> <code>CSRF_TRUSTED_ORIGINS</code> includes production frontend</li>
+        <li><input type="checkbox" disabled> <code>SECURE_HSTS_SECONDS=31536000</code></li>
+        <li><input type="checkbox" disabled> <code>SESSION_COOKIE_SECURE=True</code>, <code>CSRF_COOKIE_SECURE=True</code></li>
+        <li><input type="checkbox" disabled> <code>TRUSTED_PROXY_COUNT=1</code> (Caddy fronting Gunicorn)</li>
+        <li><input type="checkbox" disabled> Database on Neon with backup/restore tested</li>
+        <li><input type="checkbox" disabled> Static files collected and served by Caddy</li>
+        <li><input type="checkbox" disabled> Email delivery configured and tested</li>
+        <li><input type="checkbox" disabled> GitHub OAuth app configured with production callback</li>
+        <li><input type="checkbox" disabled> PayPal sandbox integration tested</li>
+        <li><input type="checkbox" disabled> Gemini API key configured with quota</li>
+      </ul>
+
+      <h3>Frontend</h3>
+      <ul class="checklist">
+        <li><input type="checkbox" disabled> All dashboard screens use real API (demo store removed)</li>
+        <li><input type="checkbox" disabled> Authentication (login/logout/signup + 2FA) working</li>
+        <li><input type="checkbox" disabled> CSRF tokens handled correctly</li>
+        <li><input type="checkbox" disabled> Role-based UI (admin controls hidden from non-admins)</li>
+        <li><input type="checkbox" disabled> Chatbot UI integrated and tested</li>
+      </ul>
+
+      <h3>Infrastructure</h3>
+      <ul class="checklist">
+        <li><input type="checkbox" disabled> Backend deployed on Contabo VPS with Docker Compose</li>
+        <li><input type="checkbox" disabled> Caddy serving HTTPS with Let's Encrypt</li>
+        <li><input type="checkbox" disabled> Gunicorn workers healthy (4 workers)</li>
+        <li><input type="checkbox" disabled> Procrastinate worker running</li>
+        <li><input type="checkbox" disabled> Database on Neon with PITR enabled</li>
+        <li><input type="checkbox" disabled> Encrypted off-server backups configured and tested</li>
+        <li><input type="checkbox" disabled> Monitoring and alerting configured</li>
+        <li><input type="checkbox" disabled> Rollback procedure documented and tested</li>
+        <li><input type="checkbox" disabled> Health check endpoints returning 200</li>
+      </ul>
+
+    </div>
+
+    <div class="callout">
+      <h4>Navigation</h4>
+      <p>
+        Related documentation:
+        <a href="index.html">Documentation Home</a> &bull;
+        <a href="implementation-plan.html">Implementation Plan</a> &bull;
+        <a href="project-current-state.html">Project State</a> &bull;
+        <a href="security-audit.html">Security Audit</a> &bull;
+        <a href="developer-setup.html">Developer Setup</a> &bull;
+        <a href="authentication-architecture.html">Authentication Architecture</a>
+      </p>
+    </div>
+
+  </main>
+</body>
+</html>

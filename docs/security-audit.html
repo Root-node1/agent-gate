@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security Audit &mdash; AgentGate</title>
+  <meta name="description" content="AgentGate security audit: attack surface, threat model, hardening checklist.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Security Audit</h1>
+    <p class="subtitle">AgentGate pre-deployment security assessment &middot; 2026-10-27</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="scope">Scope</h2>
+
+    <p>This audit covers the AgentGate codebase as of the <code>audit/agentgate-predeployment-readiness</code> branch
+      (2026-10-27). It assesses the backend Django/DRF application, the frontend React dashboard (current state
+      and planned integration), and the deployment environment requirements. It does <strong>not</strong> cover
+      the Gemini chatbot integration (see <a href="gemini-chatbot-integration.html">Gemini Chatbot Integration</a>)
+      or the authentication implementation (see <a href="authentication-architecture.html">Authentication Architecture</a>),
+      which are not yet implemented.</p>
+
+    <h2 id="attack-surface">Attack surface summary</h2>
+
+    <table>
+      <thead><tr><th>Entry point</th><th>Auth method</th><th>Protected by</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>POST /v1/spend-requests/</code></td><td>Agent API key (Bearer)</td><td>Rate limit, idempotency, rule engine</td><td><span class="badge badge-complete">Hardened</span></td></tr>
+        <tr><td><code>GET /v1/spend-requests/{id}/</code></td><td>Agent API key</td><td>Agent-scoped query</td><td><span class="badge badge-complete">Hardened</span></td></tr>
+        <tr><td><code>GET /v1/approvals/</code></td><td>Session (planned)</td><td>Role-based permission</td><td><span class="badge badge-warning">Pending auth implementation</span></td></tr>
+        <tr><td><code>POST /v1/approvals/{id}/approve|deny/</code></td><td>Session (planned)</td><td>Recheck + role-based permission + CSRF</td><td><span class="badge badge-warning">Pending auth implementation</span></td></tr>
+        <tr><td><code>GET /v1/policies/</code></td><td>Session (planned)</td><td>Role-based permission</td><td><span class="badge badge-warning">Pending auth implementation</span></td></tr>
+        <tr><td><code>GET /v1/audit/</code></td><td>Session (planned)</td><td>Role-based permission</td><td><span class="badge badge-warning">Pending auth implementation</span></td></tr>
+        <tr><td><code>GET /api/auth/user/</code></td><td>Session (planned)</td><td>Authenticated session only (to be created)</td><td><span class="badge badge-missing">Not yet implemented</span></td></tr>
+        <tr><td><code>POST /webhooks/paypal/</code></td><td>None (token/IP)</td><td>Signature verification (to be implemented)</td><td><span class="badge badge-missing">Not implemented</span></td></tr>
+        <tr><td><code>POST /v1/chat/</code></td><td>Session (planned)</td><td>Read-only guardrails + throttling</td><td><span class="badge badge-missing">Not implemented</span></td></tr>
+        <tr><td><code>/healthz</code>, <code>/readyz</code></td><td>None</td><td>None (health probes only)</td><td><span class="badge badge-complete">Open</span></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="threat-model">Threat model</h2>
+
+    <h3 id="assets">High-value assets</h3>
+
+    <ol>
+      <li><strong>Agent API keys</strong> &mdash; stored as SHA-256 hashes with prefix indexing; raw keys are never persisted.</li>
+      <li><strong>PayPal credentials</strong> &mdash; <code>PAYPAL_CLIENT_ID</code> / <code>PAYPAL_CLIENT_SECRET</code> in <code>.env</code> (planned).</li>
+      <li><strong>Gemini API key</strong> &mdash; planned to live in <code>backend/.env</code> only (never in frontend).</li>
+      <li><strong>Django secret key</strong> &mdash; <code>DJANGO_SECRET_KEY</code> in <code>.env</code>.</li>
+      <li><strong>Audit log</strong> &mdash; tamper-evident hash chain; head hash not anchored externally.</li>
+      <li><strong>Database</strong> &mdash; PostgreSQL on Neon (production); SQLite (dev/test).</li>
+    </ol>
+
+    <h3 id="threats">Identified threats</h3>
+
+    <table>
+      <thead><tr><th>Threat</th><th>Category</th><th>Mitigation</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Agent key theft via log leak</td><td>Credential exposure</td><td>Keys are not logged; <code>run.sh</code> prints once on creation; rate limiting on auth endpoint</td><td><span class="badge badge-complete">Mitigated</span></td></tr>
+        <tr><td>Replay attack on spend request</td><td>Idempotency bypass</td><td><code>Idempotency-Key</code> required; unique per agent; body hash mismatch returns 409</td><td><span class="badge badge-complete">Mitigated</span></td></tr>
+        <tr><td>Budget race condition (double-spend)</td><td>Concurrency</td><td><code>select_for_update</code> lock order: agent &rarr; policy &rarr; spend &rarr; approval &rarr; org; PostgreSQL enforces, SQLite ignores</td><td><span class="badge badge-complete">Mitigated (PG)</span></td></tr>
+        <tr><td>Audit log tampering</td><td>Data integrity</td><td>Per-org hash chain + PostgreSQL UPDATE/DELETE trigger + <code>verify_audit</code> management command</td><td><span class="badge badge-complete">Tamper-evident</span></td></tr>
+        <tr><td>CSRF on dashboard endpoints</td><td>Session hijacking</td><td><code>CsrfViewMiddleware</code> enabled; <code>CSRF_COOKIE_SECURE</code> in prod; <code>CSRF_TRUSTED_ORIGINS</code> required in dev</td><td><span class="badge badge-warning">Partial (dev)</span></td></tr>
+        <tr><td>PayPal webhook spoofing</td><td>Fraudulent payment update</td><td>Signature verification (to be implemented); deduplication via <code>paypal_event_id</code> unique constraint</td><td><span class="badge badge-missing">Not yet built</span></td></tr>
+        <tr><td>Injection phrase in purpose/evidence</td><td>Prompt injection / policy override</td><td><code>R14_INJECTION_PATTERN</code> deterministic screening (NFKC, confusable, zero-width, regex)</td><td><span class="badge badge-complete">Mitigated</span></td></tr>
+        <tr><td>Key exposure in Vite bundle</td><td>Credential leakage</td><td>Gemini/PayPal keys stored server-side only; frontend uses session cookies</td><td><span class="badge badge-warning">Pending enforcement</span></td></tr>
+        <tr><td>Excessive permissions (viewer approving)</td><td>PRI</td><td><code>IsApprover</code> permission class checks <code>OrgMembership.Role</code></td><td><span class="badge badge-warning">Pending frontend auth wiring</span></td></tr>
+        <tr><td>Over-budget payment after approval</td><td>Financial loss</td><td>Recheck on approve: re-evaluates current policy + budget + payee fingerprint</td><td><span class="badge badge-complete">Mitigated</span></td></tr>
+        <tr><td>Denial-of-service via agent API</td><td>Abuse</td><td>60/min per agent key (configurable <code>THROTTLE_AGENT</code>); 64 KiB body limit</td><td><span class="badge badge-complete">Mitigated</span></td></tr>
+        <tr><td>SQL injection</td><td>Data breach</td><td>DRF serializers + ORM; no raw SQL in views</td><td><span class="badge badge-complete">Mitigated</span></td></tr>
+        <tr><td>Secret key leakage</td><td>Auth bypass</td><td><code>DJANGO_SECRET_KEY</code> in <code>.env</code> (gitignored); generated on first <code>run.sh</code></td><td><span class="badge badge-complete">Mitigated</span></td></tr>
+        <tr><td>Session fixation</td><td>Session hijacking</td><td>Django rotates session key on login; <code>SESSION_COOKIE_SECURE</code> in prod; 2FA required for admin/approver roles</td><td><span class="badge badge-warning">Pending auth + 2FA implementation</span></td></tr>
+        <tr><td>Brute-force password guessing</td><td>Credential stuffing</td><td><code>django-axes</code> or equivalent: 5 failed attempts &rarr; 15-minute lockout; per-IP throttle</td><td><span class="badge badge-missing">Not yet implemented</span></td></tr>
+        <tr><td>2FA bypass / SIM swap</td><td>Account takeover</td><td>TOTP-based 2FA (not SMS); recovery codes single-use; 2FA required for admin/approver roles after primary login</td><td><span class="badge badge-missing">Not yet implemented</span></td></tr>
+        <tr><td>Recovery code replay</td><td>Account takeover</td><td>Recovery codes are single-use; invalidated after use; tracked in audit log</td><td><span class="badge badge-missing">Not yet implemented</span></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="security-controls">Security controls by layer</h2>
+
+    <h3 id="layer-data">Data layer</h3>
+
+    <div class="callout">
+      <table>
+        <thead><tr><th>Control</th><th>Implementation</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Append-only audit</td><td><code>AuditEvent.save()</code> raises <code>PermissionError</code> on update; <code>delete()</code> raises <code>PermissionError</code></td><td><code>backend/apps/audit/models.py:62-94</code></td></tr>
+          <tr><td>Hash chain</td><td><code>prev_hash</code> &rarr; <code>hash</code> per event; genesis hash for first event</td><td><code>backend/apps/audit/chain.py</code></td></tr>
+          <tr><td>DB trigger</td><td>Migration <code>0002_audit_append_only_trigger.py</code> blocks UPDATE/DELETE/TRUNCATE</td><td><code>backend/apps/audit/migrations/0002_audit_append_only_trigger.py</code></td></tr>
+          <tr><td>Key hashing</td><td>Only <code>prefix</code> (12 chars) indexed; full key is SHA-256 hash</td><td><code>backend/apps/agents/keys.py</code>, <code>backend/apps/agents/models.py:47-49</code></td></tr>
+      <tr><td>Constant-time compare</td><td><code>hmac.compare_digest</code> in <code>hash_matches()</code></td><td><code>backend/apps/agents/keys.py</code></td></tr>
+          <tr><td>Unique constraints</td><td>Idempotency key per agent; paypal_reference; agent name per org; policy version per agent</td><td><code>backend/apps/spend/models.py:84-97</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="layer-api">API layer</h3>
+
+    <div class="callout">
+      <table>
+        <thead><tr><th>Control</th><th>Implementation</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Agent key auth</td><td><code>AgentKeyAuthentication</code> &mdash; header parse, prefix lookup, hash check, suspended/revoked rejection</td><td><code>backend/apps/agents/authentication.py:21-46</code></td></tr>
+          <tr><td>Session auth</td><td>DRF <code>SessionAuthentication</code> on all dashboard views; 2FA required for admin/approver after primary login</td><td><code>backend/apps/approvals/views.py:28</code>, <code>backend/apps/audit/views.py:25</code></td></tr>
+          <tr><td>CSRF</td><td><code>CsrfViewMiddleware</code> in middleware stack; <code>CSRF_TRUSTED_ORIGINS</code> required</td><td><code>backend/config/settings/base.py:48</code></td></tr>
+          <tr><td>Secure cookies</td><td><code>SESSION_COOKIE_SECURE=True</code>, <code>CSRF_COOKIE_SECURE=True</code> in prod <code>prod.py</code></td><td><code>backend/config/settings/prod.py:33-34</code></td></tr>
+          <tr><td>2FA enforcement</td><td>TOTP required for admin/approver roles after password and GitHub OAuth login; recovery codes single-use</td><td>Planned (AUTH-05)</td></tr>
+          <tr><td>Brute-force protection</td><td>5 failed login attempts &rarr; 15-minute lockout per IP + account</td><td>Planned (AUTH-06)</td></tr>
+          <tr><td>Anonymous throttle</td><td>20/min per IP (configurable <code>THROTTLE_ANON</code>)</td><td><code>backend/config/settings/base.py:154-158</code></td></tr>
+          <tr><td>Agent throttle</td><td>60/min per key (configurable <code>THROTTLE_AGENT</code>)</td><td><code>backend/apps/agents/throttling.py</code></td></tr>
+          <tr><td>Body size limit</td><td><code>DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024</code></td><td><code>backend/config/settings/base.py:160</code></td></tr>
+          <tr><td>Unknown field rejection</td><td>DRF serializers with strict validation</td><td><code>backend/apps/spend/serializers.py</code></td></tr>
+          <tr><td>Lock-order enforcement</td><td>1: Agent, 2: Policy, 3: SpendRequest, 4: Approval, 5: Organization (for audit)</td><td><code>backend/apps/spend/services.py:143-144</code>, <code>backend/apps/approvals/services.py:64-71</code></td></tr>
+          <tr><td>Decision immutability</td><td><code>SpendRequest.save()</code> raises <code>ValueError</code> if <code>decision</code> changes on existing row</td><td><code>backend/apps/spend/models.py:116-120</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="layer-app">Application layer</h3>
+
+    <div class="callout">
+      <table>
+        <thead><tr><th>Control</th><th>Implementation</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Rule engine precedence</td><td>Deterministic: deny wins; then needs_approval; then allow</td><td><code>backend/engine/rules.py:98-104</code></td></tr>
+          <tr><td>Recheck on approve</td><td>Re-evaluates current policy + budget + payee fingerprint; 409 on hard deny or destination change</td><td><code>backend/apps/approvals/services.py:91-118</code></td></tr>
+          <tr><td>Approval expiry</td><td>Configurable TTL (<code>approval_ttl_minutes</code>, default 60); <code>expire_approvals</code> command</td><td><code>backend/apps/approvals/services.py:181-212</code></td></tr>
+          <tr><td>Policy versioning</td><td>New row per edit; no in-place updates</td><td><code>backend/apps/policies/models.py:30</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="layer-infra">Infrastructure layer</h3>
+
+    <div class="callout">
+      <table>
+        <thead><tr><th>Control</th><th>Implementation</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Secure cookies (prod)</td><td><code>SESSION_COOKIE_SECURE = True</code>, <code>CSRF_COOKIE_SECURE = True</code></td><td><code>backend/config/settings/prod.py:33-34</code></td></tr>
+          <tr><td>HSTS</td><td><code>SECURE_HSTS_SECONDS = 31536000</code> (1 year)</td><td><code>backend/config/settings/prod.py:29</code></td></tr>
+          <tr><td>SSL redirect</td><td><code>SECURE_SSL_REDIRECT = True</code> (health endpoints exempt)</td><td><code>backend/config/settings/prod.py:27-28</code></td></tr>
+          <tr><td>Frame protection</td><td><code>X_FRAME_OPTIONS = "DENY"</code></td><td><code>backend/config/settings/prod.py:36</code></td></tr>
+          <tr><td>Content type sniffing</td><td><code>SECURE_CONTENT_TYPE_NOSNIFF = True</code></td><td><code>backend/config/settings/prod.py:35</code></td></tr>
+          <tr><td>Trusted proxy</td><td><code>SECURE_PROXY_SSL_HEADER</code>, <code>NUM_PROXIES = TRUSTED_PROXY_COUNT</code></td><td><code>backend/config/settings/prod.py:26,3</code></td></tr>
+          <tr><td>Caddy body limit</td><td>64 KiB request body limit (documented in OPERATIONS.md)</td><td><code>backend/OPERATIONS.md:67</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="hardening-checklist">Hardening checklist (pre-deployment)</h2>
+
+    <table>
+      <thead><tr><th>#</th><th>Check</th><th>Status</th><th>Owner</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Set <code>CSRF_TRUSTED_ORIGINS</code> in dev settings to include <code>http://localhost:5173</code></td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>2</td><td>Implement <code>GET /api/auth/user/</code> endpoint</td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>3</td><td>Implement email/password signup with verification via <code>django-allauth</code></td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>4</td><td>Implement GitHub OAuth via <code>django-allauth</code></td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>5</td><td>Wire CSRF token fetching + <code>X-CSRFToken</code> header in frontend API client</td><td><span class="badge badge-missing">Open</span></td><td>Frontend team</td></tr>
+        <tr><td>6</td><td>Replace <code>SessionProvider</code> fake user with real session auth</td><td><span class="badge badge-missing">Open</span></td><td>Frontend team</td></tr>
+        <tr><td>7</td><td>Add role-based route guards in <code>App.tsx</code></td><td><span class="badge badge-missing">Open</span></td><td>Frontend team</td></tr>
+        <tr><td>8</td><td>Implement <code>POST /webhooks/paypal/</code> with signature verification</td><td><span class="badge badge-missing">Open</span></td><td>Backend team</td></tr>
+        <tr><td>9</td><td>Implement <code>PaymentExecutor</code> with PayPal REST SDK</td><td><span class="badge badge-missing">Open</span></td><td>Backend team</td></tr>
+        <tr><td>10</td><td>Configure Procrastinate task queue for <code>expire_approvals</code></td><td><span class="badge badge-missing">Open</span></td><td>Backend team</td></tr>
+        <tr><td>11</td><td>Add structured logging config (<code>LOGGING</code> in <code>base.py</code>)</td><td><span class="badge badge-missing">Open</span></td><td>Backend team</td></tr>
+        <tr><td>12</td><td>Add agent key rotation endpoint (<code>POST /v1/agents/{id}/rotate-key</code>)</td><td><span class="badge badge-missing">Open</span></td><td>Backend team</td></tr>
+        <tr><td>13</td><td>Implement TOTP 2FA via <code>django-two-factor-auth</code> for admin/approver roles</td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>14</td><td>Generate and manage 10 single-use recovery codes</td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>15</td><td>Implement authentication rate limiting (5 failed logins &rarr; 15-min lockout)</td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>16</td><td>Add 2FA enforcement: second-factor required after both password and GitHub login</td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>13</td><td>Add agent revocation endpoint (<code>POST /v1/agents/{id}/revoke-key</code>)</td><td><span class="badge badge-missing">Open</span></td><td>Backend team</td></tr>
+        <tr><td>14</td><td>Set <code>STRIPE_WEBHOOK_SECRET</code> / <code>PAYPAL_WEBHOOK_SECRET</code> env var for webhook signature verification</td><td><span class="badge badge-missing">Open</span></td><td>Backend team</td></tr>
+        <tr><td>15</td><td>Add <code>SESSION_COOKIE_SAMESITE</code> = <code>"Lax"</code> or <code>"Strict"</code> in prod</td><td><span class="badge badge-missing">Open</span></td><td>Auth developer</td></tr>
+        <tr><td>16</td><td>Ensure <code>DJANGO_SECRET_KEY</code> is rotated if <code>backend/.env</code> is ever committed</td><td><span class="badge badge-missing">Open</span></td><td>Ops</td></tr>
+        <tr><td>17</td><td>Run <code>pip-audit</code> and <code>npm audit</code> in CI (already in CI)</td><td><span class="badge badge-complete">Done</span></td><td>CI</td></tr>
+        <tr><td>18</td><td>Verify <code>make migrations --check</code> passes with no missing migrations</td><td><span class="badge badge-complete">Done</span></td><td>CI</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="penetration-test-plan">Penetration test plan (post-implementation)</h2>
+
+    <table>
+      <thead><tr><th>Test case</th><th>Expected behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Submit request with malformed agent key</td><td>401, no spend request created, no audit event</td></tr>
+        <tr><td>Reuse idempotency key with different body</td><td>409 Conflict</td></tr>
+        <tr><td>Reuse idempotency key with same body</td><td>201 with <code>Idempotent-Replayed: true</code></td></tr>
+        <tr><td>Submit request with injection phrase in purpose</td><td>Decision = <code>deny</code>, matched rule <code>R14_INJECTION_PATTERN</code></td></tr>
+        <tr><td>Approve a request after policy changed to deny merchant</td><td>409 with <code>R03_MERCHANT_BLOCK</code> in body</td></tr>
+        <tr><td>Approve a request after payee fingerprint changed</td><td>409 with <code>destination_changed</code></td></tr>
+        <tr><td>Viewer attempts <code>POST /v1/approvals/{id}/approve/</code></td><td>403 Forbidden</td></tr>
+        <tr><td>Admin user from org A attempts to view org B approval</td><td>404 Not Found (not 403, to avoid enumeration)</td></tr>
+        <tr><td>Submit PayPal webhook with bad signature</td><td>400 Bad Request or 403 Forbidden</td></tr>
+        <tr><td>Submit PayPal webhook with duplicate <code>paypal_event_id</code></td><td>Deduplicated (no duplicate processing)</td></tr>
+        <tr><td>Chatbot asked to approve a spend request</td><td>Advisory refusal, no action taken</td></tr>
+        <tr><td>CSRF attack: POST from untrusted origin without token</td><td>403 Forbidden</td></tr>
+        <tr><td>Expired session token</td><td>401 Unauthorized on next API call</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="secrets-inventory">Secrets inventory</h2>
+
+    <table>
+      <thead><tr><th>Secret</th><th>Location</th><th>Rotation frequency</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>DJANGO_SECRET_KEY</code></td><td><code>backend/.env</code></td><td>On compromise or annually</td><td>Critical; session signing key. If leaked, all sessions can be forged.</td></tr>
+        <tr><td>Agent API keys (<code>agk_...</code>)</td><td>Database (<code>ApiKey.key_hash</code>) + printed once on creation</td><td>Manual rotation via <code>POST /v1/agents/{id}/rotate-key</code></td><td>Stored as SHA-256; raw key shown once.</td></tr>
+        <tr><td><code>PAYPAL_CLIENT_SECRET</code></td><td><code>backend/.env</code> (planned)</td><td>Quarterly or on compromise</td><td>Used for PayPal REST API calls; must not be in frontend.</td></tr>
+        <tr><td><code>GEMINI_API_KEY</code></td><td><code>backend/.env</code> (planned)</td><td>Quarterly or on compromise</td><td>Used for Gemini API calls; must never reach frontend.</td></tr>
+        <tr><td><code>DJANGO_GITHUB_CLIENT_SECRET</code></td><td><code>backend/.env</code> (planned)</td><td>On app rotation</td><td>GitHub OAuth; must not reach frontend.</td></tr>
+        <tr><td>Database credentials</td><td><code>DATABASE_URL</code> in <code>backend/.env</code> (prod: Neon)</td><td>On compromise</td><td>Never committed.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <p>
+        <strong>Never commit secrets.</strong> The <code>.gitignore</code> already excludes
+        <code>*.env</code>. After this audit, verify no secret values appear in:
+      </p>
+      <ul>
+        <li>Source code</li>
+        <li>Postman collection <code>docs/postman/AgentGate.postman_collection.json</code></li>
+        <li>CI workflow <code>.github/workflows/ci.yml</code></li>
+        <li>HTML documentation</li>
+      </ul>
+    </div>
+
+    <div class="callout">
+      <h4>Navigation</h4>
+      <p>
+        Related documentation:
+        <a href="backend-audit.html">Backend Audit</a> &bull;
+        <a href="frontend-audit.html">Frontend Audit</a> &bull;
+        <a href="authentication-architecture.html">Authentication Architecture</a> &bull;
+        <a href="gemini-chatbot-integration.html">Gemini Chatbot Integration</a> &bull;
+        <a href="deployment-readiness.html">Deployment Readiness</a> &bull;
+        <a href="index.html">Documentation Home</a>
+      </p>
+    </div>
+
+  </main>
+</body>
+</html>

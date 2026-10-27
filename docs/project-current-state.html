@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project Current State &mdash; AgentGate</title>
+  <meta name="description" content="AgentGate project current state and readiness verdict.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Project Current State</h1>
+    <p class="subtitle">AgentGate pre-deployment readiness audit &middot; 2026-10-27</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="verdict">Production readiness verdict</h2>
+
+    <blockquote>
+      <strong>NOT READY for production deployment.</strong>
+      The backend rule engine, spend-request API, and audit log are production-grade and well-tested.
+      However, the dashboard is a functional mock (11 of 17 screens consume an in-memory demo store),
+      PayPal payment execution is entirely unimplemented, and several core dashboard API endpoints
+      are missing. Authentication will be added by a separate developer, and a Gemini chatbot
+      integration is planned.
+    </blockquote>
+
+    <h2 id="components-at-a-glance">Components at a glance</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th>Status</th>
+          <th>Owner</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Django / DRF configuration</td>
+          <td><span class="badge badge-complete">Complete</span></td>
+          <td>Backend team</td>
+          <td>Split settings (base / dev / test / prod); drf-spectacular; throttles</td>
+        </tr>
+        <tr>
+          <td>Policy engine (<code>backend/engine/</code>)</td>
+          <td><span class="badge badge-complete">Complete</span></td>
+          <td>Backend team</td>
+          <td>Pure Python, 13 rules, exhaustive tests, import-linter enforced</td>
+        </tr>
+        <tr>
+          <td>Agent API key authentication</td>
+          <td><span class="badge badge-complete">Complete</span></td>
+          <td>Auth developer</td>
+          <td>Bearer <code>agk_</code> prefix + SHA-256 hash; constant-time compare</td>
+        </tr>
+        <tr>
+          <td>Dashboard session authentication</td>
+          <td><span class="badge badge-mocked">Planned</span></td>
+          <td>Auth developer</td>
+          <td>Django sessions exist; real login flow &amp; GitHub OAuth pending</td>
+        </tr>
+        <tr>
+          <td>Organizations &amp; RBAC</td>
+          <td><span class="badge badge-complete">Complete</span></td>
+          <td>Backend team</td>
+          <td>User, Organization, OrgMembership (admin/approver/viewer)</td>
+        </tr>
+        <tr>
+          <td>Spend request API (agent)</td>
+          <td><span class="badge badge-complete">Complete</span></td>
+          <td>Backend team</td>
+          <td>Submit + detail; idempotency, concurrency locks, budget counting</td>
+        </tr>
+        <tr>
+          <td>Approval workflow</td>
+          <td><span class="badge badge-complete">Complete</span></td>
+          <td>Backend team</td>
+          <td>List, detail, approve (recheck), deny, expiry command</td>
+        </tr>
+        <tr>
+          <td>Agent CRUD (dashboard)</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+          <td>Backend team</td>
+          <td>Models exist; no dashboard API endpoints</td>
+        </tr>
+        <tr>
+          <td>Policy write API</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+          <td>Backend team</td>
+          <td>List exists; no create/update/merchant-rule CRUD</td>
+        </tr>
+        <tr>
+          <td>Paypal execution</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+          <td>Backend team</td>
+          <td><code>FakeExecutor</code> stub only; no PayPal SDK integration</td>
+        </tr>
+        <tr>
+          <td>PayPal webhooks</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+          <td>Backend team</td>
+          <td>Model exists; no endpoint, no signature verification</td>
+        </tr>
+        <tr>
+          <td>Background task queue</td>
+          <td><span class="badge badge-mocked">Partial</span></td>
+          <td>Backend team</td>
+          <td>Management commands only; Procrastinate not configured</td>
+        </tr>
+        <tr>
+          <td>Audit log (hash chain + trigger)</td>
+          <td><span class="badge badge-complete">Complete</span></td>
+          <td>Backend team</td>
+          <td>Append-only, DB trigger, <code>verify_audit</code> command</td>
+        </tr>
+        <tr>
+          <td>Frontend dashboard (11 screens)</td>
+          <td><span class="badge badge-mocked">Mocked</span></td>
+          <td>Frontend team</td>
+          <td>All consume in-memory <code>demo/store.ts</code>, not real API</td>
+        </tr>
+        <tr>
+          <td>Frontend simulator</td>
+          <td><span class="badge badge-mocked">Partial</span></td>
+          <td>Frontend team</td>
+          <td>Only real API consumer; no idempotency reuse or payment polling</td>
+        </tr>
+        <tr>
+          <td>Gemini chatbot</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+          <td>Chatbot developer</td>
+          <td>No existing chatbot; integration planned as backend proxy</td>
+        </tr>
+        <tr>
+          <td>Email/password signup + login</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+          <td>Auth developer</td>
+          <td>Planned; not yet implemented</td>
+        </tr>
+        <tr>
+          <td>GitHub OAuth login + signup</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+          <td>Auth developer</td>
+          <td>Planned via <code>django-allauth</code></td>
+        </tr>
+        <tr>
+          <td>CSRF protection</td>
+          <td><span class="badge badge-warning">Partial</span></td>
+          <td>Auth developer</td>
+          <td>Django <code>CsrfViewMiddleware</code> configured; frontend not wired</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="readiness-summary">Readiness summary</h2>
+
+    <div class="status-grid">
+      <div class="callout success"><strong>13 subsystems</strong> ready or complete</div>
+      <div class="callout warning"><strong>3 subsystems</strong> partial / mocked</div>
+      <div class="callout danger"><strong>5+ blockers</strong> prevent deployment</div>
+    </div>
+
+    <h3 id="critical-blockers">Critical deployment blockers</h3>
+    <ol>
+      <li><strong>PayPal payment execution</strong> — <code>FakeExecutor</code> stub only; no PayPal REST SDK integration. This is the core value proposition.</li>
+      <li><strong>PayPal webhook handler</strong> — No <code>POST /webhooks/paypal/</code> endpoint; no signature verification; no event processing.</li>
+      <li><strong>Dashboard authentication</strong> — Frontend <code>SessionProvider</code> uses a hardcoded demo user; no real login, no GitHub OAuth, no CSRF handling on the client.</li>
+      <li><strong>Missing dashboard API endpoints</strong> — Agent CRUD, policy write API, dashboard-scoped transaction list, settings/team/workspace endpoints do not exist.</li>
+      <li><strong>Background task queue</strong> — <code>Procrastinate</code> mentioned in <code>OPERATIONS.md</code> but not installed or configured. <code>expire_approvals</code> has no automatic runner.</li>
+      <li><strong>Structured logging</strong> — No <code>LOGGING</code> config in settings; Django default logging only.</li>
+    </ol>
+
+    <h3 id="blockers-table">Blocker detail table</h3>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Blocker</th>
+          <th>Type</th>
+          <th>Backend action</th>
+          <th>Frontend action</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>Dashboard has no real authentication</td>
+          <td>Auth</td>
+          <td>&mdash;</td>
+          <td>Replace <code>SessionProvider</code> fake user with <code>POST /api-auth/login/</code> + <code>GET /api/auth/user/</code></td>
+          <td><span class="badge badge-missing">Pending &mdash; Auth developer</span></td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>Dashboard screens use demo store, not real API</td>
+          <td>Data</td>
+          <td>Build missing read/write endpoints</td>
+          <td>Replace <code>useDemoState()</code> with real API client calls</td>
+          <td><span class="badge badge-missing">Pending</span></td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td><code>GET /v1/spend-requests/</code> (dashboard scope)</td>
+          <td>Backend</td>
+          <td>Add org-scoped list endpoint</td>
+          <td>Replace demo store in TransactionsPage</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>Agent CRUD endpoints</td>
+          <td>Backend</td>
+          <td><code>GET/POST /v1/agents/</code>, <code>GET/PATCH /v1/agents/{id}/</code>, rotate/revoke</td>
+          <td>Build API client</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+        </tr>
+        <tr>
+          <td>5</td>
+          <td>Policy write endpoints</td>
+          <td>Backend</td>
+          <td><code>POST /v1/policies/</code>, <code>PATCH /v1/policies/{id}/</code>, merchant-rule CRUD</td>
+          <td>Use real API in PolicyEditPage</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>PayPal payment execution</td>
+          <td>Backend</td>
+          <td>Implement <code>PaymentExecutor</code> with PayPal REST SDK</td>
+          <td>&mdash;</td>
+          <td><span class="badge badge-missing">Missing &mdash; CRITICAL</span></td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td>PayPal webhook endpoint</td>
+          <td>Backend</td>
+          <td><code>POST /webhooks/paypal/</code> with signature verification</td>
+          <td>&mdash;</td>
+          <td><span class="badge badge-missing">Missing &mdash; CRITICAL</span></td>
+        </tr>
+        <tr>
+          <td>8</td>
+          <td>No background task queue</td>
+          <td>Backend</td>
+          <td>Configure Procrastinate + worker</td>
+          <td>&mdash;</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+        </tr>
+        <tr>
+          <td>9</td>
+          <td>No structured logging</td>
+          <td>Backend</td>
+          <td>Add <code>LOGGING</code> config to settings</td>
+          <td>&mdash;</td>
+          <td><span class="badge badge-missing">Missing</span></td>
+        </tr>
+        <tr>
+          <td>10</td>
+          <td>Audit API param mismatch</td>
+          <td>Contract</td>
+          <td>Add <code>actor</code>, date-range filtering; align pagination</td>
+          <td>Map frontend params to backend</td>
+          <td><span class="badge badge-warning">Param mismatch</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="ownership-boundaries">Workstream ownership boundaries</h2>
+
+    <div class="callout note">
+      <p>
+        To prevent the authentication developer, chatbot developer, and core backend/frontend developers
+        from modifying the same modules, the following ownership boundaries are established.
+      </p>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Workstream</th><th>Primary owner</th><th>Files / directories</th><th>Cannot modify</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Authentication (email/password, GitHub OAuth, session, CSRF)</td>
+          <td>Auth developer</td>
+          <td><code>backend/apps/accounts/</code>, <code>backend/config/urls.py</code>, <code>backend/config/settings/</code>, <code>frontend/src/session/</code>, <code>frontend/src/App.tsx</code> (route guards)</td>
+          <td><code>backend/engine/</code>, <code>backend/apps/spend/</code>, <code>backend/apps/approvals/</code></td>
+        </tr>
+        <tr>
+          <td>Gemini chatbot proxy</td>
+          <td>Chatbot developer</td>
+          <td>New <code>backend/apps/chatbot/</code> (new app), <code>frontend/src/chatbot/</code></td>
+          <td><code>backend/apps/payments/</code>, <code>backend/apps/spend/</code>, <code>backend/apps/agents/</code></td>
+        </tr>
+        <tr>
+          <td>Dashboard CRUD integration</td>
+          <td>Frontend team</td>
+          <td><code>frontend/src/api/</code>, <code>frontend/src/pages/app/</code>, <code>frontend/src/demo/</code> (deprecation)</td>
+          <td>Authentication session logic, chatbot backend</td>
+        </tr>
+        <tr>
+          <td>PayPal payment execution + webhooks</td>
+          <td>Backend team</td>
+          <td><code>backend/apps/payments/</code>, <code>backend/apps/spend/services.py</code></td>
+          <td>Engine, audit triggers, frontend auth</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="next-steps">Recommended first implementation task</h2>
+
+    <blockquote>
+      <strong>Implement dashboard authentication and the current-user endpoint.</strong>
+      The auth developer should implement Django login/signup, GitHub OAuth via
+      <code>django-allauth</code>, CSRF protection for session-authenticated requests, and
+      the <code>GET /api/auth/user/</code> endpoint that returns the current user's
+      memberships and roles. See
+      <a href="authentication-architecture.html">Authentication Architecture</a> for the full contract.
+      Without authenticated sessions, no dashboard endpoint can function.
+    </blockquote>
+
+    <p>
+      Full details on each subsystem are in the linked audit pages. See
+      <a href="frontend-audit.html">Frontend Audit</a>, <a href="backend-audit.html">Backend Audit</a>,
+      and <a href="integration-gap-analysis.html">Integration Gap Analysis</a>.
+    </p>
+  </main>
+</body>
+</html>

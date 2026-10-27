@@ -51,12 +51,33 @@ class PolicySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class MerchantRuleCreateSerializer(serializers.Serializer):
+    """Input for POST /v1/policies/{id}/merchant-rules/.
+
+    Carries the caller's ``expected_version`` optimistic-concurrency token
+    alongside a single merchant rule to append.  Unknown fields are rejected
+    with 400, matching the existing strict-validation pattern.
+    """
+
+    expected_version = serializers.IntegerField(min_value=1, required=True)
+    merchant_ref = serializers.CharField(max_length=255)
+    kind = serializers.ChoiceField(choices=MerchantRule.Kind.choices)
+    note = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+    def to_internal_value(self, data):
+        _reject_unknown(data, self.fields)
+        return super().to_internal_value(data)
+
+    def validate_merchant_ref(self, value):
+        return normalize_merchant(value)
+
+
 class MerchantRuleInputSerializer(serializers.Serializer):
     """Input shape for a single merchant rule in a policy write."""
 
     merchant_ref = serializers.CharField(max_length=255)
     kind = serializers.ChoiceField(choices=MerchantRule.Kind.choices)
-    note = serializers.CharField(max_length=255, required=False)
+    note = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
     def to_internal_value(self, data):
         unknown = set(data) - set(self.fields)

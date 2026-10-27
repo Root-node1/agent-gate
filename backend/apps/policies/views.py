@@ -12,6 +12,7 @@ from apps.common.pagination import DashboardPagination
 
 from .models import Policy
 from .serializers import (
+    MerchantRuleCreateSerializer,
     PolicyCreateSerializer,
     PolicySerializer,
     PolicyUpdateSerializer,
@@ -19,8 +20,10 @@ from .serializers import (
 from .services import (
     PolicyConflictError,
     PolicyValidationError,
+    add_merchant_rule,
     create_policy_update,
     create_policy_version,
+    remove_merchant_rule,
 )
 
 
@@ -108,3 +111,87 @@ class PolicyDetailView(APIView):
         except PolicyValidationError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PolicySerializer(policy).data, status=status.HTTP_200_OK)
+
+
+@extend_schema(tags=["policies"])
+class MerchantRuleCreateView(APIView):
+    """POST /v1/policies/{id}/merchant-rules/ — append one rule, new version"""
+
+    authentication_classes = [DashboardSessionAuthentication]
+    permission_classes = [IsOrganizationAdmin]
+
+    @extend_schema(
+        request=MerchantRuleCreateSerializer,
+        responses={201: PolicySerializer},
+        summary="Add a merchant rule (new policy version)",
+    )
+    def post(self, request, pk):
+        serializer = MerchantRuleCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            policy = add_merchant_rule(
+                user=request.user, policy_id=pk, validated=serializer.validated_data
+            )
+        except PolicyConflictError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PolicyValidationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            PolicySerializer(policy).data, status=status.HTTP_201_CREATED
+        )
+
+
+@extend_schema(tags=["policies"])
+class MerchantRuleDeleteView(APIView):
+    """DELETE /v1/policies/{id}/merchant-rules/{rule_id}/ — new version without rule"""
+
+    authentication_classes = [DashboardSessionAuthentication]
+    permission_classes = [IsOrganizationAdmin]
+
+    @extend_schema(
+        responses={200: PolicySerializer},
+        summary="Remove a merchant rule (new policy version)",
+    )
+    def delete(self, request, pk, rule_id):
+        expected_version = _parse_if_match(request)
+        if expected_version is None:
+            return Response(
+                {
+                    "detail": "Missing expected-version concurrency token; "
+                    "send the latest policy version in the If-Match header."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            policy = remove_merchant_rule(
+                user=request.user,
+                policy_id=pk,
+                rule_id=rule_id,
+                expected_version=expected_version,
+            )
+        except PolicyConflictError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PolicyValidationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            PolicySerializer(policy).data, status=status.HTTP_200_OK
+        )
+
+
+def _parse_if_match(request) -> int | None:
+    """Extract the expected-version integer from the If-Match header.
+
+    The header carries a bare integer (the caller's expected latest policy
+    version).  Quoted forms such as ``"1"`` are also accepted.
+    """
+    raw = request.META.get("HTTP_IF_MATCH", "")
+    if not raw:
+        return None
+    cleaned = raw.strip().strip('"').strip("'")
+    try:
+        value = int(cleaned)
+    except ValueError:
+        return None
+    if value < 1:
+        return None
+    return value

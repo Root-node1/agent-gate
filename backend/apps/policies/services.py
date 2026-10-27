@@ -16,6 +16,7 @@ from apps.common.money import to_minor
 from engine import normalize_merchant
 
 from .models import MerchantRule, Policy
+from .serializers import PolicyUpdateSerializer
 
 # (API major-unit field name, model minor-unit field name)
 POLICY_MONEY_FIELDS = [
@@ -135,7 +136,7 @@ def create_policy_version(*, user, validated):
     return policy
 
 
-def create_policy_update(*, user, policy_id, validated):
+def create_policy_update(*, user, policy_id, validated, action="updated", **extra_payload):
     """Create a new immutable policy version from the latest version of an agent's policy.
 
     ``validated`` is the ``validated_data`` from ``PolicyUpdateSerializer``: it
@@ -151,6 +152,11 @@ def create_policy_update(*, user, policy_id, validated):
     (Agent -> Policy -> ... -> Organization). All field values are inherited
     from the latest version unless overridden; money fields are converted from
     major-unit decimals using the resolved currency (inherited or supplied).
+
+    ``action`` overrides the audit payload's ``action`` field (defaults to
+    ``"updated"``). Additional keyword arguments are merged into the audit
+    payload, enabling merchant-rule add/remove events to carry
+    ``merchant_ref`` and ``kind``.
     """
     overrides = dict(validated)
     expected_version = overrides.pop("expected_version")
@@ -250,11 +256,119 @@ def create_policy_update(*, user, policy_id, validated):
             agent=agent,
             actor_type=AuditEvent.ActorType.USER,
             actor_id=str(user.id),
-            action="updated",
+            action=action,
             agent_id=str(agent.id),
             new_version=new_policy.version,
             old_version=latest.version,
             fields_changed=fields_changed,
+            **extra_payload,
         )
 
     return new_policy
+
+
+def _policy_for_admin(user, policy_id):
+    """Fetch a policy row scoped to the caller's admin membership (404 if foreign)."""
+    return get_object_or_404(
+        Policy.objects.select_related("agent").filter(
+            organization__memberships__user=user,
+            organization__memberships__role=OrgMembership.Role.ADMIN,
+        ),
+        pk=policy_id,
+    )
+
+
+def _rules_from_policy(policy):
+    """Return existing rules as plain dicts for re-creation on a new version."""
+    return [
+        {
+            "merchant_ref": rule.merchant_ref,
+            "kind": rule.kind,
+            "note": rule.note,
+        }
+        for rule in policy.merchant_rules.all()
+    ]
+
+
+def add_merchant_rule(*, user, policy_id, validated):
+    """Append a single merchant rule to the latest policy version.
+
+    ``validated`` carries ``expected_version``, ``merchant_ref``, ``kind`` and
+    an optional ``note`` from :class:`MerchantRuleCreateSerializer`.  The new
+    rule is appended to the latest version's rule set; the combined list is
+    validated for duplicates and allow/block conflicts before the new version
+    is created via :func:`create_policy_update`.
+    """
+    expected_version = validated["expected_version"]
+    new_ref = normalize_merchant(validated["merchant_ref"])
+    new_kind = validated["kind"]
+    new_note = validated.get("note", "")
+
+    target = _policy_for_admin(user, policy_id)
+
+    # Duplicate / conflict check against the current rule set.
+    for rule in target.merchant_rules.all():
+        if rule.merchant_ref == new_ref:
+            if rule.kind == new_kind:
+                raise PolicyValidationError(
+                    f"Merchant {new_ref!r} already has a {new_kind} rule."
+                )
+            raise PolicyValidationError(
+                f"Merchant {new_ref!r} cannot be both allowed and blocked."
+            )
+
+    existing_rules = _rules_from_policy(target)
+    existing_rules.append({"merchant_ref": new_ref, "kind": new_kind, "note": new_note})
+
+    update_validated = {
+        "expected_version": expected_version,
+        "merchant_rules": existing_rules,
+    }
+    update_serializer = PolicyUpdateSerializer(data=update_validated)
+    update_serializer.is_valid(raise_exception=True)
+
+    return create_policy_update(
+        user=user,
+        policy_id=policy_id,
+        validated=update_serializer.validated_data,
+        action="merchant_rule_added",
+        merchant_ref=new_ref,
+        kind=new_kind,
+    )
+
+
+def remove_merchant_rule(*, user, policy_id, rule_id, expected_version):
+    """Remove a merchant rule by creating a new policy version.
+
+    The rule identified by ``rule_id`` must exist on the policy version
+    identified by ``policy_id`` (which must be the agent's latest version).
+    A new version is created with all rules except the removed one.  The
+    original rule row is never deleted.
+    """
+    target = _policy_for_admin(user, policy_id)
+
+    rule = get_object_or_404(
+        MerchantRule.objects.filter(policy=target),
+        pk=rule_id,
+    )
+
+    existing_rules = _rules_from_policy(target)
+    remaining = [
+        r for r in existing_rules
+        if r["merchant_ref"] != rule.merchant_ref
+    ]
+
+    update_validated = {
+        "expected_version": expected_version,
+        "merchant_rules": remaining,
+    }
+    update_serializer = PolicyUpdateSerializer(data=update_validated)
+    update_serializer.is_valid(raise_exception=True)
+
+    return create_policy_update(
+        user=user,
+        policy_id=policy_id,
+        validated=update_serializer.validated_data,
+        action="merchant_rule_removed",
+        merchant_ref=rule.merchant_ref,
+    )

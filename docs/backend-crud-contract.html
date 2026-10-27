@@ -238,12 +238,12 @@
         <tr><td>PATCH</td><td><code>/v1/agents/{id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Live</td><td><code>AgentDetailView</code></td></tr>
         <tr><td>POST</td><td><code>/v1/agents/{id}/rotate-key</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Live</td><td><code>AgentRotateKeyView</code></td></tr>
         <tr><td>POST</td><td><code>/v1/agents/{id}/revoke-key</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Live</td><td><code>AgentRevokeKeyView</code></td></tr>
-        <tr><td colspan="6"><strong>Contract &mdash; policy writes (CRUD-03A)</strong></td></tr>
-        <tr><td>POST</td><td><code>/v1/policies/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
-        <tr><td>GET</td><td><code>/v1/policies/{id}/</code></td><td>Session</td><td>IsDashboardUser</td><td>Live</td><td><code>PolicyDetailView</code> (to be added)</td></tr>
-        <tr><td>PATCH</td><td><code>/v1/policies/{id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
-        <tr><td>POST</td><td><code>/v1/policies/{id}/merchant-rules/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
-        <tr><td>DELETE</td><td><code>/v1/policies/{id}/merchant-rules/{rule_id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Contract</td><td>&mdash;</td></tr>
+        <tr><td colspan="6"><strong>Policy writes (CRUD-03A &mdash; implemented at commit <code>2ee3b19</code>)</strong></td></tr>
+        <tr><td>POST</td><td><code>/v1/policies/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Live</td><td><code>PolicyListView.post</code></td></tr>
+        <tr><td>GET</td><td><code>/v1/policies/{id}/</code></td><td>Session</td><td>IsDashboardUser</td><td>Live</td><td><code>PolicyDetailView</code></td></tr>
+        <tr><td>PATCH</td><td><code>/v1/policies/{id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Live</td><td><code>PolicyDetailView.patch</code></td></tr>
+        <tr><td>POST</td><td><code>/v1/policies/{id}/merchant-rules/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Live</td><td><code>MerchantRuleCreateView</code></td></tr>
+        <tr><td>DELETE</td><td><code>/v1/policies/{id}/merchant-rules/{rule_id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td>Live</td><td><code>MerchantRuleDeleteView</code></td></tr>
         <tr><td>GET</td><td><code>/v1/spend-requests/</code> (dashboard)</td><td>Session</td><td>IsDashboardUser</td><td>Contract</td><td>&mdash;</td></tr>
         <tr><td>GET</td><td><code>/v1/spend-requests/{id}/</code> (dashboard)</td><td>Session</td><td>IsDashboardUser</td><td>Contract</td><td>&mdash;</td></tr>
       </tbody>
@@ -657,19 +657,44 @@
        <strong>Permission</strong>: <code>IsOrganizationAdmin</code></p>
 
     <p>Adds a single merchant rule to the <em>latest</em> policy version for an agent by
-       creating a new policy version (copying the latest version + adding the rule).
-       This is a convenience endpoint; a full <code>merchant_rules</code> array can also be
-       supplied via PATCH on the same endpoint.</p>
+       creating a new policy version (copying the latest version + appending the rule).
+       The <code>{id}</code> in the path identifies the policy for authorization scoping;
+       the new version is always based on the agent's latest version. A full
+       <code>merchant_rules</code> array can also be supplied via PATCH on
+       <code>/v1/policies/{id}/</code> when a wholesale replacement is needed.</p>
+
+    <p><strong>Concurrency token</strong>: the request body must include
+       <code>expected_version</code> &mdash; the caller's expected latest policy version
+       (same mechanism as PATCH, Section 2 "PATCH /v1/policies/{id}/"). If the latest
+       version has changed since the caller read it, the server returns
+       <strong>409 Conflict</strong>.</p>
 
     <p>Request body:</p>
     <pre><code class="language-json">{
+  "expected_version": 1,
   "merchant_ref": "newvendor.com",
   "kind": "allow",
   "note": "Primary vendor"
 }</code></pre>
 
-    <p>Response (201): the <code>PolicySerializer</code> representation of the new policy
-       version (which now includes the added rule).</p>
+    <p><strong>Validation</strong>:</p>
+    <ul>
+      <li><code>expected_version</code>: required integer &ge; 1; must match the agent's current latest version.</li>
+      <li><code>merchant_ref</code>: required, normalized via <code>engine.normalize_merchant()</code>
+          (lowercased, scheme/path stripped, leading <code>www.</code> removed) before storage.</li>
+      <li><code>kind</code>: required, must be <code>"allow"</code> or <code>"block"</code>.</li>
+      <li><code>note</code>: optional, max 255 characters, blank allowed.</li>
+      <li>Duplicate merchant (same <code>merchant_ref</code> after normalization) returns <strong>400</strong>.</li>
+      <li>Allow/block conflict for the same merchant returns <strong>400</strong>.</li>
+      <li>Unknown fields return <strong>400</strong>.</li>
+    </ul>
+
+    <p><strong>Response</strong> (201): the <code>PolicySerializer</code> representation of the
+       new policy version, including all inherited and newly added merchant rules.</p>
+
+    <p><strong>Error codes</strong>: 400 (invalid input, duplicate/conflict, missing token),
+       401 (unauthenticated), 403 (non-admin), 404 (foreign organization policy),
+       409 (stale <code>expected_version</code> or targeting an old version).</p>
 
     <h4>DELETE /v1/policies/{id}/merchant-rules/{rule_id}/</h4>
     <p><strong>Auth</strong>: <code>DashboardSessionAuthentication</code> &middot;
@@ -677,10 +702,26 @@
 
     <p>Removes a merchant rule by creating a new policy version that copies the latest
        version's rules minus the deleted one. This preserves the immutable-versioning
-       invariant &mdash; the original policy row and its rule are never deleted in place.
-       The <code>{id}</code> identifies the policy for authorization; the base is always
-       the latest version. Returns 204 No Content on success, or 404 if the rule does not
-       belong to the latest policy version.</p>
+       invariant &mdash; the original <code>Policy</code> row and its
+       <code>MerchantRule</code> row are never deleted or mutated in place.  The
+       <code>{id}</code> identifies the policy for authorization; the base is always
+       the agent's latest version.</p>
+
+    <p><strong>Concurrency token transport</strong>: Because HTTP DELETE bodies are not
+       consistently supported by all clients, the expected version is supplied via the
+       <code>If-Match</code> header carrying a bare integer (the caller's expected latest
+       policy version), e.g. <code>If-Match: 1</code>.  Quoted forms such as
+       <code>If-Match: "1"</code> are also accepted.  Omitting the header, or supplying
+       a non-integer or non-positive value, returns <strong>400 Bad Request</strong>.</p>
+
+    <p><strong>Response</strong> (200): the <code>PolicySerializer</code> representation of
+       the new policy version (the "new policy snapshot"), which contains all rules from
+       the latest version except the one identified by <code>{rule_id}</code>.</p>
+
+    <p><strong>Error codes</strong>: 400 (missing/invalid <code>If-Match</code> header),
+       401 (unauthenticated), 403 (non-admin), 404 (foreign policy, nonexistent rule,
+       or rule not on the latest version), 409 (stale version &mdash; the latest version
+       has changed since the caller read it, or the targeted policy is not the latest).</p>
 
     <div class="callout warning">
       <p>

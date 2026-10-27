@@ -29,7 +29,11 @@ POLICY_MONEY_FIELDS = [
 
 
 class PolicyConflictError(ValueError):
-    """Surface a database constraint violation from policy creation to the view."""
+    """Optimistic-concurrency conflict on policy versioning (view maps to 409)."""
+
+
+class PolicyValidationError(ValueError):
+    """A supplied or inherited policy field violates a model constraint (view maps to 400)."""
 
 
 def agent_owned_by_admin(user, agent_id):
@@ -129,3 +133,128 @@ def create_policy_version(*, user, validated):
         )
 
     return policy
+
+
+def create_policy_update(*, user, policy_id, validated):
+    """Create a new immutable policy version from the latest version of an agent's policy.
+
+    ``validated`` is the ``validated_data`` from ``PolicyUpdateSerializer``: it
+    carries the caller's ``expected_version`` optimistic-concurrency token plus
+    any supplied overrides. The policy referenced by ``policy_id`` must already
+    be the agent's current latest version, and ``expected_version`` must match
+    that version; otherwise a :class:`PolicyConflictError` (mapped to 409 by the
+    view) is raised.
+
+    The agent row is locked with ``select_for_update`` so concurrent creators on
+    the same agent serialize and can never produce the same ``(agent, version)``
+    pair, which also prevents deadlocks with the spend-service lock order
+    (Agent -> Policy -> ... -> Organization). All field values are inherited
+    from the latest version unless overridden; money fields are converted from
+    major-unit decimals using the resolved currency (inherited or supplied).
+    """
+    overrides = dict(validated)
+    expected_version = overrides.pop("expected_version")
+    merchant_rules_supplied = "merchant_rules" in overrides
+    supplied_rules = overrides.pop("merchant_rules", None)
+
+    with transaction.atomic():
+        target = get_object_or_404(
+            Policy.objects.select_related("agent").filter(
+                organization__memberships__user=user,
+                organization__memberships__role=OrgMembership.Role.ADMIN,
+            ),
+            pk=policy_id,
+        )
+        agent = Agent.objects.select_for_update().get(pk=target.agent_id)
+        latest = Policy.objects.filter(agent=agent).order_by("-version").first()
+
+        if latest is None or latest.pk != target.pk:
+            raise PolicyConflictError(
+                "Policy has been updated since you read it; PATCH the latest version."
+            )
+        if expected_version != latest.version:
+            raise PolicyConflictError(
+                f"Expected version {latest.version}, but the request carries {expected_version}."
+            )
+
+        next_version = latest.version + 1
+
+        currency = overrides.get("currency") or latest.currency
+        field_values = {
+            "name": overrides.get("name", latest.name),
+            "currency": currency,
+            "merchant_mode": overrides.get("merchant_mode", latest.merchant_mode),
+            "velocity_max_count": overrides.get(
+                "velocity_max_count", latest.velocity_max_count
+            ),
+            "velocity_window_seconds": overrides.get(
+                "velocity_window_seconds", latest.velocity_window_seconds
+            ),
+            "new_payee_cooldown_hours": overrides.get(
+                "new_payee_cooldown_hours", latest.new_payee_cooldown_hours
+            ),
+            "untrusted_source_action": overrides.get(
+                "untrusted_source_action", latest.untrusted_source_action
+            ),
+            "injection_escalate_threshold": overrides.get(
+                "injection_escalate_threshold", latest.injection_escalate_threshold
+            ),
+            "classifier_required": overrides.get(
+                "classifier_required", latest.classifier_required
+            ),
+            "approval_ttl_minutes": overrides.get(
+                "approval_ttl_minutes", latest.approval_ttl_minutes
+            ),
+            "timezone": overrides.get("timezone", latest.timezone),
+        }
+        for api_name, db_name in POLICY_MONEY_FIELDS:
+            if api_name in overrides:
+                field_values[db_name] = to_minor(overrides[api_name], currency)
+            else:
+                field_values[db_name] = getattr(latest, db_name)
+
+        if field_values["approval_threshold_minor"] > field_values["per_transaction_cap_minor"]:
+            raise PolicyValidationError(
+                "Approval threshold cannot exceed the per-transaction cap."
+            )
+
+        new_policy = Policy.objects.create(
+            agent=agent, version=next_version, **field_values
+        )
+
+        if merchant_rules_supplied:
+            for rule in supplied_rules or []:
+                MerchantRule.objects.create(
+                    policy=new_policy,
+                    merchant_ref=normalize_merchant(rule["merchant_ref"]),
+                    kind=rule["kind"],
+                    note=rule.get("note", ""),
+                )
+        else:
+            for rule in latest.merchant_rules.all():
+                MerchantRule.objects.create(
+                    policy=new_policy,
+                    merchant_ref=rule.merchant_ref,
+                    kind=rule.kind,
+                    note=rule.note,
+                )
+
+        fields_changed = sorted(overrides.keys())
+        if merchant_rules_supplied:
+            fields_changed.append("merchant_rules")
+            fields_changed.sort()
+
+        AuditEvent.record(
+            AuditEvent.EventType.POLICY_CHANGED,
+            organization=agent.organization,
+            agent=agent,
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id=str(user.id),
+            action="updated",
+            agent_id=str(agent.id),
+            new_version=new_policy.version,
+            old_version=latest.version,
+            fields_changed=fields_changed,
+        )
+
+    return new_policy

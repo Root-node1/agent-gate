@@ -150,7 +150,163 @@
       ]
     },
     {
-      "name": "Agent: Spend Requests",
+      "name": "Dashboard: Agents",
+      "item": [
+        {
+          "name": "List agents (GET /v1/agents/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/agents/?limit=50&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "agents", ""],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Page size (max 200, default 50)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Page offset"
+                }
+              ]
+            },
+            "description": "List agents belonging to the caller's organizations. Requires SessionAuthentication with any org membership (viewer+). Returns only `current_key_prefix` — never the full key or hash."
+          },
+          "response": []
+        },
+        {
+          "name": "Create agent (POST /v1/agents/)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"billing-agent\",\n  \"organization\": \"{{organization_uuid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/agents/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "agents", ""]
+            },
+            "description": "Create an agent and its first API key. Requires SessionAuthentication with admin role in the specified organization. The `api_key` field in the response is the only time the raw key is returned — store it safely.\n\nStatus codes:\n- 201: Agent created (read `api_key` in response body)\n- 400: Validation error (name whitespace, duplicate name, unknown field, cross-org)\n- 403: Caller is not an admin of the specified organization"
+          },
+          "response": []
+        },
+        {
+          "name": "Get agent detail (GET /v1/agents/{id}/)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/agents/{{agent_uuid}}/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "agents", "{{agent_uuid}}", ""]
+            },
+            "description": "Retrieve agent detail including current key prefix, policies, and spend totals. Requires SessionAuthentication with any org membership (viewer+). Returns 404 if the agent is not in the caller's organizations."
+          },
+          "response": []
+        },
+        {
+          "name": "Update agent (PATCH /v1/agents/{id}/)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"suspended\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/agents/{{agent_uuid}}/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "agents", "{{agent_uuid}}", ""]
+            },
+            "description": "Update an agent's name or status (active/suspended). Requires SessionAuthentication with admin role. Suspending an agent immediately blocks its API key from authenticating spend requests.\n\nStatus codes:\n- 200: Agent updated\n- 400: Invalid status, name collision, or unknown field\n- 403: Caller is not an admin\n- 404: Agent not found in caller's organizations"
+          },
+          "response": []
+        },
+        {
+          "name": "Rotate key (POST /v1/agents/{id}/rotate-key/)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/agents/{{agent_uuid}}/rotate-key/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "agents", "{{agent_uuid}}", "rotate-key", ""]
+            },
+            "description": "Create a new API key and revoke the previous one. The old key is revoked (soft-deleted). The new raw key is returned in the response — store it safely. Requires SessionAuthentication with admin role.\n\nStatus codes:\n- 200: Key rotated\n- 403: Caller is not an admin\n- 404: Agent not found in caller's organizations"
+          },
+          "response": []
+        },
+        {
+          "name": "Revoke key (POST /v1/agents/{id}/revoke-key/)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/agents/{{agent_uuid}}/revoke-key/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "agents", "{{agent_uuid}}", "revoke-key", ""]
+            },
+            "description": "Revoke the agent's current API key (soft-delete via revoked_at). After revocation, the key prefix in list/detail responses becomes null. Requires SessionAuthentication with admin role.\n\nStatus codes:\n- 200: Key revoked\n- 400: No active API key to revoke\n- 403: Caller is not an admin\n- 404: Agent not found in caller's organizations"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "item": [
         {
           "name": "Submit spend request (POST /v1/spend-requests/)",
@@ -440,6 +596,12 @@
     {
       "id": "agent_uuid",
       "key": "agent_uuid",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "id": "organization_uuid",
+      "key": "organization_uuid",
       "value": "",
       "type": "string"
     },

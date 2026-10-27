@@ -47,9 +47,9 @@
       <tbody>
         <tr><td>Branch</td><td><code>feat/account-recovery</code></td></tr>
         <tr><td>Worktree</td><td><code>/home/winst/.../.kilo/worktrees/feat-account-recovery-3f7b03f85e52a554</code></td></tr>
-        <tr><td>HEAD</td><td><code>2f9c3b6</code> &mdash; <code>docs(integration): plan feature dependencies and baseline adoption</code></td></tr>
+        <tr><td>HEAD</td><td><code>cb2ab17</code> &mdash; <code>docs(auth): define secure account recovery contract</code></td></tr>
         <tr><td>Working tree</td><td><span class="badge badge-complete">Clean</span> (no uncommitted changes at checkpoint start)</td></tr>
-        <tr><td>Primary evidence</td><td><code>django-allauth==65.21.0</code> wheel source (PyPI, ref 65.21.0); <code>feat/auth-foundation</code> @ <code>c35287d</code>; <code>docs/authentication-architecture.html</code>, <code>docs/integration-dependency-plan.html</code></td></tr>
+        <tr><td>Primary evidence</td><td><code>django-allauth==65.21.0</code> wheel source (PyPI, ref 65.21.0); <code>feat/auth-foundation</code> @ <code>c35287d</code>; shared docs (<code>docs/authentication-architecture.html</code>, <code>docs/integration-dependency-plan.html</code>) cited for context only &mdash; INT-02 does not include AUTH-01 or CRUD code; corrections to shared docs recorded in the §2.3 callout below.</td></tr>
       </tbody>
     </table>
 
@@ -78,7 +78,7 @@
 
     <p>
       <strong>django-allauth is not present in this worktree.</strong> The current branch
-      <code>feat/account-recovery</code> (HEAD <code>2f9c3b6</code>) does <em>not</em> include allauth:
+      <code>feat/account-recovery</code> (HEAD <code>cb2ab17</code>) does <em>not</em> include allauth:
     </p>
     <ul>
       <li><code>backend/requirements.txt</code> does <strong>not</strong> list <code>django-allauth</code> (<code>pip show django-allauth</code> returns <em>Package(s) not found</em>).</li>
@@ -95,7 +95,7 @@
       <tbody>
         <tr><td><code>feat/auth-foundation</code></td><td><code>c35287d</code></td><td>AUTH-01: allauth 65.21.0 Headless session foundation, <code>apps.accounts</code> views/adapter/serializer, CSRF bootstrap, tests</td><td>Ancestor of <code>integration/auth-crud</code> @ <code>3d6fef9</code>; NOT merged into this worktree</td></tr>
         <tr><td><code>integration/auth-crud</code></td><td><code>3d6fef9</code></td><td>AUTH-01 + CRUD integration baseline; 339 tests passing</td><td>Reference baseline; not an ancestor of this branch</td></tr>
-        <tr><td><code>feat/account-recovery</code></td><td><code>2f9c3b6</code></td><td>Docs only (INT-02 dependency plan)</td><td><strong>This worktree</strong></td></tr>
+        <tr><td><code>feat/account-recovery</code></td><td><code>cb2ab17</code></td><td>AUTH-02A contract (docs only; allauth not installed on this branch)</td><td><strong>This worktree</strong></td></tr>
       </tbody>
     </table>
 
@@ -183,14 +183,23 @@
       sequence (<code>GET /config</code> then <code>X-CSRFToken</code> header).
     </p>
 
-    <div class="callout note">
-      <h4>Not yet present here</h4>
+    <div class="callout warning">
+      <h4>Baseline correction: INT-02 does not include AUTH-01 or CRUD integration</h4>
       <p>
-        A <code>docs/auth-crud-integration.html</code> is referenced by the task brief, but <strong>no such
-        file exists</strong> under <code>docs/</code> in this worktree. The corresponding branch is
-        <code>integration/auth-crud</code> (<code>3d6fef9</code>); its narrative is captured in
-        <code>docs/integration-dependency-plan.html</code>. The account-recovery contract therefore cites
-        <code>integration-dependency-plan.html</code> as the source of record.
+        <strong>INT-02 documentation (<code>docs/integration-dependency-plan.html</code>) does not
+        include AUTH-01 or CRUD integration code.</strong> It is a <em>dependency-planning</em>
+        document that <strong>references</strong> the <code>integration/auth-crud</code> baseline
+        (<code>3d6fef9</code>) and its constituent branches (<code>feat/auth-foundation</code> @
+        <code>c35287d</code>, <code>feat/backend-crud</code>) but contains <strong>no implementation</strong>.
+        The actual AUTH-01 allauth foundation and CRUD endpoints exist only on those sibling
+        branches and are <strong>not present</strong> on <code>feat/account-recovery</code>
+        (<code>cb2ab17</code>). A <code>docs/auth-crud-integration.html</code> is referenced by the
+        task brief, but <strong>no such file exists</strong> under <code>docs/</code> on this
+        worktree; the nearest source is the INT-02 dependency plan, which describes the integration
+        <strong>strategy</strong>, not its code. This contract therefore relies on the allauth
+        65.21.0 wheel source plus the AUTH-01 test
+        (<code>test_auth_signup_login.py</code> @ <code>c35287d</code>) as its evidence, not on any
+        document that ships AUTH-01 or CRUD implementation.
       </p>
     </div>
 
@@ -213,7 +222,7 @@
         <tr><td>1</td><td>Password-reset request</td><td><span class="badge badge-complete">Yes</span></td><td><code>POST /api/auth/headless/browser/v1/auth/password/request</code> &mdash; <code>RequestPasswordResetView</code></td><td>Always returns success (enumeration-resistant) when <code>ACCOUNT_EMAIL_VERIFICATION</code> form validates; sends reset email or unknown-account email.</td><td>Configure <code>PASSWORD_RESET_TIMEOUT</code> (Django); configure <code>HEADLESS_FRONTEND_URLS["account_reset_password_from_key"]</code> to point the link at the SPA.</td></tr>
         <tr><td>2</td><td>Password-reset confirmation</td><td><span class="badge badge-complete">Yes</span></td><td><code>POST /api/auth/headless/browser/v1/auth/password/reset</code> &mdash; <code>ResetPasswordView</code></td><td>Token validated with <code>EmailAwarePasswordResetTokenGenerator</code>; password set via adapter <code>set_password</code>; token single-use by cryptographic binding.</td><td>Set <code>PASSWORD_RESET_TIMEOUT = 3600</code>; provide the <code>key</code> to the SPA via the email link.</td></tr>
         <tr><td>3</td><td>Password change (authenticated)</td><td><span class="badge badge-complete">Yes</span></td><td><code>POST /api/auth/headless/browser/v1/account/password/change</code> &mdash; <code>ChangePasswordView</code> (<code>AuthenticatedAPIView</code>)</td><td>Validates <code>current_password</code> when the user has a usable password; runs <code>AUTH_PASSWORD_VALIDATORS</code>.</td><td>None required to expose; optional <code>LOGOUT_ON_PASSWORD_CHANGE</code> for stricter session handling.</td></tr>
-        <tr><td>4</td><td>Secure token generation &amp; expiry</td><td><span class="badge badge-complete">Yes (token flow)</span> / <code>Yes (code flow)</code></td><td><code>EmailAwarePasswordResetTokenGenerator</code> (subclass of Django <code>PasswordResetTokenGenerator</code>); or <code>PASSWORD_RESET_BY_CODE_ENABLED</code> code flow (<code>PasswordResetVerificationProcess</code>).</td><td>Token never stored; bound to user <code>pk</code> + password hash + emails + timestamp. Expiry = Django <code>PASSWORD_RESET_TIMEOUT</code>.</td><td><strong>Must set <code>PASSWORD_RESET_TIMEOUT</code> explicitly</strong> (default is unset &rarr; tokens never expire). See §<a href="#timeout-correction">2.4</a>.</td></tr>
+        <tr><td>4</td><td>Secure token generation &amp; expiry</td><td><span class="badge badge-complete">Yes (token flow)</span> / <code>Yes (code flow)</code></td><td><code>EmailAwarePasswordResetTokenGenerator</code> (subclass of Django <code>PasswordResetTokenGenerator</code>); or <code>PASSWORD_RESET_BY_CODE_ENABLED</code> code flow (<code>PasswordResetVerificationProcess</code>).</td><td>Token never stored; bound to user <code>pk</code> + password hash + emails + timestamp. Expiry = Django <code>PASSWORD_RESET_TIMEOUT</code>.</td><td><strong>Must set <code>PASSWORD_RESET_TIMEOUT</code> explicitly</strong> (default is unset &rarr; tokens never expire). See §<a href="#timeout-correction">2.3</a>.</td></tr>
         <tr><td>5</td><td>Email delivery &amp; templates</td><td><span class="badge badge-complete">Yes</span></td><td><code>account/email/password_reset_key_{subject,message}.txt</code>, <code>password_reset_{subject,message}</code> (post-reset), <code>unknown_account_{...}</code> (enumeration).</td><td><code>adapter.send_password_reset_mail</code> / <code>send_unknown_account_mail</code> use the configured <code>EMAIL_BACKEND</code>.</td><td>Provide SMTP <code>EMAIL_BACKEND=...</code> (AUTH-02); add project override templates under <code>backend/templates/account/email/</code> to brand the link.</td></tr>
         <tr><td>6</td><td>Rate limiting</td><td><span class="badge badge-complete">Yes (built-in)</span></td><td>Cache-backed (<code>django.core.cache</code>). Defaults: <code>reset_password = 20/m/ip, 5/m/key</code> (key = sha256 of lowercased email); <code>reset_password_from_key = 20/m/ip</code>; <code>change_password = 5/m/user</code>.</td>*Per-IP + per-email-key limits applied automatically; email is hashed in the cache key (not enumerable). Reset-request view also calls <code>ratelimit.consume_or_429(..., action="reset_password", key=email)</code> explicitly.</td><td>Override via <code>ACCOUNT_RATE_LIMITS</code> if the product wants &ldquo;max 3/hour&rdquo; (see <a href="#decisions">§11</a>); use a <strong>shared</strong> cache (Redis/DB) in production.</td></tr>
         <tr><td>7</td><td>Session invalidation after reset/change</td><td><span class="badge badge-warning">Partial (opt-in)</span></td><td>Password change: <code>LOGOUT_ON_PASSWORD_CHANGE=False</code> default &rarr; <code>update_session_auth_hash</code> (current session preserved). Password reset: <code>LOGIN_ON_PASSWORD_RESET=False</code> default &rarr; no login; no session touched.</td>*Cross-session* invalidation requires enabling <code>allauth.usersessions</code> (<code>USERSESSIONS_ENABLED</code>) or setting <code>LOGOUT_ON_PASSWORD_CHANGE=True</code>.</td><td>Decide and document the post-reset/post-change session policy (see §<a href="#session-csrf">7</a>).</td></tr>
@@ -279,6 +288,35 @@
           IP + per-email rate limits.</li>
     </ul>
 
+    <div class="callout warning">
+      <h4>Shared-document corrections (recorded here, not applied to shared docs)</h4>
+      <p>
+        The following corrections are needed in <strong>shared</strong> architecture documentation.
+        They are recorded here for traceability; the shared documents themselves are <strong>not
+        modified</strong> by this commit.
+      </p>
+      <dl>
+        <dt><code>docs/integration-dependency-plan.html</code> (INT-02), line "Password reset"</dt>
+        <dd>
+          Cites <code>ACCOUNT_PASSWORD_RESET</code> (not a valid allauth 65.21.0 setting &mdash; password
+          reset is always available when allauth URLs are included; there is no enable/disable setting)
+          and <code>ACCOUNT_PASSWORD_RESET_TIMEOUT = 3600</code> (does not exist in allauth; the correct
+          setting is Django&rsquo;s <code>PASSWORD_RESET_TIMEOUT = 3600</code>). Also cites
+          <code>POST /accounts/password/change/</code> (the non-headless HTML form endpoint) instead of the
+          Headless JSON endpoint <code>/api/auth/headless/browser/v1/account/password/change</code>.
+          <code>ACCOUNT_EMAIL_CONFIRMATION_EXPIRE_DAYS</code> (line "Email verification") is valid &mdash;
+          allauth looks it up with the <code>ACCOUNT_</code> prefix.
+        </dd>
+        <dt><code>docs/authentication-architecture.html</code> (AUTH-03), AUTH-03 task entry</dt>
+        <dd>
+          Cites <code>ACCOUNT_PASSWORD_RESET</code> (not a valid allauth setting) and
+          <code>ACCOUNT_PASSWORD_RESET_TIMEOUT = 3600</code> (does not exist in allauth; correct setting
+          is Django&rsquo;s <code>PASSWORD_RESET_TIMEOUT = 3600</code>). The contract&rsquo;s own
+          §2.3 supersedes these references.
+        </dd>
+      </dl>
+    </div>
+
     <h3 id="uuid-pk">2.4 UUID primary-key compatibility</h3>
 
     <p>
@@ -327,7 +365,7 @@
 │       ├─ key valid & not expired ─→ reset_password() + finalize_password_reset()
 │       │                              (set_password → token now invalid by hash binding)
 │       ├─ key invalid/expired ──────→ 400 {"errors":[...]}  ("invalid_password_reset")
-│       │  ← always 200 AuthenticationResponse, is_authenticated=false (LOGIN_ON_PASSWORD_RESET=False)
+│       │  ← AuthenticationResponse, is_authenticated=false (LOGIN_ON_PASSWORD_RESET=False); HTTP status ⚠ pending integration test &mdash; see §10.1
 │       → notification email "password_reset" sent
 │         [rate-limited: 20/m/ip]
 │
@@ -391,7 +429,7 @@
         <tr><td>Auth</td><td>Anonymous (the reset link authenticates the request); requires <code>X-CSRFToken</code>.</td></tr>
         <tr><td>Rate limit</td><td><code>reset_password_from_key = 20/m/ip</code> (decorator <code>@rate_limit(action="reset_password_from_key")</code>).</td></tr>
         <tr><td>Request body</td><td><code>{"key": "&lt;uidb36&gt;-&lt;token&gt;", "password": "..."}</code> &mdash; a single <code>password</code> field (no <code>password2</code>); validated by <code>AUTH_PASSWORD_VALIDATORS</code> + adapter <code>clean_password</code>.</td></tr>
-        <tr><td>Success</td><td><code>200</code> <code>AuthenticationResponse</code> with <code>meta.is_authenticated=false</code> (because <code>LOGIN_ON_PASSWORD_RESET=False</code> &mdash; the user is <strong>not</strong> auto-logged-in). Password is hashed and persisted (<code>pbkdf2_sha256$</code>). A notification email (<code>password_reset</code> template) is sent.</td></tr>
+        <tr><td>Success</td><td><span class="badge badge-warning">HTTP status pending integration test</span> <code>AuthenticationResponse</code> with <code>meta.is_authenticated=false</code> (because <code>LOGIN_ON_PASSWORD_RESET=False</code> &mdash; the user is <strong>not</strong> auto-logged-in). Password is hashed and persisted (<code>pbkdf2_sha256$</code>). A notification email (<code>password_reset</code> template) is sent. <strong>Source analysis</strong>: <code>ResetPasswordView.post()</code> returns <code>AuthenticationResponse(request.user)</code>; since <code>LOGIN_ON_PASSWORD_RESET=False</code>, <code>BaseAuthenticationResponse.__init__</code> defaults to <code>HTTPStatus.UNAUTHORIZED</code> (401) for unauthenticated users &mdash; but this <strong>must be confirmed by an integration test</strong> before asserting a specific status (see §<a href="#testing">10.1</a>).</td></tr>
         <tr><td>Invalid / expired / reused token</td><td><code>400</code> <code>{"errors":[{"message":"...","param":"key"}]}</code>, error code <code>invalid_password_reset</code>. Treated identically whether the token expired, was tampered, or was already consumed (the password-hash binding makes a consumed token fail <code>check_token</code>).</td></tr>
         <tr><td>Side effects</td><td><code>flows.password_reset.reset_password(user, password)</code> (sets password) then <code>finalize_password_reset(request, user)</code>: clears login-attempt cache, fires <code>signals.password_reset</code>, sends notification mail. The user&rsquo;s session is untouched because they are not authenticated here.</td></tr>
         <tr><td>Token lifetime</td><td>Django <code>PASSWORD_RESET_TIMEOUT</code> (seconds). <strong>Must be set to <code>3600</code></strong> &mdash; default is unset and tokens never expire.</td></tr>
@@ -608,7 +646,7 @@
 
     <div class="callout note">
       <p>
-        The current worktree (<code>feat/account-recovery</code> @ <code>2f9c3b6</code>) does not yet contain
+        The current worktree (<code>feat/account-recovery</code> @ <code>cb2ab17</code>) does not yet contain
         allauth. AUTH-02B should first <strong>rebase onto <code>integration/auth-crud</code> (<code>3d6fef9</code>)</strong>
         so the allauth 65.21.0 foundation is present, then make the changes below. This AUTH-02A checkpoint
         introduces <strong>no code</strong>.
@@ -670,7 +708,7 @@
         <tr><td>Unverified user requests reset</td><td>200; reset email <em>not</em> sent; <code>unknown_account</code> email <em>not</em> sent (email unverified &rarr; not a login user)</td><td>Assert <code>len(mail.outbox) == 0</code> after request; assert <code>GET /api/auth/user/</code> is 401.</td></tr>
         <tr><td>Verified user requests reset</td><td>200; exactly one <code>password_reset_key</code> email with a link containing <code>key</code></td><td>Parse <code>mail.outbox</code> for the link; extract <code>key</code>.</td></tr>
         <tr><td>Unknown email requests reset</td><td>200 (same as known); one <code>unknown_account</code> email sent</td><td>Assert identical status &amp; response; assert <code>unknown_account</code> template used; assert no account enumeration via timing/status.</td></tr>
-        <tr><td>Valid token, new password</td><td>Password reset; <code>check_password(new) == True</code>; subsequent login with new password works</td><td><code>reset_password</code> flow + <code>user.check_password</code>.</td></tr>
+        <tr><td>Valid token, new password &mdash; HTTP status verification</td><td>Password reset; <code>check_password(new) == True</code>; subsequent login with new password works; <code>GET /api/auth/user/ → 401</code> (no auto-login)</td><td><code>reset_password</code> flow + <code>user.check_password</code>. <strong>Explicitly assert the reset endpoint HTTP status</strong>: <code>ResetPasswordView.post()</code> returns <code>AuthenticationResponse(request.user)</code> with <code>LOGIN_ON_PASSWORD_RESET=False</code>, and <code>BaseAuthenticationResponse.__init__</code> defaults to <code>HTTPStatus.UNAUTHORIZED</code> (401) for unauthenticated users &mdash; confirm 401 (not 200) via this test before asserting a fixed status in §4.2.</td></tr>
         <tr><td>Reused / tampered token</td><td>400 <code>invalid_password_reset</code>; password unchanged</td><td>Submit the same <code>key</code> twice; assert the second is 400 and the password is unchanged after the first.</td></tr>
         <tr><td>Expired token</td><td>400 <code>invalid_password_reset</code></td><td>Generate token, advance <code>settings.PASSWORD_RESET_TIMEOUT</code> via <code>override_settings</code> + time mocking, or test <code>check_token</code> returns False.</td></tr>
         <tr><td>Rate-limited request</td><td>429 <code>RateLimitResponse</code> after exceeding <code>5/m/key</code> or <code>20/m/ip</code></td><td>Send 6 rapid requests for the same email; assert the 6th is 429.</td></tr>
@@ -699,7 +737,7 @@
     <table>
       <thead><tr><th>#</th><th>Decision / risk</th><th>Default / recommendation</th><th>Impact if unapproved</th></tr></thead>
       <tbody>
-        <tr><td>1</td><td>Rebase ordering: allauth is not on <code>feat/account-recovery</code> today. AUTH-02B must rebase onto <code>integration/auth-crud</code> (<code>3d6fef9</code>) before implementing.</td><td>Rebase onto <code>3d6fef9</code>; implement on top.</td><td>Any implementation on the current HEAD would lack allauth and fail.</td></tr>
+        <tr><td>1</td><td>Rebase ordering: allauth is not on <code>feat/account-recovery</code> today. AUTH-02B must rebase onto <code>integration/auth-crud</code> (<code>3d6fef9</code>) before implementing.</td><td>Rebase onto <code>3d6fef9</code>; implement on top.</td><td>Any implementation on the current HEAD would lack allauth and fail. <strong>BLOCKED</strong>: AUTH-02B cannot proceed until the integration-baseline defect is repaired (see §<a href="#blocker">BLOCKER</a>).</td></tr>
         <tr><td>2</td><td>Token-link flow (default, <code>PASSWORD_RESET_BY_CODE_ENABLED=False</code>) vs code-based reset.</td><td>Keep the default token-link flow.</td><td>Switching adds a session-bound stage process, more UI surface, and no security gain over correctly-expiring stateless tokens.</td></tr>
         <tr><td>3</td><td>Token expiry setting. Docs cite <code>ACCOUNT_PASSWORD_RESET_TIMEOUT</code>, which allauth 65.21.0 does not define.</td><td>Authorize adding Django&rsquo;s <code>PASSWORD_RESET_TIMEOUT = 3600</code> (and correcting the prior docs).</td><td>Without it, reset links never expire &mdash; a critical gap.</td></tr>
         <tr><td>4</td><td>Session policy after password change.</td><td><code>LOGOUT_ON_PASSWORD_CHANGE=False</code> + enable <code>allauth.usersessions</code> (<code>USERSESSIONS_ENABLED=True</code>) to terminate other sessions.</td><td>Different session-state wiring; adds <code>allauth[userSessions]</code> extra &amp; a new app to <code>INSTALLED_APPS</code>.</td></tr>
@@ -708,6 +746,27 @@
         <tr><td>7</td><td>SPA <code>HEADLESS_FRONTEND_URLS["account_reset_password_from_key"]</code> origin.</td><td>Read from <code>FRONTEND_ORIGIN</code> env; point at <code>/reset-password/{key}</code>.</td><td>Incorrect origin in the emailed link breaks the SPA flow.</td></tr>
     </tbody>
     </table>
+
+    <div class="callout danger" id="blocker">
+      <h4>☠ BLOCKED: AUTH-02B</h4>
+      <p>
+        <strong>AUTH-02B is blocked</strong> pending repair of the integration-baseline defect:
+        the <code>feat/account-recovery</code> worktree (HEAD <code>cb2ab17</code>) does <strong>not</strong>
+        contain <code>django-allauth</code>, the AUTH-01 session foundation, or the CRUD integration baseline.
+        The previous documentation incorrectly attributed the baseline to INT-02 planning docs; INT-02 is a
+        <em>dependency plan</em> only and does not ship AUTH-01 or CRUD code. AUTH-02B must not begin
+        until one of:
+      </p>
+      <ol>
+        <li>The worktree is rebased onto <code>integration/auth-crud</code> (<code>3d6fef9</code>), bringing
+            allauth 65.21.0 and AUTH-01 into the tree, <strong>or</strong></li>
+        <li>AUTH-01 + CRUD are merged into the integration line and the worktree is rebased onto it.</li>
+      </ol>
+      <p>
+        This contract is research &amp; design only (AUTH-02A). No code is emitted here. AUTH-02B will
+        resume once the baseline defect is resolved and approved by the Tech Lead.
+      </p>
+    </div>
 
     <div class="callout">
       <h4>Navigation</h4>
@@ -727,8 +786,8 @@
     <p style="font-size: 0.8rem; color: var(--color-text-muted);">
       AUTH-02A &mdash; Account Recovery Contract &nbsp;|&nbsp;
       Branch: <code>feat/account-recovery</code> &nbsp;|&nbsp;
-      HEAD: <code>2f9c3b6</code> &nbsp;|&nbsp;
-      Evidence: <code>django-allauth==65.21.0</code> wheel source (PyPI); <code>feat/auth-foundation</code> @ <code>c35287d</code>; <code>docs/authentication-architecture.html</code>, <code>docs/integration-dependency-plan.html</code>.
+      HEAD: <code>cb2ab17</code> &nbsp;|&nbsp;
+      Evidence: <code>django-allauth==65.21.0</code> wheel source (PyPI); <code>feat/auth-foundation</code> @ <code>c35287d</code>; <code>docs/authentication-architecture.html</code>, <code>docs/integration-dependency-plan.html</code> (shared docs cited for context only; corrections recorded in §2.3 extended callout; INT-02 does not include AUTH-01 or CRUD implementation).
     </p>
 
   </main>

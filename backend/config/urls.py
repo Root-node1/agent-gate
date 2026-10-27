@@ -1,12 +1,11 @@
+from allauth.account import urls as allauth_account_urls
+from allauth.headless import urls as allauth_headless_urls
 from django.conf import settings
 from django.contrib import admin
 from django.db import connection
 from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
-
-from allauth.account import urls as allauth_account_urls
-from allauth.headless import urls as allauth_headless_urls
 
 
 def health(request):
@@ -52,5 +51,6 @@ urlpatterns = [
     path("v1/", include("apps.approvals.urls")),
     path("v1/", include("apps.audit.urls")),
     path("v1/", include("apps.policies.urls")),
+    path("v1/", include("apps.agents.urls")),
     path("api-auth/", include("rest_framework.urls")),
 ]

@@ -1,7 +1,7 @@
 """Role checks and organization scoping for dashboard principals."""
 
-from rest_framework.permissions import BasePermission
 from rest_framework.exceptions import NotAuthenticated
+from rest_framework.permissions import BasePermission
 
 from .models import OrgMembership
 

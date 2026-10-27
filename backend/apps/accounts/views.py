@@ -1,5 +1,4 @@
 from django.contrib.auth import logout as django_logout
-
 from drf_spectacular.utils import extend_schema
 from rest_framework import exceptions, status, views
 from rest_framework.authentication import SessionAuthentication

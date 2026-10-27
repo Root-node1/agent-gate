@@ -3,6 +3,7 @@
 import re
 import uuid
 
+from allauth.account.models import EmailAddress
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import Client
@@ -11,7 +12,6 @@ from rest_framework.test import APIClient, APITestCase
 
 from apps.accounts.models import Organization, OrgMembership
 from apps.agents.models import Agent
-from allauth.account.models import EmailAddress
 
 User = get_user_model()
 
@@ -189,7 +189,7 @@ class CurrentUserEndpointTests(AuthTestBase):
         self.assertEqual(self.client.get("/api/auth/user/").status_code, 401)
 
     def test_agent_key_is_not_a_dashboard_session(self):
-        agent, key = Agent.create_with_key("shopper", Organization.objects.create(name="acme"))
+        _agent, key = Agent.create_with_key("shopper", Organization.objects.create(name="acme"))
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {key}")
         self.assertEqual(self.client.get("/api/auth/user/").status_code, 401)
 

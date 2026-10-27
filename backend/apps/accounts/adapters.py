@@ -1,9 +1,8 @@
 """Allauth account adapter: email-domain allowlist for signups."""
 
+from allauth.account.adapter import DefaultAccountAdapter
 from django.conf import settings
 from django.core.exceptions import ValidationError
-
-from allauth.account.adapter import DefaultAccountAdapter
 
 
 class CustomAccountAdapter(DefaultAccountAdapter):

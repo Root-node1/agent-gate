@@ -1,5 +1,4 @@
 from allauth.account.models import EmailAddress
-
 from rest_framework import serializers
 
 from .models import OrgMembership, User

@@ -30,6 +30,8 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.github",
     "allauth.headless",
     "apps.accounts",
     "apps.agents",
@@ -206,6 +208,23 @@ ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
 # account alerts its owner. Defaults to False in allauth.
 ACCOUNT_EMAIL_NOTIFICATIONS = True
 ACCOUNT_ADAPTER = "apps.accounts.adapters.CustomAccountAdapter"
+ACCOUNT_EMAIL_ALLOWLIST = ACCOUNT_ALLOWED_SIGNUP_DOMAINS
+
+SOCIALACCOUNT_ADAPTER = "apps.accounts.adapters.CustomSocialAccountAdapter"
+# Q3 (Tech Lead-approved): do NOT persist GitHub OAuth access tokens to the
+# database. Tokens are used ephemerally during the callback and discarded.
+SOCIALACCOUNT_STORE_TOKENS = False
+
+_github_provider = {
+    "APP": {
+        "client_id": os.environ.get("GITHUB_OAUTH_CLIENT_ID", ""),
+        "secret": os.environ.get("GITHUB_OAUTH_SECRET", ""),
+    },
+}
+_github_url = os.environ.get("GITHUB_OAUTH_URL", "").strip()
+if _github_url:
+    _github_provider["GITHUB_URL"] = _github_url
+SOCIALACCOUNT_PROVIDERS = {"github": _github_provider}
 LOGIN_REDIRECT_URL = os.environ.get("LOGIN_REDIRECT_URL", "/app/")
 LOGOUT_REDIRECT_URL = os.environ.get("LOGOUT_REDIRECT_URL", "/login/")
 
@@ -226,6 +245,7 @@ HEADLESS_FRONTEND_URLS = {
     "account_reset_password": f"{FRONTEND_ORIGIN}/forgot-password",
     "account_reset_password_from_key": f"{FRONTEND_ORIGIN}/reset-password/{{key}}",
     "account_signup": f"{FRONTEND_ORIGIN}/signup",
+    "socialaccount_login_error": f"{FRONTEND_ORIGIN}/login?error=social",
 }
 
 # Sender for all allauth/transactional email.

@@ -8,7 +8,7 @@ from .base import postgres_config
 SECRET_KEY = "test-only-insecure-secret-key"
 DEBUG = True
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"]
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver", "app.test"]
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
 if TEST_DATABASE_URL:
@@ -32,6 +32,7 @@ HEADLESS_FRONTEND_URLS = {
     "account_reset_password": f"{FRONTEND_ORIGIN}/forgot-password",
     "account_reset_password_from_key": f"{FRONTEND_ORIGIN}/reset-password/{{key}}",
     "account_signup": f"{FRONTEND_ORIGIN}/signup",
+    "socialaccount_login_error": f"{FRONTEND_ORIGIN}/login?error=social",
 }
 
 # Relax confirm_email rate limit so signup + immediate login doesn't hit it.

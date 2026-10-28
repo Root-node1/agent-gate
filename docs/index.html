@@ -26,6 +26,7 @@
       <a href="integration-dependency-plan.html">Integration Dependency Plan</a>
       <a href="auth-crud-integration.html">Auth + CRUD Integration</a>
       <a href="account-recovery-contract.html">Account Recovery Contract (AUTH-02A)</a>
+      <a href="totp-2fa-contract.html">TOTP 2FA Contract (AUTH-05A)</a>
     </nav>
   </header>
 
@@ -67,6 +68,7 @@
       <li><a href="developer-setup.html">Developer Setup</a> — prerequisites, quick start, and conventions.</li>
       <li><a href="auth-crud-integration.html">Auth + CRUD Integration</a> — INT-01 checkpoint: merged auth foundation and backend CRUD with full PostgreSQL test results.</li>
       <li><a href="github-oauth-contract.html">GitHub OAuth Contract</a> — AUTH-04A checkpoint: architecture, endpoint contracts, and implementation plan for GitHub OAuth login via django-allauth 65.21.0 Headless.</li>
+      <li><a href="totp-2fa-contract.html">TOTP 2FA Contract</a> — AUTH-05A checkpoint: architecture, security decisions, and endpoint contracts for TOTP 2FA via django-allauth 65.21.0's built-in <code>allauth.mfa</code> module.</li>
     </ol>
 
     <h2 id="architecture-diagram">Architecture diagram</h2>
@@ -82,7 +84,7 @@
 
   Dashboard (React 19 + TypeScript + Vite) &lt;--&gt; Session auth (Django)
                                                             &lt;--&gt; GitHub OAuth (django-allauth, planned)
-                                                            &lt;--&gt; TOTP 2FA (django-two-factor-auth, planned)
+                                                            &lt;--&gt; TOTP 2FA (allauth.mfa, planned)
 
   Deployment: Contabo VPS --&gt; Caddy (HTTPS) --&gt; Gunicorn --&gt; Neon PostgreSQL
 

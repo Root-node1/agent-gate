@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub OAuth Contract &mdash; AgentGate</title>
+  <meta name="description" content="AUTH-04A: implementation-ready GitHub OAuth contract for AgentGate, extending django-allauth 65.21.0 Headless without duplicating endpoints.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>GitHub OAuth Contract</h1>
+    <p class="subtitle">AgentGate &mdash; AUTH-04A: research, architecture, and endpoint contracts for GitHub OAuth login, extending django-allauth 65.21.0 Headless</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+      <a href="integration-dependency-plan.html">Integration Dependency Plan</a>
+      <a href="auth-crud-integration.html">Auth + CRUD Integration</a>
+      <a href="account-recovery-contract.html">Account Recovery Contract</a>
+      <a href="github-oauth-contract.html" aria-current="page">GitHub OAuth Contract</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="status">Checkpoint status</h2>
+
+    <div class="callout note">
+      <h4>Scope: AUTH-04A (research &amp; design only)</h4>
+      <p>
+        This checkpoint performs <strong>research, architecture, and HTML documentation only</strong>.
+        No Python, React, migrations, dependencies, settings, or environment files are modified.
+        No migrations are run. No endpoints are implemented.
+      </p>
+    </div>
+
+    <table>
+      <thead><tr><th>Item</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Branch</td><td><code>feat/github-oauth</code></td></tr>
+        <tr><td>HEAD</td><td><code>98f57bb</code> &mdash; <code>Merge branch 'feat/account-recovery' into intergration</code></td></tr>
+        <tr><td>Working tree</td><td><span class="badge badge-complete">Clean</span> (no uncommitted changes at checkpoint start)</td></tr>
+        <tr><td>Allauth version</td><td><code>django-allauth==65.21.0</code> (pinned in <code>backend/requirements.txt</code>)</td></tr>
+        <tr><td>Primary evidence</td><td>Wheel source inspected at <code>allauth/socialaccount/providers/github/</code> (provider, views, urls); <code>allauth/headless/socialaccount/</code> (views, urls, internal); <code>allauth/socialaccount/adapter.py</code> and <code>allauth/socialaccount/app_settings.py</code> (65.21.0); existing <code>backend/config/settings/base.py</code> and <code>backend/config/urls.py</code>; auth tests at <code>backend/tests/test_auth_signup_login.py</code> and <code>backend/tests/test_auth_password_reset.py</code>.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="toc">
+      <h3>On this page</h3>
+      <ul>
+        <li><a href="#baseline">1. Current authentication baseline</a></li>
+        <li><a href="#social-state">2. allauth socialaccount state (not yet configured)</a></li>
+        <li><a href="#architecture">3. Proposed GitHub OAuth architecture</a></li>
+        <li><a href="#contracts">4. Verified endpoint contracts</a></li>
+        <li><a href="#email-verify">5. Email verification behavior (critical)</a></li>
+        <li><a href="#account-linking">6. Account linking and duplicate-email handling</a></li>
+        <li><a href="#csrf-state">7. CSRF, OAuth state, and session protections</a></li>
+        <li><a href="#errors">8. User cancellation and provider failure handling</a></li>
+        <li><a href="#agent-separation">9. Separation: human sessions vs agent API keys</a></li>
+        <li><a href="#rbac">10. Organization membership and RBAC invariants</a></li>
+        <li><a href="#config">11. GitHub OAuth App configuration and environment variables</a></li>
+        <li><a href="#frontend">12. Frontend handoff requirements</a></li>
+        <li><a href="#testing">13. Required backend tests</a></li>
+        <li><a href="#impl-plan">14. Implementation plan for AUTH-04B</a></li>
+        <li><a href="#decisions">15. Open questions requiring Tech Lead approval</a></li>
+      </ul>
+    </div>
+
+    <!-- ===== 1. Baseline ===== -->
+
+    <h2 id="baseline">1. Current authentication baseline</h2>
+
+    <p>
+      The <code>feat/github-oauth</code> branch (HEAD <code>98f57bb</code>) includes the fully integrated
+      AUTH-01 (email/password) and AUTH-02A/02C (account recovery) work. The authentication stack is
+      built on <code>django-allauth==65.21.0</code> with the Headless JSON contract. Two authentication
+      schemes exist and must remain strictly separated:
+    </p>
+
+    <dl>
+      <dt>Agent API Key</dt>
+      <dd>
+        <code>Authorization: Bearer agk_...</code> via <code>backend/apps/agents/authentication.py</code>
+        (<code>AgentKeyAuthentication</code>). Constant-time SHA-256 hash compare; 12-char prefix indexed;
+        suspended agents and revoked keys rejected; <code>THROTTLE_AGENT=60/min</code>. Unchanged by
+        GitHub OAuth work.
+      </dd>
+      <dt>Dashboard Session (browser user)</dt>
+      <dd>
+        Django <code>SessionAuthentication</code> with DRF, backed by
+        <code>django-allauth</code> Headless (<code>allauth.account</code> + <code>allauth.headless</code>).
+        Session cookie carries the dashboard user; <code>OrgMembership</code> roles (admin/approver/viewer)
+        gate dashboard endpoints.
+      </dd>
+    </dl>
+
+    <h3 id="existing-settings">1.1 Active settings (from <code>base.py</code>)</h3>
+
+    <table>
+      <thead><tr><th>Setting</th><th>Value</th><th>Location</th></tr></thead>
+      <tbody>
+        <tr><td><code>django-allauth</code></td><td><code>==65.21.0</code></td><td><code>backend/requirements.txt:5</code></td></tr>
+        <tr><td><code>INSTALLED_APPS</code></td><td><code>allauth.account</code>, <code>allauth.headless</code> (but NOT <code>allauth.socialaccount</code>)</td><td><code>backend/config/settings/base.py:32-33</code></td></tr>
+        <tr><td><code>AUTHENTICATION_BACKENDS</code></td><td><code>ModelBackend</code> + <code>allauth.account.auth_backends.AuthenticationBackend</code></td><td><code>backend/config/settings/base.py:47-50</code></td></tr>
+        <tr><td><code>MIDDLEWARE</code></td><td>Includes <code>allauth.account.middleware.AccountMiddleware</code></td><td><code>backend/config/settings/base.py:61</code></td></tr>
+        <tr><td><code>ACCOUNT_LOGIN_METHODS</code></td><td><code>["email"]</code></td><td><code>base.py:199</code></td></tr>
+        <tr><td><code>ACCOUNT_SIGNUP_FIELDS</code></td><td><code>["email*", "password1*", "password2*"]</code></td><td><code>base.py:202</code></td></tr>
+        <tr><td><code>ACCOUNT_EMAIL_VERIFICATION</code></td><td><code>"mandatory"</code></td><td><code>base.py:203</code></td></tr>
+        <tr><td><code>ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED</code></td><td><code>True</code></td><td><code>base.py:204</code></td></tr>
+        <tr><td><code>ACCOUNT_ADAPTER</code></td><td><code>apps.accounts.adapters.CustomAccountAdapter</code></td><td><code>base.py:208</code></td></tr>
+        <tr><td><code>HEADLESS_FRONTEND_URLS</code></td><td><code>account_reset_password</code>, <code>account_reset_password_from_key</code>, <code>account_signup</code></td><td><code>base.py:225-229</code></td></tr>
+        <tr><td><code>LOGIN_REDIRECT_URL</code></td><td><code>/app/</code></td><td><code>base.py:209</code></td></tr>
+        <tr><td><code>LOGOUT_REDIRECT_URL</code></td><td><code>/login/</code></td><td><code>base.py:210</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="existing-endpoints">1.2 Live auth endpoints</h3>
+
+    <p>Headless base path: <code>/api/auth/headless/browser/v1/</code> (mounted at <code>/api/auth/headless/</code> in <code>backend/config/urls.py:57</code>). Custom account endpoints live under <code>/api/auth/</code> (line 58). These are the contracts AUTH-04 extends:</p>
+
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>GET</td><td><code>/api/auth/headless/browser/v1/config</code></td><td>Anonymous</td><td>CSRF bootstrap; sets <code>csrftoken</code> cookie; returns config (login methods, signup flag, by-code flag, and <code>socialaccount.providers</code> array once enabled).</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/headless/browser/v1/auth/signup</code></td><td>Anonymous</td><td><code>{email, password}</code>; 401 + <code>verify_email</code> flow pending; sends verification code email.</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/headless/browser/v1/auth/email/verify</code></td><td>Anonymous</td><td><code>{key: code}</code>; confirms email; <code>ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION=False</code> so no auto-login.</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/headless/browser/v1/auth/login</code></td><td>Anonymous</td><td><code>{email, password}</code>; 200 on success (sets session), 401 unverified/inactive, 400 wrong password. CSRF required.</td></tr>
+        <tr><td>GET</td><td><code>/api/auth/headless/browser/v1/auth/session</code></td><td>Session</td><td>Returns <code>meta.is_authenticated</code> + user data + <code>flows</code> (including pending <code>verify_email</code> stage).</td></tr>
+        <tr><td>DELETE</td><td><code>/api/auth/headless/browser/v1/auth/session</code></td><td>Session</td><td>Logout; CSRF required; returns 401 afterwards.</td></tr>
+        <tr><td>GET</td><td><code>/api/auth/user/</code></td><td>Session only</td><td><code>CurrentUserView</code>; agent keys rejected (401). Returns user + <code>is_email_verified</code> + <code>memberships</code>.</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/logout/</code></td><td>Session + CSRF</td><td><code>LogoutView</code>; 204; destroys session.</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      Source evidence: <code>backend/tests/test_auth_signup_login.py</code> exercises the full
+      headless flow (signup &rarr; verify-code &rarr; login &rarr; session &rarr; logout) including the
+      CSRF-bootstrap sequence (<code>GET /config</code> then <code>X-CSRFToken</code> header), and
+      <code>backend/tests/test_auth_password_reset.py</code> (366 tests) verifies recovery, rate limiting,
+      and CSRF enforcement against allauth 65.21.0 on PostgreSQL.
+    </p>
+
+    <h3 id="data-model">1.3 Data model</h3>
+
+    <p>The existing <code>User</code> model (<code>backend/apps/accounts/models.py:7</code>) extends
+    <code>AbstractUser</code> with a UUID primary key. allauth 65.21.0 supports UUID PKs natively via
+    <code>user_pk_to_url_str</code> / <code>url_str_to_user_pk</code> in <code>allauth/account/utils.py</code>
+    (returns <code>user.pk.hex</code>, reconstructs via the field's <code>to_python</code>). No custom UID
+    encoding is needed.</p>
+
+    <p>The allauth socialaccount models (<code>SocialApp</code>, <code>SocialAccount</code>,
+    <code>SocialToken</code>) ship their own migrations from allauth (<code>0001_initial</code> through
+    <code>0006_alter_socialaccount_extra_data</code>). Adding <code>allauth.socialaccount</code> to
+    <code>INSTALLED_APPS</code> will require running <code>python manage.py migrate</code> to create these
+    tables, but <strong>no custom migrations</strong> are needed.</p>
+
+    <!-- ===== 2. Socialaccount state ===== -->
+
+    <h2 id="social-state">2. allauth socialaccount state (not yet configured)</h2>
+
+    <p>
+      The GitHub OAuth foundation does <strong>not</strong> exist on the current branch. Verified by
+      direct inspection of <code>backend/config/settings/base.py</code>:
+    </p>
+
+    <table>
+      <thead><tr><th>Item</th><th>Current state</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>INSTALLED_APPS</code></td><td>Only <code>allauth.account</code> and <code>allauth.headless</code>; <strong>no <code>allauth.socialaccount</code></strong></td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td><code>SOCIALACCOUNT_PROVIDERS</code></td><td>Not defined anywhere in <code>settings/*.py</code></td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td><code>SOCIALACCOUNT_ADAPTER</code></td><td>Not defined (no custom <code>SocialAccountAdapter</code> in <code>apps/accounts/</code>)</td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td>Social account URLs</td><td><code>backend/config/urls.py</code> includes only <code>allauth.account.urls</code> (filtered) at <code>/accounts/</code> and <code>allauth.headless.urls</code> at <code>/api/auth/headless/</code>; <strong>no allauth socialaccount URL include</strong></td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td><code>SocialApp</code> records</td><td>None in the database</td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td>GitHub provider URLs</td><td><code>/accounts/github/login/</code> and <code>/accounts/github/login/callback/</code> are <strong>not registered</strong></td><td><span class="badge badge-missing">Absent</span></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <h4>Github OAuth App credentials are NOT in .env</h4>
+      <p>
+        <code>backend/.env.example</code> has no <code>GITHUB_CLIENT_ID</code> or <code>GITHUB_CLIENT_SECRET</code>
+        entry. The auth developer must add them (see <a href="#config">§11</a>).
+      </p>
+    </div>
+
+    <!-- ===== 3. Architecture ===== -->
+
+    <h2 id="architecture">3. Proposed GitHub OAuth architecture</h2>
+
+    <h3 id="provider">3.1 Provider: django-allauth GitHub OAuth2 adapter</h3>
+
+    <p>
+      allauth 65.21.0 ships a <strong>built-in GitHub provider</strong>
+      (<code>allauth/socialaccount/providers/github/</code>) — no third-party dependency required.
+      The provider implements <code>OAuth2Provider</code> with:
+    </p>
+
+    <table>
+      <thead><tr><th>Property</th><th>allauth 65.21.0 value</th></tr></thead>
+      <tbody>
+        <tr><td><code>provider_id</code></td><td><code>"github"</code> (<code>backend/.../github/provider.py:19</code></td></tr>
+        <tr><td><code>OAuth2Adapter</code></td><td><code>GitHubOAuth2Adapter</code> (<code>backend/.../github/views.py:16</code></td></tr>
+        <tr><td><code>authorize_url</code></td><td><code>https://github.com/login/oauth/authorize</code></td></tr>
+        <tr><td><code>access_token_url</code></td><td><code>https://github.com/login/oauth/access_token</code></td></tr>
+        <tr><td><code>profile_url</code></td><td><code>https://api.github.com/user</code></td></tr>
+        <tr><td><code>emails_url</code></td><td><code>https://api.github.com/user/emails</code> (fetched only when <code>QUERY_EMAIL=True</code>)</td></tr>
+        <tr><td><code>supports_redirect</code></td><td><code>True</code> (inherited from <code>OAuth2Provider</code>)</td></tr>
+        <tr><td><code>supports_token_authentication</code></td><td><code>False</code> (inherited from <code>Provider</code> base)</td></tr>
+        <tr><td><code>get_default_scope()</code></td><td><code>[]</code> if <code>QUERY_EMAIL=False</code>; <code>["user:email"]</code> if <code>QUERY_EMAIL=True</code></td></tr>
+        <tr><td>GHE support</td><td>Yes &mdash; if <code>SOCIALACCOUNT_PROVIDERS["github"]["GITHUB_URL"]</code> is set, all URLs use that base instead of <code>github.com</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="headless-flow">3.2 Headless SPA flow (two modes)</h3>
+
+    <p>
+      allauth 65.21.0 Headless supports two social-login modes for the SPA:
+    </p>
+
+    <dl>
+      <dt>Mode A: Server-side redirect (primary, recommended)</dt>
+      <dd>
+        The SPA calls <code>POST /api/auth/headless/browser/v1/auth/provider/redirect</code>
+        to trigger a server-side redirect to GitHub. The browser follows the redirect to
+        GitHub&rsquo;s consent page. GitHub then redirects back to the allauth callback
+        (<code>/accounts/github/login/callback/</code>), which exchanges the code,
+        creates/updates the social account, and redirects the browser back to the SPA&rsquo;s
+        <code>callback_url</code> with the session cookie set.
+      </dd>
+      <dt>Mode B: Client-side token exchange (alternate)</dt>
+      <dd>
+        The SPA opens GitHub&rsquo;s authorize URL in a popup, captures the returned
+        <code>code</code>, and POSTs it to
+        <code>POST /api/auth/headless/browser/v1/auth/provider/token</code>.
+        allauth exchanges the code server-side and returns an
+        <code>AuthenticationResponse</code>. This mode is <strong>not needed</strong>
+        for a same-origin dashboard and adds complexity (popup postMessage, token relay);
+        it is documented for completeness only.
+      </dd>
+    </dl>
+
+    <p>
+      <strong>Mode A is the primary flow for AgentGate</strong>: the SPA is same-origin
+      behind the same Django backend, so server-side redirect + cookie-based session works
+      seamlessly with <code>SameSite=Lax</code> cookies.
+    </p>
+
+    <h3 id="flow-diagram">3.3 Complete headless flow (Mode A)</h3>
+
+    <pre><code>
+  SPA (https://app.example.com)         Django backend (https://backend.example.com)  GitHub
+
+  1. GET  /api/auth/headless/browser/v1/config
+     &mdash; bootstrap CSRF + discover provider list
+  &lt;--- sets csrftoken cookie + {socialaccount: {providers: [{id:"github",...}]}}
+
+  2. POST /api/auth/headless/browser/v1/auth/provider/redirect
+     {provider: "github", callback_url: "https://app.example.com/dashboard", process: "login"}
+     (includes X-CSRFToken)
+  &mdash;&gt; 302 to https://github.com/login/oauth/authorize
+       ?client_id=...&redirect_uri=/accounts/github/login/callback/&scope=user:email&state=...
+
+  3.                                     [user consents on GitHub]
+
+  4.                                     GitHub redirects back:
+                                         GET /accounts/github/login/callback/
+                                           ?code=...&state=...
+
+  5.                                     POST https://github.com/login/oauth/access_token
+                                           (server-to-server, secret never leaves backend)
+                                         GET https://api.github.com/user
+                                         GET https://api.github.com/user/emails
+
+  6.                                     allauth processes the social login:
+                                           &mdash; new user? Create User + SocialAccount + EmailAddress
+                                           &mdash; existing user? Look up by SocialAccount UID or email
+                                           &mdash; email verified? (see &sect;5)
+                                           &mdash; if EMAIL_VERIFICATION=mandatory and email not verified:
+                                             send verification code email, stash login in session
+                                           &mdash; set Django session (sessionid cookie)
+
+  7. &lt;&minus;&minus;&minus;&minus; 302 redirect to callback_url (SPA dashboard)
+     Set-Cookie: sessionid=...; csrftoken=...
+
+  8. GET  /api/auth/user/  (or GET /session)
+     (cookie-based)
+  &lt;&minus;&minus;&minus; 200 {user, is_email_verified, memberships, flows:[verify_email] if pending}
+  or    401 {flows:[verify_email, login_by_code]} (email verification pending)
+    </code></pre>
+
+    <!-- ===== 4. Endpoint contracts ===== -->
+
+    <h2 id="contracts">4. Verified endpoint contracts</h2>
+
+    <h3 id="provider-redirect">4.1 Provider redirect (SPA entry point)</h3>
+
+    <table>
+      <thead><tr><th>Property</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Method</td><td>POST</td></tr>
+        <tr><td>Path</td><td><code>/api/auth/headless/browser/v1/auth/provider/redirect</code></td></tr>
+        <tr><td>Auth</td><td>Anonymous; <strong>requires <code>X-CSRFToken</code></strong> (bootstrapped via <code>GET /config</code>)</td></tr>
+        <tr><td>View</td><td><code>allauth.headless.socialaccount.views.RedirectToProviderView</code></td></tr>
+        <tr><td>Request body</td><td><code>{"provider": "github", "callback_url": "https://app.example.com/dashboard", "process": "login"}</code></td></tr>
+        <tr><td>Response</td><td><code>302</code> redirect to <code>https://github.com/login/oauth/authorize</code> with <code>state</code> nonce stashed in session (10-minute TTL, max 10 states per session).</td></tr>
+        <tr><td>CSRF</td><td><code>RedirectToProviderView</code> uses <code>handle_json_input = False</code>; CSRF is enforced by Django&rsquo;s <code>CsrfViewMiddleware</code> because the SPA sends a session cookie.</td></tr>
+        <tr><td>Data source</td><td>allauth <code>allauth/headless/socialaccount/views.py:RedirectToProviderView.post</code> + <code>allauth/headless/socialaccount/forms.py:RedirectToProviderForm</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="provider-token">4.2 Provider token (Mode B &mdash; alternate only)</h3>
+
+    <p>
+      The SPA can instead obtain the authorization code client-side (popup) and POST it to this endpoint.
+      This is documented for completeness; Mode A is the primary flow.
+    </p>
+
+    <table>
+      <thead><tr><th>Property</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Method</td><td>POST</td></tr>
+        <tr><td>Path</td><td><code>/api/auth/headless/browser/v1/auth/provider/token</code></td></tr>
+        <tr><td>Auth</td><td>Anonymous; requires <code>X-CSRFToken</code></td></tr>
+        <tr><td>View</td><td><code>allauth.headless.socialaccount.views.ProviderTokenView</code></td></tr>
+        <tr><td>Request body</td><td><code>{"provider": "github", "code": "...", "callback_url": "...", "process": "login"}</code></td></tr>
+        <tr><td>Response (success)</td><td><code>200</code> <code>AuthenticationResponse</code> with <code>meta.is_authenticated</code>. Session cookie is set.</td></tr>
+        <tr><td>Response (signup needed)</td><td><code>401</code> with <code>flows: [{id: "provider_signup", is_pending: true}]</code></td></tr>
+        <tr><td>Response (email verification needed)</td><td><code>401</code> with <code>flows: [{id: "verify_email", is_pending: true}]</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="provider-signup">4.3 Provider signup (headless)</h3>
+
+    <p>
+      If the GitHub email matches an existing local user but the social account is not yet connected,
+      allauth stashes the <code>SocialLogin</code> in the session and returns a
+      <code>provider_signup</code> flow. The SPA can then complete the signup:
+    </p>
+
+    <table>
+      <thead><tr><th>Property</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Method</td><td>POST</td></tr>
+        <tr><td>Path</td><td><code>/api/auth/headless/browser/v1/auth/provider/signup</code></td></tr>
+        <tr><td>Auth</td><td>Anonymous; requires <code>X-CSRFToken</code></td></tr>
+        <tr><td>View</td><td><code>allauth.headless.socialaccount.views.ProviderSignupView</code></td></tr>
+        <tr><td>Response</td><td><code>401</code> <code>SocialLoginResponse</code> with user/account/email data for the pending social login.</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/headless/browser/v1/auth/provider/signup</code></td></tr>
+        <tr><td>Body</td><td><code>{}</code> (empty &mdash; no additional fields required for AgentGate)</td></tr>
+        <tr><td>Response (success)</td><td><code>401</code> <code>AuthenticationResponse</code> (not 200 &mdash; see <a href="#email-verify">&sect;5.3</a> for the email-verification-pending case). Session cookie is set; the SPA must poll <code>GET /api/auth/user/</code> to determine final auth state.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="provider-account-callback">4.4 Callback URL (GitHub OAuth App setting)</h3>
+
+    <p>
+      The GitHub OAuth App&rsquo;s callback URL must be:
+      <code>https://&lt;backend-host&gt;/accounts/github/login/callback/</code>
+    </p>
+
+    <table>
+      <thead><tr><th>Property</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Method</td><td>GET</td></tr>
+        <tr><td>Path</td><td><code>/accounts/github/login/callback/</code></td></tr>
+        <tr><td>Auth</td><td>None (anonymous; state nonce in session authenticates the callback)</td></tr>
+        <tr><td>View</td><td><code>allauth.socialaccount.providers.github.views.oauth2_callback</code> (<code>OAuth2CallbackView</code>)</td></tr>
+        <tr><td>Query params</td><td><code>code</code> (OAuth code), <code>state</code> (nonce, matched against session stash)</td></tr>
+        <tr><td>Server-side processing</td><td>1. Verify <code>state</code> nonce (600s TTL). 2. POST <code>code</code> + <code>client_id</code> + <code>client_secret</code> to <code>https://github.com/login/oauth/access_token</code>. 3. GET <code>https://api.github.com/user</code> + <code>/user/emails</code>. 4. <code>complete_social_login</code> &rarr; lookup existing user by SocialAccount UID or email &rarr; signup or login.</td></tr>
+        <tr><td>Response</td><td><code>302</code> redirect to the SPA <code>callback_url</code> (stored in state&rsquo;s <code>next</code> field). If login succeeded, session is set. If email verification is pending, the SPA receives a 401 on <code>GET /api/auth/user/</code> with <code>flows:[verify_email]</code>.</td></tr>
+        <tr><td>CSRF on callback</td><td><strong>None required.</strong> The callback is a GET request initiated by the browser following GitHub&rsquo;s redirect; it is authenticated by the <code>state</code> nonce, not by CSRF.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="config-endpoint">4.5 Updated <code>/config</code> response (with social providers)</h3>
+
+    <p>
+      Once <code>allauth.socialaccount</code> is enabled, <code>GET /api/auth/headless/browser/v1/config</code>
+      includes a <code>socialaccount.providers</code> array advertising available login methods:
+    </p>
+    <pre><code class="language-json">{
+  "data": {
+    "account": {
+      "login_methods": ["email"],
+      "is_open_for_signup": true,
+      "email_verification_by_code_enabled": true,
+      "login_by_code_enabled": false
+    },
+    "socialaccount": {
+      "providers": [
+        {
+          "id": "github",
+          "name": "GitHub",
+          "client_id": "<redacted>",
+          "flows": ["provider_redirect"]
+        }
+      ]
+    }
+  },
+  "meta": {
+    "is_authenticated": false,
+    "flows": [
+      {"id": "login"},
+      {"id": "signup"},
+      {"id": "provider_redirect", "providers": ["github"]}
+    ]
+  }
+}</code></pre>
+
+    <p>
+      Source: <code>allauth/headless/socialaccount/response.py:get_config_data</code> +
+      <code>provider_flows</code>. The <code>flows.problem_redirect</code> entry (with
+      <code>providers: ["github"]</code>) is only added when
+      <code>request.allauth.headless.client == Client.BROWSER</code>.
+    </p>
+
+    <!-- ===== 5. Email verification ===== -->
+
+    <h2 id="email-verify">5. Email verification behavior (critical)</h2>
+
+    <h3 id="github-email-semantics">5.1 GitHub&rsquo;s email verification semantics</h3>
+
+    <p>
+      GitHub <strong>does</strong> verify email addresses. Every GitHub account must have at least
+      one verified email. The GitHub API (<code>GET /user/emails</code>) returns each email with a
+      <code>verified</code> boolean. However, the <code>GET /user</code> profile endpoint returns
+      <code>email</code> as a string (which may be <code>null</code> if the user has set their email
+      to private) and does <strong>not</strong> include a <code>verified</code> flag on the profile.
+    </p>
+
+    <table>
+      <thead><tr><th>GitHub endpoint</th><th>Email field</th><th><code>verified</code> flag</th><th>allauth uses it?</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /user</code></td><td><code>data["email"]</code> (may be null for private emails)</td><td>N/A</td><td>Yes &mdash; via <code>extract_common_fields</code></td></tr>
+        <tr><td><code>GET /user/emails</code></td><td><code>emails[].email</code> with <code>emails[].verified</code></td><td>Present</td><td>Yes &mdash; via <code>extract_email_addresses</code> (allauth <code>github/provider.py:46</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>&sect;5.1 confirmed: GitHub's native <code>verified</code> flag is preserved by default</h4>
+      <p>
+        Direct inspection of allauth 65.21.0 source confirms that GitHub&rsquo;s per-email
+        <code>verified</code> flag <strong>is</strong> trusted without any extra configuration,
+        via two complementary mechanisms:
+      </p>
+      <ol>
+        <li><strong><code>extract_email_addresses</code> (provider level):</strong> The GitHub provider&rsquo;s <code>extract_email_addresses</code>
+            (<code>allauth/socialaccount/providers/github/provider.py:46</code>) sets
+            <code>EmailAddress.verified = email["verified"]</code> from GitHub&rsquo;s <code>/user/emails</code> API.
+            This works <strong>only if</strong> <code>QUERY_EMAIL=True</code> (i.e., <code>SCOPE</code> includes
+            <code>user:email</code>), because <code>GitHubOAuth2Adapter.complete_login</code>
+            (<code>allauth/socialaccount/providers/github/views.py:38</code>) only fetches
+            <code>/user/emails</code> when <code>app_settings.QUERY_EMAIL</code> is <code>True</code>.
+            Since <code>ACCOUNT_SIGNUP_FIELDS</code> includes <code>"email*"</code>
+            (<code>base.py:202</code>), <code>QUERY_EMAIL</code> defaults to <code>True</code>,
+            so <code>user:email</code> scope is included by default.</li>
+        <li><strong><code>cleanup_email_addresses</code> (base provider):</strong> After extraction, the base
+            provider&rsquo;s <code>cleanup_email_addresses</code> method
+            (<code>allauth/socialaccount/providers/base/provider.py:194-226</code>) runs:
+            <ul>
+              <li>Lines 219&ndash;220: it calls <code>adapter.is_email_verified(self, address.email)</code> for each
+                  address. If it returns <code>True</code>, it sets <code>address.verified = True</code>.</li>
+              <li><strong>Crucially: it never sets <code>address.verified = False</code>.</strong> The adapter
+                  method can only <em>upgrade</em> verification, never downgrade it.</li>
+            </ul>
+            Therefore, when <code>extract_email_addresses</code> sets <code>verified=True</code> from GitHub&rsquo;s
+            API response, <code>cleanup_email_addresses</code> <strong>preserves it</strong>, even though
+            <code>DefaultSocialAccountAdapter.is_email_verified()</code> returns <code>False</code> by default
+            (<code>allauth/socialaccount/adapter.py:353-377</code>).
+          </li>
+      </ol>
+    </div>
+
+    <div class="callout warning">
+      <h4>&sect;5.1 Tech Lead decision: Q2 resolved &mdash; no unconditional override</h4>
+      <p>
+        Per the Tech Lead&rsquo;s decision, AgentGate will <strong>trust only email addresses explicitly
+        verified by GitHub</strong> &mdash; i.e., rely on GitHub&rsquo;s native per-email
+        <code>verified</code> flag from the <code>/user/emails</code> API, which allauth correctly
+        extracts and preserves by default. <strong>Do not</strong> set
+        <code>SOCIALACCOUNT_PROVIDERS["github"]["VERIFIED_EMAIL"] = True</code>, as that would force-verify
+        <em>all</em> emails from the GitHub provider (a broader trust than GitHub&rsquo;s per-email
+        API). A <code>CustomSocialAccountAdapter.is_email_verified()</code> override that returns
+        <code>True</code> unconditionally for GitHub is also <strong>not recommended</strong> &mdash;
+        it is functionally equivalent to <code>VERIFIED_EMAIL=True</code> (both can only upgrade,
+        never downgrade) and bypasses the per-email granularity that the default behavior preserves.
+      </p>
+    </div>
+
+    <h3 id="verification-matrix">5.2 Email verification configuration matrix</h3>
+
+    <table>
+      <thead><tr><th>Scope</th><th><code>VERIFIED_EMAIL</code> in settings</th><th>Custom adapter?</th><th>Effect</th><th>Tech Lead decision</th></tr></thead>
+      <tbody>
+        <tr><td><code>["user:email"]</code></td><td>Not set (<code>=False</code>)</td><td>No</td><td><strong>RECOMMENDED.</strong> GitHub&rsquo;s <code>/user/emails</code> API returns <code>verified</code> per-email; <code>extract_email_addresses</code> (<code>github/provider.py:46</code>) sets <code>EmailAddress.verified = email["verified"]</code>; <code>cleanup_email_addresses</code> (<code>base/provider.py:219-220</code>) preserves it because it only upgrades to <code>True</code>, never downgrades. Only emails GitHub marks as <code>verified=True</code> are trusted. <code>SOCIALACCOUNT_EMAIL_VERIFICATION=None</code> (default) &rarr; falls through to <code>ACCOUNT_EMAIL_VERIFICATION="mandatory"</code>; unverified GitHub emails trigger a verification code email (secure default).</td><td><span class="badge badge-complete">APPROVED</span></td></tr>
+        <tr><td><code>["user:email"]</code></td><td><code>True</code></td><td>Yes (unconditional <code>is_email_verified()</code>)</td><td>All emails from this provider are force-verified via <code>cleanup_email_addresses</code> line 220, bypassing GitHub&rsquo;s per-email <code>verified</code> flag. This is a broader trust than needed.</td><td><span class="badge badge-missing">REJECTED</span></td></tr>
+        <tr><td><code>[]</code> (no email scope)</td><td>Not set</td><td>No</td><td>GitHub returns only <code>profile.email</code> (may be <code>null</code> for private emails); no per-email <code>verified</code> flag. Email is treated as unverified; verification code email is always sent.</td><td><span class="badge badge-missing">Not applicable</span></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="verification-flow">5.3 Email verification policy (Tech Lead-approved)</h3>
+
+    <p>
+      <strong>Decision (Q2, APPROVED):</strong> Rely on GitHub&rsquo;s native per-email
+      <code>verified</code> flag. Do <strong>not</strong> set
+      <code>SOCIALACCOUNT_PROVIDERS["github"]["VERIFIED_EMAIL"] = True</code> and do
+      <strong>not</strong> override <code>is_email_verified()</code> to return <code>True</code>
+      unconditionally for GitHub.
+    </p>
+
+    <p>
+      The precise mechanism (confirmed from allauth 65.21.0 source,
+      <code>allauth/socialaccount/providers/base/provider.py:219-220</code>):
+    </p>
+
+    <pre><code class="language-python"># allauth/socialaccount/providers/base/provider.py:216-220
+# Force verified emails
+adapter = get_adapter()
+for address in addresses:
+    if adapter.is_email_verified(self, address.email):
+        address.verified = True
+# NOTE: there is NO "else: address.verified = False" line.
+# The verified flag set by extract_email_addresses() is preserved.</code></pre>
+
+    <p>
+      This means:
+    </p>
+
+    <ul>
+      <li>GitHub emails marked <code>verified: true</code> by GitHub&rsquo;s
+          <code>/user/emails</code> API are stored as <code>verified=True</code> on the
+          <code>EmailAddress</code> record &mdash; no additional configuration required.</li>
+      <li>GitHub emails marked <code>verified: false</code> are stored as <code>verified=False</code>.
+          With <code>ACCOUNT_EMAIL_VERIFICATION="mandatory"</code> (already set at <code>base.py:203</code>),
+          the <code>EmailVerificationStage</code> (<code>allauth/account/stages.py</code>) will send a
+          verification code email and hold the login until the code is entered.</li>
+      <li>Since GitHub verifies all emails added to an account via SMTP before they become
+          <code>verified</code>, in practice GitHub users will almost always have
+          <code>verified: true</code> on their primary email. The verification-code fallback is a
+          correct security default for edge cases (e.g., a newly-added unverified email).</li>
+    </ul>
+
+    <p>
+      If a <code>CustomSocialAccountAdapter</code> is still desired for future providers, it should
+      inspect the <code>SocialLogin.email_addresses</code> list (which contains the per-email
+      <code>verified</code> flags) rather than returning a blanket <code>True</code>:
+    </p>
+
+    <pre><code class="language-python"># backend/apps/accounts/adapters.py (EXTEND existing CustomAccountAdapter)
+
+# Only add if a CustomSocialAccountAdapter is needed for other providers.
+# For GitHub-only, the default is_email_verified() behavior is correct.
+
+from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+
+class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
+    def is_email_verified(self, request, provider, email):
+        # Trust GitHub's per-email verified flag from /user/emails
+        # Do NOT force verify. Only this provider is trusted, and only for
+        # emails GitHub itself marks as verified.
+        if provider.id == "github":
+            sociallogin = getattr(request, "_sociallogin", None)
+            if sociallogin is not None:
+                for addr in sociallogin.email_addresses:
+                    if addr.email == email:
+                        return addr.verified  # From GitHub API /user/emails
+            # Fallback: if not in the extracted addresses, do not trust
+            return False
+        return super().is_email_verified(request, provider, email)</code></pre>
+
+    <div class="callout note">
+      <p>
+        This fallback adapter is safe but <strong>redundant</strong> for the GitHub-only MVP:
+        the default <code>DefaultSocialAccountAdapter.is_email_verified()</code> returns <code>False</code>,
+        and <code>cleanup_email_addresses</code> preserves the <code>verified=True</code> already set by
+        <code>extract_email_addresses</code>. The adapter would only add value if a future provider
+        does not set <code>verified</code> per-email in <code>extract_email_addresses</code>.
+      </p>
+    </div>
+
+    <!-- ===== 6. Account linking ===== -->
+
+    <h2 id="account-linking">6. Account linking and duplicate-email handling</h2>
+
+    <h3 id="lookup-logic">6.1 Lookup logic (confirmed from allauth 65.21.0 source)</h3>
+
+    <p>
+      When GitHub redirects back to the callback, <code>SocialLogin.lookup()</code>
+      (<code>allauth/socialaccount/models.py:334</code>) runs two lookups:
+    </p>
+
+    <ol>
+      <li><strong>_lookup_by_socialaccount</strong>: Searches <code>SocialAccount.objects.get(provider="github", uid=&lt;github_id&gt;)</code>.
+          If found, the existing social account is attached to the existing user. This is the primary
+          lookup &mdash; it matches by GitHub&rsquo;s unique user ID, not by email.</li>
+      <li><strong>_lookup_by_email</strong>: Only runs if <code>_lookup_by_socialaccount</code> fails AND
+          <code>SOCIALACCOUNT_EMAIL_AUTHENTICATION</code> is enabled. Searches for a local user with a
+          matching <em>verified</em> email address. If found, the social account is connected to that user
+          but the password is wiped (<code>allauth/socialaccount/internal/flows/email_authentication.py</code>).
+          <strong>This is disabled by default</strong> (<code>SOCIALACCOUNT_EMAIL_AUTHENTICATION = False</code>).</li>
+    </ol>
+
+    <h3 id="duplicate-email">6.2 Duplicate-email policy</h3>
+
+    <p>
+      The project <strong>must not</strong> enable <code>SOCIALACCOUNT_EMAIL_AUTHENTICATION</code>
+      (<code>EMAIL_AUTHENTICATION</code> in <code>SOCIALACCOUNT_PROVIDERS</code>). Rationale:
+    </p>
+
+    <ul>
+      <li><code>EMAIL_AUTHENTICATION=True</code> causes allauth to silently log in an existing local user when a social login presents an email that matches that user&rsquo;s verified email. This is an account-takeover vector if the social provider&rsquo;s email verification is not fully trustworthy.</li>
+      <li>For a GitHub-only integration, GitHub&rsquo;s email verification is reliable enough, but the project policy (per <code>adapters.py:16</code>) explicitly states that signup should never grant organization membership. Allowing email-based auto-linking would let an attacker connect their GitHub account to any existing AgentGate user.</li>
+    </ul>
+
+    <div class="callout warning">
+      <h4>Duplicate-email handling flow</h4>
+      <p>
+        If a user signs up via email/password with <code>jane@example.com</code>, then attempts GitHub login
+        with a GitHub account whose primary email is also <code>jane@example.com</code>:
+      </p>
+      <ol>
+        <li><code>_lookup_by_socialaccount</code> fails (no existing GitHub SocialAccount for this user).</li>
+        <li><code>_lookup_by_email</code> is skipped (<code>EMAIL_AUTHENTICATION=False</code>).</li>
+        <li><code>process_auto_signup_email</code> checks <code>assess_unique_email(email)</code> (<code>allauth/account/internal/flows/signup.py</code>):
+          the email already exists in <code>EmailAddress</code> &rarr; returns <code>False</code> (duplicate).</li>
+        <li>Auto-signup is disabled. <code>redirect_to_signup</code> stashes the <code>SocialLogin</code> in the session and redirects to <code>/accounts/signup/</code> (the socialaccount signup form).</li>
+        <li><strong>In the headless SPA flow</strong>, this surfaces as the <code>provider_signup</code> flow
+            (<code>allauth/headless/socialaccount/views.py:ProviderSignupView</code>). The SPA receives a
+            401 with <code>flows: [{id: "provider_signup", is_pending: true}]</code>.</li>
+        <li><strong>The user must manually connect their GitHub account</strong> by navigating to a future
+            account-connections UI (<code>GET/DELETE /api/auth/headless/browser/v1/account/</code> &mdash;
+            <code>ManageProvidersView</code>). For AUTH-04A, this is <strong>out of scope</strong>. The SPA
+            should display a message: "An account with this email already exists. Sign in with your
+            password, then connect your GitHub account in settings."</li>
+      </ol>
+    </div>
+
+    <h3 id="new-user-flow">6.3 New-user (first) flow</h3>
+
+    <p>For a first-time GitHub user:</p>
+    <ol>
+      <li><code>_lookup_by_socialaccount</code> fails (no existing SocialAccount).</li>
+      <li><code>_lookup_by_email</code> is skipped.</li>
+      <li><code>process_auto_signup_email</code>: the email is unique &rarr; <code>assess_unique_email</code>
+          returns <code>True</code>.</li>
+      <li><code>process_auto_signup</code> returns <code>True</code> (email is unique, no phone required).</li>
+      <li><code>save_user</code> creates the <code>User</code> (with <code>set_unusable_password()</code>), then calls
+          <code>sociallogin.save()</code> which creates the <code>SocialAccount</code> record and calls
+          <code>setup_user_email</code> to create the <code>EmailAddress</code> record(s).</li>
+      <li><code>complete_social_signup</code> &rarr; <code>complete_signup</code> &rarr; <code>perform_login</code>
+          &rarr; <code>LoginStageController</code> runs the login pipeline.</li>
+      <li>If <code>EMAIL_VERIFICATION=mandatory</code> and the email is <strong>not</strong> verified &rarr;
+          <code>EmailVerificationStage</code> sends a verification code, stashes the login, and the SPA
+          receives a 401 with <code>verify_email</code> pending.</li>
+      <li>If the email <strong>is</strong> verified &rarr; login completes, session is set, SPA receives 200.</li>
+    </ol>
+
+    <!-- ===== 7. CSRF / state ===== -->
+
+    <h2 id="csrf-state">7. CSRF, OAuth state, and session protections</h2>
+
+    <h3 id="state-protection">7.1 OAuth state nonce (server-side, in session)</h3>
+
+    <p>
+      allauth 65.21.0 does <strong>not</strong> use PKCE by default (<code>OAuth2Adapter</code> has
+      <code>supports_state = True</code> on the adapter, <code>pkce_enabled_default = False</code> on
+      <code>OAuth2Provider</code>). Instead, it uses a session-stashed <code>state</code> nonce:
+    </p>
+
+    <ul>
+      <li>On redirect: <code>Provider.stash_redirect_state()</code> (<code>allauth/socialaccount/providers/base/provider.py:245</code>) saves a random 16-character state ID in <code>request.session["socialaccount_states"]</code> with a 10-minute TTL (<code>STATE_TTL = 600</code> in <code>allauth/socialaccount/internal/statekit.py:21</code>).</li>
+      <li>The state ID is passed to GitHub as the <code>state</code> query parameter.</li>
+      <li>On callback: <code>OAuth2CallbackView._get_state()</code> (<code>allauth/socialaccount/providers/oauth2/views.py:~170</code>) unstashes the state from the session and verifies the <code>state</code> parameter matches. If mismatch or expired, <code>render_authentication_error</code> is called.</li>
+      <li>Maximum 10 stashed states per session (<code>MAX_STATES = 10</code>); oldest is GC&rsquo;d.</li>
+    </ul>
+
+    <h3 id="csrf-protection">7.2 CSRF on SPA-initiated endpoints</h3>
+
+    <p>
+      The two SPA-facing endpoints require CSRF protection (as per the existing CSRF contract in
+      <code>backend/tests/test_auth_signup_login.py</code> &sect;CSRFTests):
+    </p>
+
+    <table>
+      <thead><tr><th>Endpoint</th><th>CSRF required?</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><code>POST /api/auth/headless/.../auth/provider/redirect</code></td><td><span class="badge badge-complete">Yes</span></td><td>Django&rsquo;s <code>CsrfViewMiddleware</code> enforces it because the SPA sends a session cookie.</td></tr>
+        <tr><td><code>POST /api/auth/headless/.../auth/provider/signup</code></td><td><span class="badge badge-complete">Yes</span></td><td>Same rationale.</td></tr>
+        <tr><td><code>POST /api/auth/headless/.../auth/provider/token</code></td><td><span class="badge badge-complete">Yes</span> <span class="muted">(Mode B only)</span></td><td>Body contains the <code>code</code> secret; CSRF prevents a cross-site POST.</td></tr>
+        <tr><td><code>GET /accounts/github/login/callback/</code></td><td><span class="badge badge-warning">No</span></td><td>GET initiated by the browser&rsquo;s GitHub redirect; authenticated by the <code>state</code> nonce, not CSRF. Forcing CSRF would break the flow (the browser does not send <code>X-CSRFToken</code> on a cross-site GET redirect).</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="session-protection">7.3 Session protections</h3>
+
+    <p>
+      Confirmed from <code>config/settings/base.py:187-191</code> and
+      <code>config/settings/prod.py:33-34</code>:
+    </p>
+
+    <table>
+      <thead><tr><th>Cookie</th><th>Dev</th><th>Prod</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td><code>sessionid</code></td><td>Secure=False, HttpOnly=True, SameSite=Lax</td><td>Secure=True, HttpOnly=True, SameSite=Lax</td><td><code>SESSION_COOKIE_HTTPONLY=True</code>, <code>SESSION_COOKIE_SAMESITE="Lax"</code>, <code>SESSION_COOKIE_SECURE</code> in <code>prod.py</code></td></tr>
+        <tr><td><code>csrftoken</code></td><td>Secure=False, HttpOnly=False, SameSite=Lax</td><td>Secure=True, HttpOnly=False, SameSite=Lax</td><td><code>CSRF_COOKIE_HTTPONLY=False</code>, <code>CSRF_COOKIE_SAMESITE="Lax"</code>, <code>CSRF_COOKIE_SECURE</code> in <code>prod.py</code></td></tr>
+      </tbody>
+    </table>
+
+    <!-- ===== 8. Errors ===== -->
+
+    <h2 id="errors">8. User cancellation and provider failure handling</h2>
+
+    <h3 id="cancellation">8.1 User cancels OAuth consent on GitHub</h3>
+
+    <p>
+      When the user clicks &ldquo;Cancel&rdquo; on GitHub&rsquo;s consent screen (or denies the app),
+      GitHub returns to the callback URL with <code>error=access_denied</code>. The
+      <code>OAuth2CallbackView.dispatch</code> (<code>allauth/socialaccount/providers/oauth2/views.py:~130</code>)
+      detects this and calls <code>render_authentication_error</code> with
+      <code>AuthError.CANCELLED</code>.
+    </p>
+
+    <p>
+      In the headless flow, <code>render_authentication_error</code> calls
+      <code>on_authentication_error</code> on the adapter (<code>allauth/socialaccount/adapter.py:115</code>),
+      which by default is a no-op. Then, since <code>HEADLESS_ENABLED</code> is True, it delegates to
+      <code>allauth.headless.socialaccount.internal.on_authentication_error</code>
+      (<code>allauth/headless/socialaccount/internal.py:~20</code>), which redirects to the
+      <code>callback_url</code> (the SPA&rsquo;s <code>next_url</code>) with
+      <code>?error=cancelled&error_process=login</code> appended as query parameters.
+    </p>
+
+    <div class="callout note">
+      <p>
+        The SPA must handle the redirect from the callback URL and inspect the <code>error</code> query
+        parameter. On <code>error=cancelled</code>, display: &ldquo;GitHub login was cancelled. Please try again.&rdquo;
+      </p>
+    </div>
+
+    <h3 id="provider-failure">8.2 GitHub API or OAuth provider failure</h3>
+
+    <table>
+      <thead><tr><th>Failure mode</th><th>HTTP response at callback</th><th>SPA sees</th></tr></thead>
+      <tbody>
+        <tr><td>State mismatch / expired state</td><td>302 to callback_url with <code>?error=unknown</code> (or 403 if state raises <code>PermissionDenied</code>)</td><td>SPA redirect with <code>error=unknown</code></td></tr>
+        <tr><td>GitHub returns HTTP error on token exchange</td><td>302 to callback_url with <code>?error=unknown</code></td><td>SPA redirect with <code>error=unknown</code></td></tr>
+        <tr><td>GitHub returns HTTP error on <code>/user</code> or <code>/user/emails</code></td><td>302 to callback_url with <code>?error=unknown</code></td><td>SPA redirect with <code>error=unknown</code></td></tr>
+        <tr><td>Signup is closed (<code>is_open_for_signup</code> returns False)</td><td>302 to callback_url with <code>?error=signup_closed</code></td><td>SPA redirect with <code>error=signup_closed</code></td></tr>
+        <tr><td>Network timeout to GitHub API</td><td>302 to callback_url with <code>?error=unknown</code> (caught as <code>RequestException</code> in <code>OAuth2CallbackView.dispatch</code>)</td><td>SPA redirect with <code>error=unknown</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <h4>Custom adapter for better error UX</h4>
+      <p>
+        The project should override <code>SocialAccountAdapter.on_authentication_error</code> to log the
+        error details server-side (for ops visibility) while returning a generic error to the SPA
+        (to avoid information leakage). The default implementation is a no-op.
+      </p>
+    </div>
+
+    <!-- ===== 9. Agent key separation ===== -->
+
+    <h2 id="agent-separation">9. Separation: human sessions vs agent API keys</h2>
+
+    <p>
+      This is the most critical invariant. Agent API keys <strong>must never</strong> authenticate
+      against dashboard or social-auth endpoints. Confirmed from the existing architecture:
+    </p>
+
+    <table>
+      <thead><tr><th>Component</th><th>Location</th><th>Agent key rejected?</th></tr></thead>
+      <tbody>
+        <tr><td><code>AgentKeyAuthentication</code></td><td><code>apps/agents/authentication.py:7</code></td><td><span class="badge badge-na">N/A</span> &mdash; this IS the agent key auth class</td></tr>
+        <tr><td><code>DashboardSessionAuthentication</code></td><td><code>apps/agents/authentication.py:29</code></td><td><span class="badge badge-complete">Yes</span> &mdash; calls <code>_check_agent_auth(request)</code> and returns <code>None</code> (rejects) if an agent key is present</td></tr>
+        <tr><td><code>/api/auth/user/</code> (<code>CurrentUserView</code>)</td><td><code>apps/accounts/views.py:25</code></td><td><span class="badge badge-complete">Yes</span> &mdash; <code>CurrentUserView</code> uses <code>DjangoSessionAuthentication</code>; agent keys are rejected by DRF&rsquo;s default session auth (401).</td></tr>
+        <tr><td><code>POST /api/auth/headless/.../auth/provider/redirect</code></td><td>allauth headless</td><td><span class="badge badge-complete">Yes</span> &mdash; the headless CSRF/session endpoint is tied to the session cookie; agent keys cannot trigger it.</td></tr>
+        <tr><td><code>GET /accounts/github/login/callback/</code></td><td>allauth socialaccount</td><td><span class="badge badge-complete">Yes</span> &mdash; callback is session-based; agent keys are irrelevant.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <h4>Do not mix agent and user auth on any endpoint</h4>
+      <p>
+        The allauth headless and socialaccount endpoints exclusively use session cookies. They must
+        <strong>never</strong> be added to any <code>AgentKeyAuthentication</code>-protected URL group.
+        Agent keys authenticate as <code>AgentPrincipal</code> (an <code>Organization</code> + <code>Agent</code>
+        context), not as a <code>User</code> &mdash; there is no <code>User</code> record to attach a social login to.
+      </p>
+    </div>
+
+    <!-- ===== 10. RBAC ===== -->
+
+    <h2 id="rbac">10. Organization membership and RBAC invariants</h2>
+
+    <h3 id="post-oauth-rbac">10.1 RBAC after GitHub login</h3>
+
+    <p>
+      When a new <code>User</code> is created via GitHub OAuth, the user has <strong>no</strong>
+      <code>OrgMembership</code> record. The existing RBAC (<code>IsDashboardUser</code>) requires at
+      least one membership, so a freshly-registered GitHub user cannot immediately access any dashboard
+      endpoint:
+    </p>
+
+    <pre><code class="language-python"># backend/apps/accounts/permissions.py:16 (CONFIRMED EXISTING)
+
+class IsDashboardUser(BasePermission):
+    def has_permission(self, request, view):
+        return (
+            request.user.is_authenticated
+            and request.user.memberships.filter(
+                organization__is_deleted=False
+            ).exists()
+        )</code></pre>
+
+    <h3 id="invariants">10.2 Invariants that the GitHub OAuth implementation must satisfy</h3>
+
+    <table>
+      <thead><tr><th>#</th><th>Invariant</th><th>Violating action to avoid</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><strong>No automatic organization membership.</strong> GitHub OAuth must NOT create an <code>OrgMembership</code> for the new user. (Confirmed: <code>CustomAccountAdapter.clean_email</code> at <code>adapters.py:16</code> enforces domain allowlist on signup &mdash; this same check must apply to social signup via <code>pre_social_login</code> or <code>socialaccount_user_created</code> signal.)</td><td>Auto-creating a default org or "self-org" on social login.</td></tr>
+        <tr><td>2</td><td><strong>Domain allowlist.</strong> If the GitHub email domain is not in <code>ACCOUNT_EMAIL_ALLOWLIST</code>, the login must be rejected.</td><td>Allowing any GitHub user to log in regardless of domain.</td></tr>
+        <tr><td>3</td><td><strong>Agent keys cannot social-login.</strong> The headless/socialaccount endpoints must reject <code>Authorization: Bearer agk_...</code>.</td><td>Adding <code>AgentKeyAuthentication</code> to a URL that also serves allauth.</td></tr>
+        <tr><td>4</td><td><strong>Same session binding.</strong> A successful GitHub login must set the <code>sessionid</code> cookie (not an agent token).</td><td>Returning a DRF token or agent token instead of a session cookie.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="post-login-state">10.3 Post-login user state</h3>
+
+    <p>
+      After a successful first-time GitHub login (email verified, allowed domain, no existing account):
+    </p>
+
+    <ul>
+      <li><code>User.is_active = True</code>, <code>user.password</code> has an unusable hash (<code>!</code> prefix) &mdash; the user <strong>cannot</strong> use password login until they set one.</li>
+      <li><code>SocialAccount</code> record exists (<code>provider="github"</code>, <code>uid=<github_id></code>).</li>
+      <li><code>EmailConfirmation</code> is skipped (GitHub email is trusted). No email sent.</li>
+      <li><strong>No <code>OrgMembership</code></strong> is created.</li>
+      <li><code>GET /api/auth/user/</code> returns 200 with <code>is_email_verified=True</code> but <code>memberships=[]</code>.</li>
+      <li>SPA must redirect the user to an invite/accept flow to be added to an organization.</li>
+    </ul>
+
+    <!-- ===== 11. GitHub App config ===== -->
+
+    <h2 id="config">11. GitHub OAuth App configuration and environment variables</h2>
+
+    <h3 id="app-registration">11.1 Register the OAuth App</h3>
+
+    <p>
+      An organization owner must register a new OAuth App on GitHub at
+      <code>https://github.com/settings/developers</code>:
+    </p>
+
+    <table>
+      <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Application name</td><td><code>AgentGate Dashboard</code></td></tr>
+        <tr><td>Homepage URL</td><td><code>https://&lt;dashboard-host&gt;</code> (the SPA origin)</td></tr>
+        <tr><td>Authorization callback URL</td><td><code>https://&lt;backend-host&gt;/accounts/github/login/callback/</code></td></tr>
+        <tr><td>Enable device flow</td><td>No</td></tr>
+        <tr><td>Enable requesting user&rsquo;s email</td><td>Yes (all OAuth Apps get this; the <code>user:email</code> scope must be requested)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <h4>Callback URL must match exactly</h4>
+      <p>
+        The Authorization callback URL in the GitHub App settings must be exactly
+        <code>https://&lt;backend-host&gt;/accounts/github/login/callback/</code>. It must be HTTPS
+        in production. Trailing slash is significant.
+      </p>
+    </div>
+
+    <h3 id="env-vars">11.2 Environment variables</h3>
+
+    <p>
+      The <code>.env.example</code> must be extended with the following keys:
+    </p>
+
+    <pre><code class="language-ini"># .env.example additions
+
+# --- GitHub OAuth (allauth SocialAccount) ---
+GITHUB_OAUTH_CLIENT_ID=
+GITHUB_OAUTH_SECRET=
+# Optional: restrict the OAuth App to a GitHub Enterprise deployment
+GITHUB_OAUTH_URL=
+
+# --- allauth socialaccount ---
+# No SOCIALACCOUNT_PROVIDERS["github"]["VERIFIED_EMAIL"] setting is needed &mdash;
+# we trust GitHub's per-email verified flag from /user/emails (see &sect;5.3).</code></pre>
+
+    <h3 id="settings-block">11.3 Django settings block (for the implementer)</h3>
+
+    <p>
+      The implementer (AUTH-04B) must add the following to <code>base.py</code>:
+    </p>
+
+    <pre><code class="language-python"># INSTALLED_APPS: add socialaccount
+
+# In INSTALLED_APPS (base.py:32-34 area):
+INSTALLED_APPS = [
+    ...
+    "allauth",                          # existing
+    "allauth.account",                  # existing
+    "allauth.socialaccount",             # NEW
+    "allauth.socialaccount.providers.github",  # NEW
+    ...
+]
+
+# New settings block (after the allauth account settings):
+# SOCIALACCOUNT_LOGIN_BY_CODE_REQUIRED does NOT exist in allauth 65.21.0 &mdash;
+# login_by_code is email-only. No SOCIALACCOUNT-specific setting needed.
+
+# SOCIALACCOUNT_EMAIL_VERIFICATION defaults to None &mdash; when not set, allauth
+# inherits email verification behavior from ACCOUNT_EMAIL_VERIFICATION ("mandatory"),
+# which is already configured in base.py:203. No override needed for GitHub.
+
+SOCIALACCOUNT_PROVIDERS = {
+    "github": {
+        "APP": {
+            "client_id": env("GITHUB_OAUTH_CLIENT_ID"),
+            "secret": env("GITHUB_OAUTH_SECRET"),
+        },
+        # SCOPE defaults to ["user:email"] when QUERY_EMAIL=True (which it is,
+        # since ACCOUNT_SIGNUP_FIELDS includes "email*"). Do not override.
+        # VERIFIED_EMAIL is NOT set &mdash; we trust GitHub's per-email verified
+        # flag from the /user/emails API, not an unconditional trust.
+        # (See &sect;5.3 for the rationale, and the Tech Lead decision on Q2.)
+    }
+}
+
+SOCIALACCOUNT_ADAPTER = "apps.accounts.adapters.CustomSocialAccountAdapter"</code></pre>
+
+    <h3 id="url-patterns">11.4 URL patterns to add</h3>
+
+    <p>
+      The implementer must add two includes to <code>backend/config/urls.py</code>:
+    </p>
+
+    <pre><code class="language-python"># backend/config/urls.py (after the existing allauth include)
+
+urlpatterns = [
+    ...
+    # allauth account + headless (existing):
+    path("api/auth/headless/", include("allauth.headless.urls")),
+    path("accounts/", _headless_only_account_patterns()),
+    # NEW socialauth includes:
+    path("accounts/", include("allauth.socialaccount.urls")),
+    path("accounts/github/", allauth.socialaccount.providers.github.urls),
+]</code></pre>
+
+    <!-- ===== 12. Frontend handoff ===== -->
+
+    <h2 id="frontend">12. Frontend handoff requirements</h2>
+
+    <p>
+      The SPA (React/TypeScript, <code>apps/web/src/</code>) must implement the following sequence
+      to initiate GitHub login:
+    </p>
+
+    <ol>
+      <li><strong>Bootstrap CSRF.</strong> Call <code>GET /api/auth/headless/browser/v1/config</code>
+          on app load. The session cookie set here carries the <code>csrftoken</code> that all
+          subsequent POSTs need in the <code>X-CSRFToken</code> header.</li>
+      <li><strong>Detect provider availability.</strong> Inspect the response for
+          <code>data.socialaccount.providers</code>. If <code>github</code> is listed, show the
+          "Sign in with GitHub" button.</li>
+      <li><strong>Initiate redirect.</strong> On click, <code>POST /api/auth/headless/browser/v1/auth/provider/redirect</code>
+          with body <code>{"provider": "github", "callback_url": "https://app.example.com/dashboard", "process": "login"}</code>
+          and header <code>X-CSRFToken: &lt;csrftoken&gt;</code>.
+          The response is a <code>302</code> redirect to GitHub&rsquo;s consent page. The browser
+          follows it automatically (do <strong>not</strong> use <code>fetch</code> &mdash; use
+          <code>window.location.href = response.url</code> since the 302 is to a cross-origin page).
+      </li>
+      <li><strong>User consents on GitHub.</strong> GitHub redirects back to
+          <code>/accounts/github/login/callback/</code> with <code>code</code> and <code>state</code>.</li>
+      <li><strong>allauth processes.</strong> The backend exchanges the code, creates the user/social account,
+          and <code>302</code>-redirects the browser to the <code>callback_url</code> (the SPA&rsquo;s
+          <code>/dashboard</code>). Session and CSRF cookies are set.</li>
+      <li><strong>Resolve auth state.</strong> The SPA should call <code>GET /api/auth/user/</code>
+          on the <code>/dashboard</code> route to determine if the user is fully authenticated or if
+          a verification stage is pending.</li>
+    </ol>
+
+    <div class="callout note">
+      <h4>CSRF header name</h4>
+      <p>
+        The allauth headless flow uses Django&rsquo;s default <code>csrftoken</code> cookie name.
+        The SPA must read it from <code>document.cookie</code> and send it as the <code>X-CSRFToken</code>
+        header on all state-changing POSTs. This is <em>already the existing contract</em> used by
+        <code>POST /auth/login</code> and <code>POST /auth/signup</code>.
+      </p>
+    </div>
+
+    <!-- ===== 13. Testing ===== -->
+
+    <h2 id="testing">13. Required backend tests</h2>
+
+    <p>
+      The auth developer must add a new test file at
+      <code>backend/tests/test_auth_github_oauth.py</code>, following the patterns established in
+      <code>test_auth_signup_login.py</code>. The following test cases are required:
+    </p>
+
+    <table>
+      <thead><tr><th>#</th><th>Test case</th><th>Expected outcome</th></tr></thead>
+      <tbody>
+        <tr><td>T01</td><td><code>test_github_callback_creates_new_user</code></td><td>POST callback with GitHub code → SocialAccount created, User created with <code>is_active=True</code>, <code>EmailConfirmation</code> not sent.</td></tr>
+        <tr><td>T02</td><td><code>test_github_callback_existing_user_linked</code></td><td>Second login with same GitHub UID → no new User, SocialAccount linked if missing.</td></tr>
+        <tr><td>T03</td><td><td><code>test_email_verification_pending_when_unverified</code></td><td>GitHub email <code>verified=False</code> → verification code email sent, <code>GET /user/</code> returns 401 with <code>verify_email</code> flow.</td></tr>
+        <tr><td>T04</td><td><code>test_duplicate_email_blocked</code></td><td>GitHub email matches existing local user (different password) → no auto-login; SPA receives <code>provider_signup</code> flow or redirect to password login.</td></tr>
+        <tr><td>T05</td><td><code>test_domain_not_allowed_rejected</code></td><td>GitHub email with disallowed domain (e.g., <code>@gmail.com</code> if allowlist excludes it) → login rejected with redirect to SPA with <code>error=access_denied</code>.</td></tr>
+        <tr><td>T06</td><td><code>test_user_cancels_oauth</code></td><td>GitHub returns <code>error=access_denied</code> → redirect to <code>callback_url</code> with <code>?error=cancelled</code>.</td></tr>
+        <tr><td>T07</td><td><code>test_csrf_required_on_provider_redirect</code></td><td>POST to <code>/provider/redirect</code> without <code>X-CSRFToken</code> → 412 (CSRF token missing).</td></tr>
+        <tr><td>T08</td><td><code>test_state_nonce_validated</code></td><td>Callback with mismatched/expired <code>state</code> → <code>PermissionDenied</code> / redirect with <code>error=unknown</code>.</td></tr>
+        <tr><td>T09</td><td><code>test_agent_key_rejected_on_provider_redirect</code></td><td>POST <code>/provider/redirect</code> with <code>Authorization: Bearer agk_...</code> → 401 (agent key rejected; session required).</td></tr>
+        <tr><td>T10</td><td><code>test_no_org_membership_automatic</code></td><td>After GitHub login, <code>User.memberships.count() == 0</code>.</td></tr>
+        <tr><td>T11</td><td><code>test_password_unusable_after_github_signup</code></td><td><code>User.has_usable_password() == False</code> after GitHub signup.</td></tr>
+        <tr><td>T12</td><td><code>test_socialaccount_stored</code></td><td><code>SocialAccount.objects.filter(provider="github", uid=<github_id>)</code> exists.</td></tr>
+      </tbody>
+    </table>
+
+    <!-- ===== 14. Implementation plan ===== -->
+
+    <h2 id="impl-plan">14. Implementation plan for AUTH-04B</h2>
+
+    <p>
+      The work in this checkpoint (AUTH-04A) is documentation-only. The next checkpoint (AUTH-04B)
+      implements the actual integration. This section is the implementer&rsquo;s task list, derived
+      from confirmed allauth 65.21.0 behavior.
+    </p>
+
+    <ol>
+      <li><strong>Enable allauth.socialaccount.</strong> Add <code>"allauth.socialaccount"</code> and
+          <code>"allauth.socialaccount.providers.github"</code> to <code>INSTALLED_APPS</code> in
+          <code>base.py</code>.</li>
+      <li><strong>Run migrations.</strong> <code>python manage.py migrate</code> to create
+          <code>SocialApp</code>, <code>SocialAccount</code>, <code>SocialToken</code> tables.</li>
+      <li><strong>Add <code>SOCIALACCOUNT_PROVIDERS</code>.</strong> Configure the GitHub provider with
+          credentials from environment variables. <strong>Do not</strong> set <code>VERIFIED_EMAIL=True</code>
+          or <code>SCOPE</code> explicitly &mdash; the default <code>user:email</code> scope (from
+          <code>QUERY_EMAIL=True</code>) is correct, and GitHub&rsquo;s per-email <code>verified</code> flag
+          is trusted by default (see <a href="#email-verify">&sect;5</a>).
+      <li><strong>Create <code>CustomSocialAccountAdapter</code>.</strong> Add
+          <code>backend/apps/accounts/social_adapters.py</code> (or extend the existing
+          <code>adapters.py</code>) with a subclass of <code>DefaultSocialAccountAdapter</code> that
+          overrides <code>pre_social_login</code> (for domain allowlist validation, see Q6) and
+          <code>on_authentication_error</code> (for server-side error logging). <strong>Do NOT</strong>
+          unconditionally override <code>is_email_verified()</code>&mdash;rely on GitHub&rsquo;s native
+          per-email <code>verified</code> flag (see <a href="#email-verify">&sect;5.3</a>). Set
+          <code>SOCIALACCOUNT_ADAPTER = "apps.accounts.adapters.CustomSocialAccountAdapter"</code>.
+          <strong>If no custom adapter is needed beyond domain enforcement</strong>, the default
+          <code>DefaultSocialAccountAdapter</code> + <code>pre_social_login</code> signal is sufficient.</li>
+      <li><strong>Add URL includes.</strong> Add <code>allauth.socialaccount.urls</code> and the GitHub
+          provider URL patterns to <code>backend/config/urls.py</code>.</li>
+      <li><strong>Wire env vars.</strong> Add <code>GITHUB_OAUTH_CLIENT_ID</code> and
+          <code>GITHUB_OAUTH_SECRET</code> to <code>.env</code> and <code>.env.example</code>.</li>
+      <li><strong>SPA: implement redirect flow.</strong> The frontend must implement the 6-step sequence
+          from <a href="#frontend">&sect;12</a>. Use <code>HEADLESS_BASE</code> constant from
+          <code>test_auth_github_oauth.py</code> (following the pattern in <code>test_auth_signup_login.py</code>).</li>
+      <li><strong>SPA: handle post-login state.</strong> On redirect to <code>/dashboard</code>,
+          call <code>GET /api/auth/user/</code> to resolve auth state. Handle 401 + <code>verify_email</code>
+          flow (display email verification prompt).</li>
+      <li><strong>SPA: handle error redirect.</strong> Inspect query params on <code>/dashboard</code>
+          for <code>error=cancelled</code> and display the appropriate message.</li>
+      <li><strong>Enforce domain policy in <code>pre_social_login</code>.</strong> The implementer must add
+          a <code>pre_social_login</code> signal handler (or <code>SocialAccountAdapter.pre_social_login</code>
+          override) that validates the email domain against <code>ACCOUNT_EMAIL_ALLOWLIST</code>
+          (reusing the existing domain set from <code>CustomAccountAdapter</code>). If the domain is not
+          allowed, raise <code>ImmediateHttpResponse</code> redirecting to the SPA&rsquo;s
+          <code>callback_url</code> with <code>?error=access_denied</code> (matching Q6 decision).</li>
+      <li><strong>Write tests.</strong> Implement <code>test_auth_github_oauth.py</code> with the 12 cases
+          from <a href="#testing">&sect;13</a>.</li>
+      <li><strong>Verify.</strong> Run <code>python -m pytest backend/tests/test_auth_github_oauth.py -v</code>
+          and <code>python manage.py migrate --check</code> (to confirm no unapplied migrations).</li>
+    </ol>
+
+    <div class="callout note">
+      <h4>Items explicitly out of scope for this checkpoint</h4>
+      <ul>
+        <li>Account-connection UI (listing connected social accounts on the dashboard): <code>allauth.headless.socialaccount.views.ManageProvidersView</code> already provides the API, but the SPA page itself is a future deliverable.</li>
+        <li>GitHub App (vs OAuth App) integration: GitHub Apps use a different authorization flow (App&rsquo;s <code> installations</code> endpoint). This is NOT needed for the dashboard login flow.</li>
+        <li>Email-based account linking: Allowing users to connect their GitHub account to an existing email/password account requires a future account-connections feature.</li>
+      </ul>
+    </div>
+
+    <!-- ===== 15. Open questions ===== -->
+
+    <h2 id="decisions">15. Open questions requiring Tech Lead approval</h2>
+
+    <table>
+      <thead><tr><th>#</th><th>Question</th><th>Impact if wrong</th><th>Recommendation</th></tr></thead>
+      <tbody>
+        <tr><td>Q1</td><td><strong>OAuth App vs GitHub App.</strong> Should we use a GitHub OAuth App (simpler, what allauth expects) or a GitHub App (more secure, can request fine-grained permissions)?</td><td>Affects provider configuration, token handling, and revocation flow.</td><td><span class="badge badge-warning">OAuth App</span> for MVP; allauth&rsquo;s GitHub provider is designed for OAuth Apps.</td></tr>
+         <tr><td>Q2</td><td><strong>Verified-email trust: <code>VERIFIED_EMAIL</code> vs custom adapter override.</strong> Do not implement an unconditional <code>is_email_verified() = True</code> override or set <code>VERIFIED_EMAIL=True</code>. Trust GitHub&rsquo;s native per-email <code>verified</code> flag from <code>/user/emails</code>.</td><td>If a blanket <code>True</code> override were used, unverified GitHub emails could bypass verification.</td><td><span class="badge badge-complete">RESOLVED</span> &mdash; allauth preserves GitHub&rsquo;s per-email <code>verified</code> flag via <code>extract_email_addresses</code> + <code>cleanup_email_addresses</code> (only upgrades, never downgrades).</td></tr>
+        <tr><td>Q3</td><td><strong>Token storage.</strong> <code>SOCIALACCOUNT_STORE_TOKENS</code> defaults to <code>False</code> (good &mdash; tokens are not persisted). Should we keep it <code>False</code> (no persistent token &mdash; re-auth required each session) or enable it for future GitHub API use (e.g., syncing user&rsquo;s repos)?</td><td>If enabled, tokens at rest need encryption-at-rest consideration.</td><td><span class="badge badge-warning">False</span> for MVP &mdash; do not store GitHub tokens.</td></tr>
+        <tr><td>Q4</td><td><strong>Account linking policy.</strong> When an existing email/password user attempts GitHub login with the same email, the recommended behavior is to block it and tell them to connect GitHub via account settings. Is this acceptable, or should we auto-link?</td><td>Auto-linking is an account-takeover risk if the email verification trust is misplaced.</td><td><span class="badge badge-warning">Block + redirect to login</span> (do not auto-link).</td></tr>
+        <tr><td>Q5</td><td><strong>Post-login redirect.</strong> On <code>/dashboard</code>, should the SPA always call <code>GET /api/auth/user/</code>, or should allauth&rsquo;s redirect to <code>callback_url</code> include a success/error indicator in the query string?</td><td>Ambiguous post-login state could cause flickering or infinite loader spin.</td><td><span class="badge badge-warning">Always call <code>GET /api/auth/user/</code></span> on dashboard mount &mdash; it is the source of truth.</td></tr>
+        <tr><td>Q6</td><td><strong>Domain enforcement mechanism.</strong> Should the email-domain allowlist be enforced in the <code>SocialAccountAdapter</code> (<code>pre_social_login</code>), or should it be enforced after login in the SPA?</td><td>Enforcing in SPA leaves a server-side bypass; enforcing in adapter is the secure path.</td><td><span class="badge badge-warning">Adapter-level</span> (server-side).</td></tr>
+        <tr><td>Q7</td><td><strong>Login by code for social accounts.</strong> allauth 65.21.0 does <strong>not</strong> have <code>SOCIALACCOUNT_LOGIN_BY_CODE_REQUIRED</code> (the <code>login_by_code</code> flow is email-only in 65.21.0). Should social logins rely solely on email/password-usable users and passwordless email codes for existing users, or is there a need for a "GitHub magic link" flow?</td><td>Affects whether social-auth users can bypass password login.</td><td><span class="badge badge-na">N/A</span> &mdash; social-auth creates users with <code>set_unusable_password()</code>; no "magic link" needed for v1.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout info">
+      <h4>Legend</h4>
+      <p>
+        <span class="badge badge-complete">Yes/True/PASS</span>
+        <span class="badge badge-warning">Decision needed</span>
+        <span class="badge badge-missing">No/Absent/FAIL</span>
+        <span class="badge badge-na">N/A / out of scope</span>
+      </p>
+    </div>
+
+    <hr>
+
+    <p>
+      This document is a <strong>design checkpoint</strong> for the AUTH-04A (GitHub OAuth) workstream,
+      building on the AUTH-01 (email/password), AUTH-03 (agent API keys), and AUTH-02A/02C (account
+      recovery) work already integrated on the <code>feat/github-oauth</code> branch. All assertions are
+      backed by direct inspection of:
+    </p>
+
+    <ul>
+      <li><code>allauth==65.21.0</code> wheel source (installed at
+          <code>.kilo/worktrees/intergration/backend/venv/lib/python3.14/site-packages/allauth/</code>)</li>
+      <li>Existing project configuration (<code>backend/config/settings/base.py</code>, <code>backend/config/urls.py</code>)</li>
+      <li>Existing auth code (<code>apps/accounts/adapters.py</code>, <code>permissions.py</code>,
+          <code>views.py</code>) and tests (<code>tests/test_auth_signup_login.py</code>,
+          <code>tests/test_auth_password_reset.py</code>)</li>
+      <li>Existing documentation (<code>docs/authentication-architecture.html</code>,
+          <code>docs/account-recovery-contract.html</code>)</li>
+    </ul>
+
+    <p><small>Generated: 2026-10-28 &middot; Checkpoint: AUTH-04A &middot; Status: design-complete</small></p>
+
+  </main>
+  <footer class="doc-footer">
+    <p class="muted">&copy; AgentGate. Internal documentation.</p>
+  </footer>
+</body>
+</html>

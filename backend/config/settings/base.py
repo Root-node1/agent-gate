@@ -209,6 +209,12 @@ ACCOUNT_ADAPTER = "apps.accounts.adapters.CustomAccountAdapter"
 LOGIN_REDIRECT_URL = os.environ.get("LOGIN_REDIRECT_URL", "/app/")
 LOGOUT_REDIRECT_URL = os.environ.get("LOGOUT_REDIRECT_URL", "/login/")
 
+# AUTH-03 acceptance criterion: max 3 requests per hour per email for password
+# reset requests. Retains the IP-level cap (20/m/ip) for DoS resistance.
+ACCOUNT_RATE_LIMITS = {
+    "reset_password": "3/h/key,20/m/ip",
+}
+
 # Django (not allauth) governs reset-link expiry. Unset means tokens never
 # expire, so a 1-hour lifetime is mandatory for the recovery flow.
 PASSWORD_RESET_TIMEOUT = 3600

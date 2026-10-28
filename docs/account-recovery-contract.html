@@ -768,6 +768,83 @@
       </p>
     </div>
 
+    <!-- ===== 12. AUTH-02C: Security verification ===== -->
+
+    <h2 id="auth02c-verification">12. AUTH-02C security verification</h2>
+
+    <div class="callout success">
+      <p>
+        AUTH-02C hardened the rate-limit policy and added focused security tests without
+        modifying any frontend authentication UI. All backend acceptance checks pass on
+        PostgreSQL (366 tests, 2 skipped, 0 failures).
+      </p>
+    </div>
+
+    <h3 id="auth02c-settings">12.1 Effective security settings</h3>
+    <p>
+      The following settings are now active in <code>config/settings/base.py</code>
+      (overridden in <code>config/settings/test.py</code> for deterministic test
+      origins):
+    </p>
+    <table>
+      <thead><tr><th>Setting</th><th>Value</th><th>Rationale</th></tr></thead>
+      <tbody>
+        <tr><td><code>PASSWORD_RESET_TIMEOUT</code></td><td><code>3600</code> (1&nbsp;h)</td><td>Django setting (not allauth&rsquo;s non-existent <code>ACCOUNT_PASSWORD_RESET_TIMEOUT</code>); reset tokens expire after 1&nbsp;hour.</td></tr>
+        <tr><td><code>HEADLESS_FRONTEND_URLS["account_reset_password"]</code></td><td><code>{FRONTEND_ORIGIN}/forgot-password</code></td><td>Emailed reset-request link points to the SPA, not a server-side form.</td></tr>
+        <tr><td><code>HEADLESS_FRONTEND_URLS["account_reset_password_from_key"]</code></td><td><code>{FRONTEND_ORIGIN}/reset-password/{key}</code></td><td>Emailed confirmation link is SPA-routable.</td></tr>
+        <tr><td><code>ACCOUNT_EMAIL_NOTIFICATIONS</code></td><td><code>True</code></td><td>Notifies account owner when password is reset or changed (compromised-account alert).</td></tr>
+        <tr><td><code>ACCOUNT_RATE_LIMITS["reset_password"]</code></td><td><code>3/h/key, 20/m/ip</code></td><td>AUTH-03 acceptance: max 3 requests/hour per email (key = sha256 of email); IP cap retained for DoS resistance.</td></tr>
+        <tr><td><code>ACCOUNT_RATE_LIMITS["reset_password_from_key"]</code></td><td><code>20/m/ip</code> (default)</td><td>Token-submit confirmation is IP-limited only (key is a one-time secret, not enumerable).</td></tr>
+        <tr><td><code>ACCOUNT_RATE_LIMITS["change_password"]</code></td><td><code>5/m/user</code> (default)</td></td>Prevents brute-forcing current-password verification.</td></tr>
+        <tr><td><code>DEFAULT_FROM_EMAIL</code></td><td><code>AgentGate &lt;no-reply@example.com&gt;</code></td><td>Configurable via env; console backend in dev/test, SMTP in prod.</td></tr>
+        <tr><td><code>LOGOUT_ON_PASSWORD_CHANGE</code></td><td><code>False</code> (allauth default)</td><td>Session preserved on password change; other sessions invalidated via Django&rsquo;s auth-hash.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="auth02c-tests">12.2 Verified test behavior (27 tests)</h3>
+    <table>
+      <thead><tr><th>Test class</th><th>Coverage</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td><code>RequestPasswordResetTests</code> <span class="muted">(4)</span></td><td>Enumeration resistance; SPA link domain; email only to known verified users.</td><td>&mdash;</td></tr>
+        <tr><td><code>ResetConfirmationTests</code> <span class="muted">(7)</span></td><td>Valid reset; expired/tampered/reused tokens reject 400; 401 success (no auto-login); notification email.</td><td>&mdash;</td></tr>
+        <tr><td><code>UnverifiedUserResetTests</code> <span class="muted">(1)</span></td><td>Unverified user can reset but cannot log in afterward.</td><td>&mdash;</td></tr>
+        <tr><td><code>ChangePasswordTests</code> <span class="muted">(5)</span></td><td>Session preservation, other-session invalidation, current-password required, wrong current rejected, notification.</td><td>&mdash;</td></tr>
+        <tr><td><code>RateLimitTests</code> <span class="muted">(2)</span></td><td>Config matches <code>3/h/key</code> + <code>20/m/ip</code>; 4th request per email returns 429.</td><td>&mdash;</td></tr>
+        <tr><td><code>RecoveryCSRFTests</span> <span class="muted">(3)</span></td><td>Reset request rejected without X-CSRFToken (403); accepted with token (200); password change rejected without token (403).</td><td>&mdash;</td></tr>
+        <tr><td><code>RecoverySecurityTests</code> <span class="muted">(4)</span></td><td>Weak password rejected on reset; RBAC/org membership unchanged; only notification email sent; unknown email gets unknown-account notice.</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <p>
+        <strong>Discrepancy with §10.1 / §5.1:</strong> the contract stated that
+        unverified users would receive <em>no</em> reset email. The actual allauth
+        behavior (confirmed by <code>test_unverified_user_reset_does_not_grant_login</code>)
+        is that the reset email <em>is</em> sent to active-but-unverified users, but
+        they cannot log in afterward because
+        <code>ACCOUNT_EMAIL_VERIFICATION=mandatory</code>. This is acceptable: the
+        reset link reveals nothing about the account&rsquo;s verification state to an
+        attacker, and login remains blocked.
+      </p>
+    </div>
+
+    <h3 id="auth02c-risks">12.3 Remaining backend security risks</h3>
+    <ul>
+      <li><strong>LocMemCache in tests / dev:</strong> rate-limit counters are per-process. Production must use a shared cache (Redis or database-backed) for distributed enforcement. This is an infrastructure concern, not a code defect.</li>
+      <li><strong>No account-lockout on repeated failed logins:</strong> brute-force protection for the login endpoint is scoped to AUTH-06 (rate limiting + django-axes); AUTH-02C does not introduce login brute-force protection.</li>
+      <li><strong>Notification email templates:</strong> the <code>password_reset_key</code> and <code>password_changed</code> subjects are hard-coded strings ("Your AgentGate password was reset/changed"). Verify the copy matches brand voice in final product review.</li>
+      <li><strong><code>unknown_account</code> email for known unverified accounts:</strong> an unverified user who requests a reset receives an <code>unknown_account</code> notice (not a <code>password_reset_key</code> link) only if allauth&rsquo;s <code>filter_users_by_email(..., for_login=True)</code> does not match them. The current allauth 65.21.0 reset-request view uses <code>is_active=True</code> (not <code>for_login=True</code>), so unverified-but-active users receive the <code>password_reset_key</code> email directly. This is documented in §12.2 above.</li>
+    </ul>
+
+    <h3 id="auth02c-handoff">12.4 Frontend integration handoff</h3>
+    <p><strong>Do not block backend completion on the following:</strong></p>
+    <ul>
+      <li><strong>Missing <code>/login</code> route:</strong> <code>ResetPasswordPage</code> (success) and <code>PasswordChangeForm</code> both link to <code>/login</code>. This route does not exist in <code>App.tsx</code>. It is owned by the frontend developer (AUTH-01 integration); the backend recovery flow is correct and returns 401 on success (no auto-login), so redirecting to <code>/login</code> is the expected SPA behavior.</li>
+      <li><strong>CSRF token lifetime:</strong> the SPA <code>api/auth.ts</code> bootstraps CSRF via <code>GET /config</code>. No changes to the backend are required; ensure the frontend sends the <code>X-CSRFToken</code> header on all headless POSTs.</li>
+      <li><strong>Reset key in URL params:</strong> the key must be passed as a path parameter (<code>/reset-password/:key</code>) and included in the request <em>body</em> (not query string) on the POST. The backend accepts <code>{"key", "password"}</code> JSON.</li>
+      <li><strong>401 success semantics:</strong> the reset-confirm endpoint returns HTTP 401 on success (not 200). The SPA <code>confirmPasswordReset</code> treats both 200 and 401 as success. Do not change this without updating the backend tests.</li>
+    </ul>
+
     <div class="callout">
       <h4>Navigation</h4>
       <p>
@@ -784,10 +861,10 @@
     <hr>
 
     <p style="font-size: 0.8rem; color: var(--color-text-muted);">
-      AUTH-02A &mdash; Account Recovery Contract &nbsp;|&nbsp;
+      AUTH-02A / AUTH-02C &mdash; Account Recovery Contract &nbsp;|&nbsp;
       Branch: <code>feat/account-recovery</code> &nbsp;|&nbsp;
-      HEAD: <code>cb2ab17</code> &nbsp;|&nbsp;
-      Evidence: <code>django-allauth==65.21.0</code> wheel source (PyPI); <code>feat/auth-foundation</code> @ <code>c35287d</code>; <code>docs/authentication-architecture.html</code>, <code>docs/integration-dependency-plan.html</code> (shared docs cited for context only; corrections recorded in §2.3 extended callout; INT-02 does not include AUTH-01 or CRUD implementation).
+      HEAD: <code>f19dc63</code> &nbsp;|&nbsp;
+      Evidence: <code>django-allauth==65.21.0</code> wheel source (PyPI); <code>django-allauth==65.21.0</code> installed in test venv; PostgreSQL 18 test run (366 tests, 2 skipped, 0 failures &mdash; AUTH-02C); <code>docs/authentication-architecture.html</code> (AUTH-03 acceptance criteria, §634&ndash;§651).
     </p>
 
   </main>

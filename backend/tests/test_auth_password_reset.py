@@ -19,8 +19,10 @@ from allauth.account.models import EmailAddress
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
+from django.test import Client
 from rest_framework.test import APIClient
 
+from apps.accounts.models import Organization, OrgMembership
 from tests.test_auth_signup_login import (
     HEADLESS_BASE,
     PASSWORD,
@@ -312,12 +314,121 @@ class RateLimitTests(AuthTestBase):
         super().setUp()
         cache.clear()
 
+    def test_rate_limit_configuration_matches_auth03_requirement(self):
+        """AUTH-03 acceptance: max 3 reset requests per hour per email,
+        while retaining the IP-level cap for DoS resistance."""
+        from django.conf import settings
+
+        rate = settings.ACCOUNT_RATE_LIMITS.get("reset_password", "")
+        self.assertIn("3/h/key", rate)
+        self.assertIn("20/m/ip", rate)
+
     def test_reset_request_is_rate_limited_per_email(self):
         _signup_verified(email=self.email)
         client = _fresh_client()
         results = []
-        for _ in range(7):
+        for _ in range(6):
             results.append(_request_reset(client, self.email).status_code)
-        # allauth default: reset_password = 20/m/ip, 5/m/key
-        self.assertEqual(results[:5], [200, 200, 200, 200, 200])
-        self.assertEqual(results[5], 429)
+        # AUTH-03: 3/h/key — 3 succeed, 4th is rate-limited.
+        self.assertEqual(results[:3], [200, 200, 200])
+        self.assertEqual(results[3], 429)
+
+
+class RecoveryCSRFTests(AuthTestBase):
+    """CSRF enforcement on the headless recovery endpoints.
+    The browser client must send X-CSRFToken on every POST (bootstrapped via
+    GET /config); without it the middleware rejects with 403."""
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.client, self.user = _signup_verified(email=self.email)
+
+    def test_reset_request_without_csrf_is_rejected(self):
+        client = Client(enforce_csrf_checks=True)
+        client.get(f"{HEADLESS_BASE}/config")
+        response = client.post(
+            RESET_REQUEST, {"email": self.email}, content_type="application/json"
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_reset_request_with_csrf_succeeds(self):
+        client = Client(enforce_csrf_checks=True)
+        resp = client.get(f"{HEADLESS_BASE}/config")
+        token = resp.cookies["csrftoken"].value
+        response = client.post(
+            RESET_REQUEST,
+            {"email": self.email},
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_password_change_without_csrf_is_rejected(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        client.get(f"{HEADLESS_BASE}/config")
+        response = client.post(
+            CHANGE_PASSWORD,
+            {"current_password": PASSWORD, "new_password": "New!2345"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+
+class RecoverySecurityTests(AuthTestBase):
+    """Additional security invariants not covered by the existing test classes."""
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.client, self.user = _signup_verified(email=self.email)
+
+    def test_weak_password_rejected_on_reset(self):
+        """AUTH_PASSWORD_VALIDATORS are enforced on the reset-confirm endpoint."""
+        client = _fresh_client()
+        _request_reset(client, self.email)
+        key = _extract_reset_key()
+        response = _confirm_reset(client, key, password="password")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("errors", response.json())
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.check_password("password"))
+
+    def test_reset_does_not_change_org_membership(self):
+        """Recovery must never alter organization membership or roles."""
+        org = Organization.objects.create(name="secure-org")
+        membership = OrgMembership.objects.create(
+            user=self.user, organization=org, role=OrgMembership.Role.ADMIN
+        )
+        client = _fresh_client()
+        _request_reset(client, self.email)
+        key = _extract_reset_key()
+        _confirm_reset(client, key, password="New!2345")
+        membership.refresh_from_db()
+        self.assertEqual(membership.role, OrgMembership.Role.ADMIN)
+        self.assertEqual(membership.organization, org)
+        self.assertEqual(OrgMembership.objects.count(), 1)
+
+    def test_reset_only_sends_notification_email(self):
+        """After reset, only the 'password was reset' notification is sent,
+        not a verification or second reset-key email."""
+        client = _fresh_client()
+        _request_reset(client, self.email)
+        key = _extract_reset_key()
+        mail.outbox.clear()
+        _confirm_reset(client, key, password="New!2345")
+        subjects = [m.subject for m in mail.outbox]
+        self.assertEqual(len(subjects), 1)
+        self.assertIn("password was reset", subjects[0])
+
+    def test_unknown_email_receives_unknown_account_email(self):
+        """An unknown email receives an enumeration-resistant notice, not a
+        reset link, but the HTTP response is indistinguishable from a known
+        email (200, no errors)."""
+        client = _fresh_client()
+        response = _request_reset(client, "never-registered@example.com")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertNotIn("/reset-password/", mail.outbox[0].body)
+        self.assertIn("password reset requested", mail.outbox[0].subject.lower())

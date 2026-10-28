@@ -39,4 +39,5 @@ HEADLESS_FRONTEND_URLS = {
 ACCOUNT_RATE_LIMITS = {
     "confirm_email": "5/10s/key",
     "signup": "100/m/ip",
+    "reset_password": "3/h/key,20/m/ip",
 }

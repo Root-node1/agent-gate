@@ -8,6 +8,7 @@ import DevelopersSection from './settings/DevelopersSection'
 import PaypalSection from './settings/PaypalSection'
 import TeamSection from './settings/TeamSection'
 import WorkspaceSection from './settings/WorkspaceSection'
+import PasswordChangeForm from '../auth/PasswordChangeForm'
 import { SETTINGS_TABS, defaultWorkspace, isSettingsTab, type SettingsTab } from './settings/settingsData'
 import './SettingsPage.css'
 
@@ -85,6 +86,7 @@ export default function SettingsPage() {
         {active === 'keys' && <ApiKeysSection state={state} loading={loading} />}
         {active === 'team' && <TeamSection state={state} loading={loading} />}
         {active === 'developers' && <DevelopersSection />}
+        {active === 'password' && <PasswordChangeForm />}
       </section>
     </div>
   )

@@ -24,9 +24,20 @@ else:
 # Capture outbound verification emails in memory so tests can inspect them.
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
+# Deterministic origin for password-reset links in test assertions.
+# HEADLESS_FRONTEND_URLS is built at import time in base.py from
+# FRONTEND_ORIGIN, so recompute it here so the override below takes effect.
+FRONTEND_ORIGIN = "https://app.test"
+HEADLESS_FRONTEND_URLS = {
+    "account_reset_password": f"{FRONTEND_ORIGIN}/forgot-password",
+    "account_reset_password_from_key": f"{FRONTEND_ORIGIN}/reset-password/{{key}}",
+    "account_signup": f"{FRONTEND_ORIGIN}/signup",
+}
+
 # Relax confirm_email rate limit so signup + immediate login doesn't hit it.
 # Relax signup rate limit for tests.
 ACCOUNT_RATE_LIMITS = {
     "confirm_email": "5/10s/key",
     "signup": "100/m/ip",
+    "reset_password": "3/h/key,20/m/ip",
 }

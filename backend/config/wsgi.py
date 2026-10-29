@@ -44,12 +44,13 @@ application = get_wsgi_application()
 # - No network-dependent checks at container startup.
 if not settings.DEBUG:
     from apps.accounts.checks import (
+        check_mfa_bypass_code,
         check_mfa_encryption_key,
         check_redis_cache_connection,
     )
 
     startup_errors = []
-    for check_func in [check_mfa_encryption_key, check_redis_cache_connection]:
+    for check_func in [check_mfa_encryption_key, check_mfa_bypass_code, check_redis_cache_connection]:
         errors = [e for e in check_func(None) if isinstance(e, Error)]
         startup_errors.extend(errors)
     if startup_errors:

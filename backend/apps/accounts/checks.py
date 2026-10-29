@@ -1,4 +1,4 @@
-"""Django system checks for MFA encryption-key validation (AUTH-05B.2D).
+"""Django system checks for MFA configuration (AUTH-05B.2D, AUTH-05B.6).
 
 Registered via ``apps/accounts/apps.py`` → ``ready()`` so it runs in every
 context that invokes the Django check framework:
@@ -8,10 +8,10 @@ context that invokes the Django check framework:
 - ``manage.py migrate``, ``manage.py test``, and other management commands
   that invoke ``check()``.
 
-In production (DEBUG=False) the check is also called **directly** from
+In production (``DEBUG=False``) the check is also called **directly** from
 ``config/wsgi.py`` / ``config/asgi.py`` (outside the ``run_checks()`` path)
-to guarantee fail-closed startup: a missing or malformed MFA encryption key
-raises ``SystemExit`` before the server accepts its first request.
+to guarantee fail-closed startup: an insecure MFA configuration raises
+``SystemExit`` before the server accepts its first request.
 
 Design notes
 ------------
@@ -159,5 +159,40 @@ def check_redis_cache_connection(app_configs, **kwargs):
         )
         errors.append(Error(msg, id="accounts.E005"))
         return errors
+
+    return errors
+
+
+@register()
+def check_mfa_bypass_code(app_configs, **kwargs):
+    """Reject ``MFA_TOTP_INSECURE_BYPASS_CODE`` in production (AUTH-05B.6).
+
+    The bypass code is a development/test convenience that allows any TOTP
+    code to validate successfully.  Enabling it in production defeats MFA
+    entirely, so:
+
+    - ``None`` and ``""`` are treated as *disabled* (no issue).
+    - Any other value &mdash; including falsey non-empty values such as
+      ``0`` or ``False`` &mdash; is treated as *configured* and triggers:
+      - Production (``DEBUG=False``): a blocking ``Error``.
+      - Development / test (``DEBUG=True``): a non-blocking ``Warning``.
+
+    No bypass-code value is ever echoed &mdash; only the setting *name*
+    (``label``) is included for operator reference.
+    """
+    from django.conf import settings
+
+    errors = []
+
+    bypass_code = getattr(settings, "MFA_TOTP_INSECURE_BYPASS_CODE", None)
+    if bypass_code is not None and bypass_code != "":
+        msg = (
+            "MFA_TOTP_INSECURE_BYPASS_CODE is configured but must not be "
+            "set in production.  Remove it from the environment immediately."
+        )
+        if settings.DEBUG:
+            errors.append(CheckWarning(msg, id="accounts.W002"))
+        else:
+            errors.append(Error(msg, id="accounts.E006"))
 
     return errors

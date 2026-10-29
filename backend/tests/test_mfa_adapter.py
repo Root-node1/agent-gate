@@ -23,7 +23,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, override_settings
 
 from apps.accounts.adapters import CustomMFAAdapter
-from apps.accounts.checks import check_mfa_encryption_key
+from apps.accounts.checks import check_mfa_bypass_code, check_mfa_encryption_key
 
 # Deterministic TEST-ONLY Fernet keys (44-char urlsafe base64 of 32 bytes).
 # Generated via Fernet.generate_key() — never use in production.
@@ -223,3 +223,79 @@ class MFAConfigCheckTests(SimpleTestCase):
         result = self._run_check(MFA_ENCRYPTION_KEY=leak, DEBUG=False)
         self.assertEqual(len(result), 1)
         self.assertNotIn(leak, str(result[0].msg))
+
+
+@override_settings(
+    MFA_ENCRYPTION_KEY=TEST_KEY_PRIMARY,
+    MFA_ENCRYPTION_PREVIOUS_KEYS=[],
+    MFA_TOTP_INSECURE_BYPASS_CODE=None,
+)
+class MFABypassCodeCheckTests(SimpleTestCase):
+    """AUTH-05B.6: system check rejects MFA_TOTP_INSECURE_BYPASS_CODE in production.
+
+    Production (DEBUG=False) blocks the bypass code with a blocking Error
+    (accounts.E006); development/test (DEBUG=True) emits a non-blocking
+    Warning (accounts.W002).  No bypass-code value is leaked in messages.
+    """
+
+    def _run_check(self, **overrides):
+        with override_settings(**overrides):
+            return check_mfa_bypass_code(None)
+
+    # --- Bypass code absent: check passes in all environments ---
+    def test_bypass_code_absent_passes_in_production(self):
+        self.assertEqual(self._run_check(DEBUG=False), [])
+
+    def test_bypass_code_absent_passes_in_development(self):
+        self.assertEqual(self._run_check(DEBUG=True), [])
+
+    # --- Bypass code configured: blocked in production ---
+    def test_bypass_code_error_in_production(self):
+        result = self._run_check(
+            MFA_TOTP_INSECURE_BYPASS_CODE="123456", DEBUG=False
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, "accounts.E006")
+
+    # --- Bypass code configured: warning in development ---
+    def test_bypass_code_warning_in_development(self):
+        result = self._run_check(
+            MFA_TOTP_INSECURE_BYPASS_CODE="123456", DEBUG=True
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, "accounts.W002")
+
+    # --- Empty string bypass code is treated as absent ---
+    def test_empty_bypass_code_is_absent_in_production(self):
+        result = self._run_check(
+            MFA_TOTP_INSECURE_BYPASS_CODE="", DEBUG=False
+        )
+        self.assertEqual(result, [])
+
+    # --- No bypass code value leaked in error messages ---
+    def test_error_message_does_not_leak_bypass_code_value(self):
+        leak = "super-secret-bypass-code-98765"
+        result = self._run_check(
+            MFA_TOTP_INSECURE_BYPASS_CODE=leak, DEBUG=False
+        )
+        self.assertEqual(len(result), 1)
+        self.assertNotIn(leak, str(result[0].msg))
+
+    # --- Falsey non-None/non-empty-string values are also rejected ---
+    # Do not rely solely on truthiness: 0, False, etc. are configured values.
+    def test_integer_zero_bypass_code_rejected_in_production(self):
+        result = self._run_check(MFA_TOTP_INSECURE_BYPASS_CODE=0, DEBUG=False)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, "accounts.E006")
+
+    def test_boolean_false_bypass_code_rejected_in_production(self):
+        result = self._run_check(
+            MFA_TOTP_INSECURE_BYPASS_CODE=False, DEBUG=False
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, "accounts.E006")
+
+    def test_integer_zero_bypass_code_warning_in_development(self):
+        result = self._run_check(MFA_TOTP_INSECURE_BYPASS_CODE=0, DEBUG=True)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, "accounts.W002")

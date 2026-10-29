@@ -21,9 +21,18 @@ application = get_asgi_application()
 # or invalid.  See config/wsgi.py for the full rationale — the same approach
 # avoids duplicate check execution (runserver's built-in check handles dev)
 # and fixes the silent-return bug where run_checks() errors were discarded.
+# AUTH-05B.4B.2: fail fast in production if Redis cache is missing or broken
+# See config/wsgi.py for the full rationale — the same approach
+# avoids duplicate check execution and fixes the silent-return bug.
 if not settings.DEBUG:
-    from apps.accounts.checks import check_mfa_encryption_key
+    from apps.accounts.checks import (
+        check_mfa_encryption_key,
+        check_redis_cache_connection,
+    )
 
-    startup_errors = [e for e in check_mfa_encryption_key(None) if isinstance(e, Error)]
+    startup_errors = []
+    for check_func in [check_mfa_encryption_key, check_redis_cache_connection]:
+        errors = [e for e in check_func(None) if isinstance(e, Error)]
+        startup_errors.extend(errors)
     if startup_errors:
         raise SystemExit(f"Startup system checks failed: {startup_errors}")

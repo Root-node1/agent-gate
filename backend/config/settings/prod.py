@@ -56,9 +56,21 @@ else:
 
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
 
+# Redis cache configuration for production.
+# Socket timeouts are set via OPTIONS only — this preserves any existing
+# query parameters in REDIS_URL and avoids conflicting timeout values
+# between the URL and OPTIONS.
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+if not REDIS_URL:
+    raise ImproperlyConfigured("REDIS_URL must be set in production.")
+
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
-        "LOCATION": "agentgate_cache",
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+        "OPTIONS": {
+            "socket_timeout": 5,
+            "socket_connect_timeout": 3,
+        },
     }
 }

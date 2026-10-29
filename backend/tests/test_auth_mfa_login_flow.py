@@ -6,6 +6,7 @@ mounting ``allauth.mfa.urls`` at ``/mfa/`` to resolve the previously failing
 """
 
 import time
+import uuid
 from http import HTTPStatus
 
 from allauth.mfa import app_settings as mfa_settings
@@ -22,6 +23,7 @@ from django.core.cache import cache
 from django.test.utils import override_settings
 from rest_framework.test import APITestCase
 
+from apps.accounts.models import Organization, OrgMembership
 from tests.test_auth_github_oauth import (
     GITHUB_TEST_PROVIDERS,
     GitHubOAuthTestMixin,
@@ -273,3 +275,98 @@ class OAuthMFAStageTests(GitHubOAuthTestMixin, APITestCase):
         self.assertIsNotNone(flow)
         self.assertTrue(flow["is_pending"])
         self.assertIn("totp", flow["types"])
+
+    def test_github_oauth_login_completes_mfa_and_grants_privileged_access(self):
+        """AUTH-05B.8C: GitHub OAuth MFA completion — full end-to-end.
+
+        A.  Existing GitHub OAuth account resolves to the intended MFA-enrolled user.
+        B.  OAuth callback enters pending MFA authentication.
+        C.  Before MFA completion: /auth/session=401, /api/auth/user/=401, privileged=401.
+        D.  Submit a valid TOTP code using the MFA authenticate endpoint.
+        E.  MFA completes and establishes an authenticated session.
+        F.  After MFA: /api/auth/user/=200 and privileged endpoint grants access.
+        G.  Authenticated identity matches the originally linked user.
+        """
+        cache.clear()
+        email = unique_email("oauth-mfa")
+
+        # --- First OAuth login: creates user and authenticates (no MFA yet) ---
+        state_id = self._start_redirect()
+        self._callback_with_github(state_id, email=email, verified=True)
+
+        sess = self.client.get(f"{HEADLESS_BASE}/auth/session")
+        self.assertEqual(sess.status_code, HTTPStatus.OK)
+        self.assertTrue(sess.json()["meta"]["is_authenticated"])
+
+        # --- Enroll TOTP directly (OAuth users have no usable password).
+        #     Assign ADMIN role + org membership for privileged endpoint. ---
+        user = User.objects.get(email=email)
+        secret = generate_totp_secret()
+        adapter = get_mfa_adapter()
+        Authenticator.objects.create(
+            user=user,
+            type=Authenticator.Type.TOTP,
+            data={"secret": adapter.encrypt(secret)},
+        )
+        org = Organization.objects.create(
+            name=f"oauth-mfa-{uuid.uuid4().hex[:6]}"
+        )
+        OrgMembership.objects.create(
+            user=user, organization=org, role=OrgMembership.Role.ADMIN
+        )
+        original_user_pk = user.pk
+        headless_logout(self.client)
+
+        # --- A + B: Second OAuth login resolves to the same MFA-enrolled user
+        #           and enters the pending MFA stage. ---
+        state_id2 = self._start_redirect()
+        response = self._callback_with_github(state_id2, email=email, verified=True)
+        self.assertEqual(response.status_code, HTTPStatus.FOUND)
+
+        # A. Resolves to the same user (no new user created).
+        self.assertEqual(User.objects.filter(email=email).count(), 1)
+        self.assertEqual(User.objects.get(email=email).pk, original_user_pk)
+
+        # B. OAuth callback enters pending MFA authentication.
+        sess = self.client.get(f"{HEADLESS_BASE}/auth/session")
+        self.assertEqual(sess.status_code, HTTPStatus.UNAUTHORIZED)
+        self.assertFalse(sess.json()["meta"]["is_authenticated"])
+        flow = _pending_mfa_flow(sess)
+        self.assertIsNotNone(flow, "expected a pending mfa_authenticate flow")
+        self.assertTrue(flow["is_pending"])
+        self.assertIn("totp", flow["types"])
+
+        # C. Before MFA completion, privileged endpoints return 401.
+        self.assertEqual(
+            self.client.get("/api/auth/user/").status_code,
+            HTTPStatus.UNAUTHORIZED,
+        )
+        self.assertEqual(
+            self.client.get("/v1/audit/verify/").status_code,
+            HTTPStatus.UNAUTHORIZED,
+        )
+
+        # D. Submit a valid TOTP code via the MFA authenticate endpoint.
+        mfa_resp = self.client.post(
+            MFA_AUTHENTICATE,
+            {"code": _compute_totp(secret)},
+            format="json",
+        )
+        # E. MFA completes successfully and establishes an authenticated session.
+        self.assertEqual(mfa_resp.status_code, HTTPStatus.OK)
+        self.assertTrue(mfa_resp.json()["meta"]["is_authenticated"])
+
+        # F. After MFA completion: /api/auth/user/ returns 200, and the
+        #    privileged endpoint (requires IsOrganizationAdmin) grants access.
+        self.assertEqual(
+            self.client.get("/api/auth/user/").status_code,
+            HTTPStatus.OK,
+        )
+        self.assertEqual(
+            self.client.get("/v1/audit/verify/").status_code,
+            HTTPStatus.OK,
+        )
+
+        # G. Authenticated identity matches the originally linked user.
+        user_body = self.client.get("/api/auth/user/").json()
+        self.assertEqual(user_body["email"], email)

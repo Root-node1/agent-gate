@@ -20,6 +20,7 @@ from allauth.mfa.totp.internal.auth import (
 )
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 from apps.accounts.adapters import CustomMFAAdapter
@@ -90,6 +91,7 @@ class TOTPEnrollmentTests(AuthTestBase):
 
     def setUp(self):
         super().setUp()
+        cache.clear()
         self.user = self._signup_and_verify()
         headless_logout(self.client)
         headless_login(self.client, email=self.email)
@@ -98,6 +100,10 @@ class TOTPEnrollmentTests(AuthTestBase):
             {"password": PASSWORD},
             format="json",
         )
+
+    def tearDown(self):
+        cache.clear()
+        super().tearDown()
 
     def test_user_is_authenticated(self):
         self.assertEqual(self.client.get("/api/auth/user/").status_code, 200)
@@ -160,6 +166,7 @@ class MFAEncryptionPersistenceTests(AuthTestBase):
 
     def setUp(self):
         super().setUp()
+        cache.clear()
         self.user = self._signup_and_verify()
         headless_logout(self.client)
         headless_login(self.client, email=self.email)
@@ -169,6 +176,10 @@ class MFAEncryptionPersistenceTests(AuthTestBase):
             format="json",
         )
         self._totp_secret = self._enroll_totp()
+
+    def tearDown(self):
+        cache.clear()
+        super().tearDown()
 
     def _enroll_totp(self):
         """Enroll TOTP and return the plaintext secret for code computation."""
@@ -395,6 +406,7 @@ class RecoveryCodeShowOnceTests(AuthTestBase):
 
     def setUp(self):
         super().setUp()
+        cache.clear()
         self.user = self._signup_and_verify()
         headless_logout(self.client)
         headless_login(self.client, email=self.email)
@@ -406,6 +418,10 @@ class RecoveryCodeShowOnceTests(AuthTestBase):
             format="json",
         )
         self._enroll_totp()
+
+    def tearDown(self):
+        cache.clear()
+        super().tearDown()
 
     # -- helpers (same pattern as MFAEncryptionPersistenceTests) --
 

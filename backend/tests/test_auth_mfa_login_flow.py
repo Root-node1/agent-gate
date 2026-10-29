@@ -18,6 +18,7 @@ from allauth.mfa.totp.internal.auth import (
     validate_totp_code,
 )
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test.utils import override_settings
 from rest_framework.test import APITestCase
 
@@ -46,6 +47,11 @@ def _pending_mfa_flow(response):
     return next((f for f in flows if f["id"] == "mfa_authenticate"), None)
 
 
+def _error_codes(response):
+    """Return the list of failure ``code`` values in a headless error response."""
+    return [error.get("code") for error in response.json().get("errors", [])]
+
+
 def _compute_totp(secret):
     counter = int(time.time()) // mfa_settings.TOTP_PERIOD
     code = format_hotp_value(hotp_value(secret, counter))
@@ -61,12 +67,17 @@ class MFAHeadlessLoginFlowTests(AuthTestBase):
 
     def setUp(self):
         super().setUp()
+        cache.clear()
         self.user = self._signup_and_verify()
         headless_logout(self.client)
         headless_login(self.client, email=self.email)
         self.client.post(MFA_REAUTHENTICATE, {"password": PASSWORD}, format="json")
         self.totp_secret = self._enroll_totp()
         headless_logout(self.client)
+
+    def tearDown(self):
+        cache.clear()
+        super().tearDown()
 
     def _enroll_totp(self):
         response = self.client.get(TOTP_MANAGE)
@@ -75,6 +86,24 @@ class MFAHeadlessLoginFlowTests(AuthTestBase):
         response = self.client.post(TOTP_MANAGE, {"code": code}, format="json")
         self.assertEqual(response.status_code, HTTPStatus.OK)
         return secret
+
+    def _unused_recovery_codes(self):
+        rc_auth = Authenticator.objects.get(
+            user=self.user, type=Authenticator.Type.RECOVERY_CODES
+        )
+        return rc_auth.wrap().get_unused_codes()
+
+    def _enter_mfa_stage(self):
+        headless_logout(self.client)
+        response = headless_login(self.client, email=self.email)
+        self.assertEqual(response.status_code, HTTPStatus.UNAUTHORIZED)
+        self.assertFalse(response.json()["meta"]["is_authenticated"])
+        flow = _pending_mfa_flow(response)
+        self.assertIsNotNone(flow, "expected a pending mfa_authenticate flow")
+        self.assertTrue(flow["is_pending"])
+
+    def _submit_mfa_code(self, code):
+        return self.client.post(MFA_AUTHENTICATE, {"code": code}, format="json")
 
     # ------------------------------------------------------------------
     # 1. Password login with an enrolled TOTP authenticator enters the
@@ -144,6 +173,57 @@ class MFAHeadlessLoginFlowTests(AuthTestBase):
         headless_login(self.client, email=self.email)
 
         response = self.client.post(MFA_AUTHENTICATE, {"code": code}, format="json")
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+        self.assertTrue(response.json()["meta"]["is_authenticated"])
+
+    def test_consumed_recovery_code_cannot_be_reused(self):
+        """AUTH-05B.7C: a recovery code consumed during MFA login is single-use.
+
+        allauth persists recovery-code consumption via the authenticator's
+        ``used_mask`` in the database (``RecoveryCodes._mark_code_used``).  This
+        test exercises that contract end-to-end over the headless MFA
+        authenticate endpoint and proves the same code cannot be replayed in a
+        subsequent challenge.
+        """
+        codes = self._unused_recovery_codes()
+        self.assertGreaterEqual(
+            len(codes), 2, "need at least two unused recovery codes"
+        )
+        code = codes[0]
+        other_code = codes[1]
+
+        # (1) A fresh recovery code successfully completes an MFA login challenge.
+        self._enter_mfa_stage()
+        response = self._submit_mfa_code(code)
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+        self.assertTrue(response.json()["meta"]["is_authenticated"])
+
+        # Consumption is persisted in the DB (used_mask), not in the rate-limit
+        # cache: re-querying reveals the code as consumed.
+        self.assertNotIn(code, self._unused_recovery_codes())
+
+        # (2) The same recovery code is rejected in a *new* MFA login challenge.
+        self._enter_mfa_stage()
+
+        # (3) Clear the shared rate-limit bucket so any rejection here can only
+        #     stem from code consumption (DB persisted), not from rate limiting.
+        #     Sessions are DB-backed, so the pending MFA challenge is untouched.
+        cache.clear()
+        response = self._submit_mfa_code(code)
+
+        self.assertNotEqual(response.status_code, HTTPStatus.OK)
+        self.assertIn("incorrect_code", _error_codes(response))
+        self.assertNotIn("too_many_login_attempts", _error_codes(response))
+        self.assertNotEqual(response.status_code, HTTPStatus.TOO_MANY_REQUESTS)
+        self.assertEqual(
+            self.client.get("/api/auth/user/").status_code,
+            HTTPStatus.UNAUTHORIZED,
+            "replaying a consumed recovery code must not authenticate the user",
+        )
+
+        # (4) Another (still unused) recovery code remains valid.
+        self._enter_mfa_stage()
+        response = self._submit_mfa_code(other_code)
         self.assertEqual(response.status_code, HTTPStatus.OK)
         self.assertTrue(response.json()["meta"]["is_authenticated"])
 

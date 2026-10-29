@@ -1,10 +1,12 @@
 asgiref==3.12.1
 attrs==26.1.0
 click==8.5.0
+cryptography==50.0.2
 Django==6.1.2
 django-allauth==65.21.0
 djangorestframework==3.18.3
 drf-spectacular==0.30.0
+fido2==2.2.1
 grimp==3.17
 import-linter==2.15
 inflection==0.5.1

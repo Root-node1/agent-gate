@@ -1,5 +1,6 @@
 from allauth.account import urls as allauth_account_urls
 from allauth.headless import urls as allauth_headless_urls
+from allauth.mfa import urls as allauth_mfa_urls
 from allauth.socialaccount import urls as allauth_socialaccount_urls
 from allauth.socialaccount.providers.github import urls as github_urls
 from django.conf import settings
@@ -58,6 +59,7 @@ urlpatterns = [
     path("accounts/", include(allauth_patterns)),
     path("accounts/", include(github_urls)),
     path("3rdparty/", include(allauth_socialaccount_urls)),
+    path("mfa/", include(allauth_mfa_urls)),
     path("api/auth/headless/", include(headless_patterns)),
     path("api/auth/", include("apps.accounts.urls")),
     path("v1/", include("apps.spend.urls")),

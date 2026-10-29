@@ -97,9 +97,12 @@ def _make_mock_session(github_id=12345678, email="user@example.com", verified=Tr
     return mock_session
 
 
-@override_settings(SOCIALACCOUNT_PROVIDERS=GITHUB_TEST_PROVIDERS)
-class GitHubOAuthTests(APITestCase):
-    """All 12 test cases from docs/github-oauth-contract.html §13."""
+class GitHubOAuthTestMixin:
+    """Shared helpers for GitHub OAuth headless-flow tests.
+
+    Not a ``TestCase`` &mdash; import this mixin (not ``GitHubOAuthTests``)
+    from other test modules to avoid duplicate test discovery.
+    """
 
     def setUp(self):
         super().setUp()
@@ -140,6 +143,11 @@ class GitHubOAuthTests(APITestCase):
         ):
             response = self._do_callback(state_id)
         return response
+
+
+@override_settings(SOCIALACCOUNT_PROVIDERS=GITHUB_TEST_PROVIDERS)
+class GitHubOAuthTests(GitHubOAuthTestMixin, APITestCase):
+    """All 12 test cases from docs/github-oauth-contract.html §13."""
 
     # ------------------------------------------------------------------
     # T01 — Successful verified-email GitHub authentication

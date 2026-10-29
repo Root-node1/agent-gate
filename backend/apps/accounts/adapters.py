@@ -3,10 +3,13 @@
 import logging
 
 from allauth.account.adapter import DefaultAccountAdapter
+from allauth.mfa.adapter import DefaultMFAAdapter
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import HttpRequest
+
+from .mfa_crypto import get_mfa_fernet
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +78,7 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
                     "GitHub social login rejected: domain %r not in allowlist",
                     domain,
                 )
-                raise PermissionDenied(
-                    "Email domain is not allowed for signups."
-                )
+                raise PermissionDenied("Email domain is not allowed for signups.")
 
     def _get_sociallogin_email(self, sociallogin) -> str | None:
         """Return the first non-empty email from any source on the sociallogin."""
@@ -89,7 +90,9 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         if sociallogin.email_addresses:
             return sociallogin.email_addresses[0].email
 
-    def on_authentication_error(self, request, provider, error=None, exception=None, extra_context=None):
+    def on_authentication_error(
+        self, request, provider, error=None, exception=None, extra_context=None
+    ):
         """Log provider/auth errors server-side for ops visibility.
 
         Does NOT raise ``ImmediateHttpResponse`` &mdash; defers to allauth&rsquo;s
@@ -103,3 +106,36 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
             exception,
         )
 
+
+class CustomMFAAdapter(DefaultMFAAdapter):
+    """At-rest encryption for MFA secrets (TOTP keys and recovery-code seeds).
+
+    Overrides ``encrypt()`` / ``decrypt()`` with Fernet (AES-256-CBC +
+    HMAC-SHA256) backed by ``MFA_ENCRYPTION_KEY`` (primary) and
+    ``MFA_ENCRYPTION_PREVIOUS_KEYS`` (rotation).  See
+    docs/totp-2fa-contract.html &sect;4.3 and &sect;5.5.
+
+    Both TOTP secrets and recovery-code seeds flow through these methods
+    (allauth calls ``encrypt(secret)`` in totp/internal/auth.py:96 and
+    ``encrypt(seed)`` in recovery_codes/internal/auth.py:32), so a single
+    override secures both authenticator types.
+
+    Security guarantees
+    -------------------
+    * If the MFA encryption key is absent or invalid
+      (``ImproperlyConfigured``), enrollment (``encrypt``) and login
+      (``decrypt``) **fail closed**: no secret is persisted and no stored
+      secret can be read.
+    * Malformed or tampered ciphertext raises
+      ``cryptography.fernet.InvalidToken`` &mdash; it is never silently
+      treated as valid.
+    * Keys or plaintext secrets are never logged.
+    """
+
+    def encrypt(self, text: str) -> str:
+        fernet = get_mfa_fernet()
+        return fernet.encrypt(text.encode()).decode()
+
+    def decrypt(self, encrypted_text: str) -> str:
+        fernet = get_mfa_fernet()
+        return fernet.decrypt(encrypted_text.encode()).decode()

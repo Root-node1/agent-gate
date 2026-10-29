@@ -24,6 +24,11 @@ else:
 # Capture outbound verification emails in memory so tests can inspect them.
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
+# AUTH-05B.2: deterministic TEST-ONLY Fernet key for MFA secret encryption.
+# Never use this key in production.  Generated via Fernet.generate_key().
+MFA_ENCRYPTION_KEY = "QG92N9nkDu9c2Nh3TjwTBLTpPFozP20BQl2dwhAmsNM="
+MFA_ENCRYPTION_PREVIOUS_KEYS = []
+
 # Deterministic origin for password-reset links in test assertions.
 # HEADLESS_FRONTEND_URLS is built at import time in base.py from
 # FRONTEND_ORIGIN, so recompute it here so the override below takes effect.

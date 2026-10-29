@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "allauth.socialaccount",
     "allauth.socialaccount.providers.github",
     "allauth.headless",
+    "allauth.mfa",
     "apps.accounts",
     "apps.agents",
     "apps.policies",
@@ -252,3 +253,37 @@ HEADLESS_FRONTEND_URLS = {
 DEFAULT_FROM_EMAIL = os.environ.get(
     "DEFAULT_FROM_EMAIL", "AgentGate <no-reply@example.com>"
 )
+
+# AUTH-05B.1 MFA configuration (django-allauth 65.21.0 built-in MFA module).
+# Setting names verified against allauth/mfa/app_settings.py (AppSettings("MFA_")).
+# There is no MFA_ENABLED toggle: allauth enables MFA purely by the presence of
+# "allauth.mfa" in INSTALLED_APPS (allauth/app_settings.py:37 MFA_ENABLED property).
+#
+# MFA_ADAPTER points at the temporary CustomMFAAdapter in apps.accounts.adapters.
+# That adapter blocks TOTP enrollment and recovery-code generation until
+# AUTH-05B.2 implements Fernet at-rest encryption of TOTP secrets and
+# recovery-code seeds. Do NOT remove MFA_ADAPTER here without replacing the
+# adapter with an encrypting one first.
+MFA_ADAPTER = "apps.accounts.adapters.CustomMFAAdapter"
+MFA_TRUST_ENABLED = False
+MFA_TOTP_TOLERANCE = 0
+MFA_RECOVERY_CODES_SHOW_ONCE = True
+MFA_TOTP_ISSUER = "AgentGate"
+MFA_SUPPORTED_TYPES = ["totp", "recovery_codes"]
+
+# AUTH-05B.2: Fernet at-rest encryption for MFA secrets (TOTP keys and
+# recovery-code seeds).  Independent of DJANGO_SECRET_KEY &mdash; rotating the
+# Django secret (run.sh rotates it on every deploy) invalidates sessions but
+# must NOT invalidate MFA enrollment.  See docs/totp-2fa-contract.html §5.5.
+# MFA_ENCRYPTION_KEY: primary urlsafe-base64 Fernet key (e.g.
+#   Fernet.generate_key().decode()).  New ciphertext is always produced under
+#   this key.
+# MFA_ENCRYPTION_PREVIOUS_KEYS: comma-separated list of older keys authorized
+#   for decryption-only rotation via MultiFernet.
+# Never derived from DJANGO_SECRET_KEY, never logged (see apps/accounts/mfa_crypto.py).
+MFA_ENCRYPTION_KEY = os.environ.get("MFA_ENCRYPTION_KEY", "")
+MFA_ENCRYPTION_PREVIOUS_KEYS = [
+    k.strip()
+    for k in os.environ.get("MFA_ENCRYPTION_PREVIOUS_KEYS", "").split(",")
+    if k.strip()
+]

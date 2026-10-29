@@ -1,10 +1,15 @@
 """Settings shared by every environment."""
 
+import copy
+import json
+import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
 
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.log import DEFAULT_LOGGING
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -287,3 +292,58 @@ MFA_ENCRYPTION_PREVIOUS_KEYS = [
     for k in os.environ.get("MFA_ENCRYPTION_PREVIOUS_KEYS", "").split(",")
     if k.strip()
 ]
+
+# ---------------------------------------------------------------------------
+# AUTH-05B.9C.1: Account-security audit logger
+# ---------------------------------------------------------------------------
+# A narrowly scoped, privacy-safe logger for account-security events.
+# The configuration below *extends* Django's DEFAULT_LOGGING (imported above)
+# so that all existing application logging is fully preserved.
+#
+# Requirements:
+#   - INFO minimum level, StreamHandler writing to stderr
+#   - Structured single-line JSON, one record per line, UTC timestamp
+#   - No automatic request-body / header / cookie / exception serialization
+#   - propagate = False  (no duplicate emission via root logger)
+
+
+class _SecurityJsonFormatter(logging.Formatter):
+    """Render a log record as a single-line JSON object with a UTC timestamp.
+
+    Unlike the default ``logging.Formatter``, :meth:`format` does **not**
+    delegate to ``super().format``, so exception tracebacks and any
+    ``extra`` payload are never automatically serialized into the output.
+    Only a fixed, privacy-safe set of fields is produced.
+    """
+
+    def format(self, record):
+        payload = {
+            "timestamp": datetime.fromtimestamp(
+                record.created, tz=timezone.utc
+            ).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        return json.dumps(payload, default=str)
+
+
+_LOGGING = copy.deepcopy(DEFAULT_LOGGING)
+
+_LOGGING["formatters"]["security_json"] = {
+    "()": "config.settings.base._SecurityJsonFormatter",
+}
+
+_LOGGING["handlers"]["security"] = {
+    "level": "INFO",
+    "class": "logging.StreamHandler",
+    "formatter": "security_json",
+}
+
+_LOGGING["loggers"]["agentgate.security"] = {
+    "handlers": ["security"],
+    "level": "INFO",
+    "propagate": False,
+}
+
+LOGGING = _LOGGING

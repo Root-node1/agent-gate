@@ -6,4 +6,7 @@ class AccountsConfig(AppConfig):
     name = "apps.accounts"
 
     def ready(self):
-        from . import checks  # noqa: F401  — registers system checks
+        from . import (  # noqa: F401
+            checks,  # registers system checks
+            signals,  # registers MFA security-event handlers
+        )

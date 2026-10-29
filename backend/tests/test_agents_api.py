@@ -4,6 +4,7 @@ from apps.accounts.models import Organization, OrgMembership, User
 from apps.agents.models import Agent, ApiKey
 from apps.audit.models import AuditEvent
 from apps.policies.models import Policy
+from tests.base import force_mfa
 
 
 class AgentApiTestBase(APITestCase):
@@ -16,6 +17,7 @@ class AgentApiTestBase(APITestCase):
         OrgMembership.objects.create(
             user=self.admin, organization=self.organization, role=OrgMembership.Role.ADMIN
         )
+        force_mfa(self.admin)
 
         self.viewer = User.objects.create_user("viewer")
         OrgMembership.objects.create(
@@ -27,6 +29,7 @@ class AgentApiTestBase(APITestCase):
         OrgMembership.objects.create(
             user=self.other_admin, organization=self.other_org, role=OrgMembership.Role.ADMIN
         )
+        force_mfa(self.other_admin)
         self.other_agent, _ = Agent.create_with_key("foreign-agent", self.other_org)
 
         self.client.force_authenticate(user=self.admin)

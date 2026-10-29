@@ -10,7 +10,7 @@ from apps.audit.models import AuditEvent
 from apps.policies.models import MerchantRule, Policy
 from apps.policies.serializers import PolicyUpdateSerializer
 from apps.policies.services import PolicyConflictError, create_policy_update
-from tests.base import PostgresTransactionTestCase
+from tests.base import PostgresTransactionTestCase, force_mfa
 
 
 class PolicyPatchTestBase(APITestCase):
@@ -29,6 +29,7 @@ class PolicyPatchTestBase(APITestCase):
         OrgMembership.objects.create(
             user=self.admin, organization=self.organization, role=OrgMembership.Role.ADMIN
         )
+        force_mfa(self.admin)
 
         self.viewer = User.objects.create_user("viewer")
         OrgMembership.objects.create(
@@ -40,6 +41,7 @@ class PolicyPatchTestBase(APITestCase):
         OrgMembership.objects.create(
             user=self.other_admin, organization=self.other_org, role=OrgMembership.Role.ADMIN
         )
+        force_mfa(self.other_admin)
         self.other_agent, _ = Agent.create_with_key("foreign-agent", self.other_org)
 
         self.client.force_authenticate(user=self.admin)

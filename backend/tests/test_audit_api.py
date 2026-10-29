@@ -7,6 +7,7 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import Organization, OrgMembership, User
 from apps.audit.models import AuditEvent
+from tests.base import force_mfa
 
 
 class AuditApiTests(APITestCase):
@@ -15,6 +16,7 @@ class AuditApiTests(APITestCase):
         self.other = Organization.objects.create(name="other")
         self.viewer = self.member("viewer", OrgMembership.Role.VIEWER)
         self.admin = self.member("admin", OrgMembership.Role.ADMIN)
+        force_mfa(self.admin)
         self.event = AuditEvent.record(
             AuditEvent.EventType.DECISION_MADE, organization=self.organization, amount="10.00"
         )

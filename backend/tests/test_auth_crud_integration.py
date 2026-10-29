@@ -17,6 +17,7 @@ from rest_framework.test import APIClient, APITestCase
 from apps.accounts.models import Organization, OrgMembership
 from apps.agents.models import Agent
 from apps.audit.models import AuditEvent
+from tests.base import force_mfa
 
 User = get_user_model()
 
@@ -124,6 +125,7 @@ class AuthCrudIntegrationTest(APITestCase, _SignupMixin):
 
         # 1-3. Signup, email verification, login
         user, _ = self._full_signup_flow(client, self.email)
+        force_mfa(user)
 
         # Verify dashboard session
         user_resp = client.get("/api/auth/user/")
@@ -249,6 +251,7 @@ class CrossModulePermissionTests(APITestCase, _SignupMixin):
         mail.outbox.clear()
         self.client = APIClient()
         self.user, self.email = self._full_signup_flow(self.client)
+        force_mfa(self.user)
 
         org = Organization.objects.create(name="perm-org")
         OrgMembership.objects.create(
@@ -293,6 +296,7 @@ class CrossModulePermissionTests(APITestCase, _SignupMixin):
         """Admin of org B must be rejected (400) when targeting an agent in org A."""
         foreign_client = APIClient()
         f_user, _f_email = self._full_signup_flow(foreign_client)
+        force_mfa(f_user)
         f_org = Organization.objects.create(name="foreign-org")
         OrgMembership.objects.create(
             user=f_user, organization=f_org, role=OrgMembership.Role.ADMIN
@@ -314,6 +318,7 @@ class CrossModuleCsrfTests(APITestCase, _SignupMixin):
         mail.outbox.clear()
         self.client = APIClient()
         self.user, _ = self._full_signup_flow(self.client)
+        force_mfa(self.user)
         org = Organization.objects.create(name="csrf-org")
         OrgMembership.objects.create(
             user=self.user, organization=org, role=OrgMembership.Role.ADMIN

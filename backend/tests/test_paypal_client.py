@@ -265,7 +265,7 @@ class PayPalClientSecurityTests(SimpleTestCase):
         for bad in [
             "https://api.paypal.com",
             "https://api-m.paypal.com",
-            "http://api.sandbox.paypal.com",
+            "http://api-m.sandbox.paypal.com",
             "https://example.com",
         ]:
             with self.subTest(base_url=bad):

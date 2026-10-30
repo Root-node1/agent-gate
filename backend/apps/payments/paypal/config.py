@@ -17,7 +17,7 @@ from dataclasses import dataclass
 SUPPORTED_ENVIRONMENTS = ("sandbox",)
 
 #: PayPal sandbox REST API base URL.
-SANDBOX_API_BASE_URL = "https://api.sandbox.paypal.com"
+SANDBOX_API_BASE_URL = "https://api-m.sandbox.paypal.com"
 
 #: PayPal sandbox web login base URL (for redirect-based checkout).
 SANDBOX_WEB_BASE_URL = "https://www.sandbox.paypal.com"

@@ -6,7 +6,7 @@ and an injectable HTTP session for offline testing.
 
 Security posture
 ----------------
-- Sandbox origin only (``api.sandbox.paypal.com``). Production hosts
+- Sandbox origin only (``api-m.sandbox.paypal.com``). Production hosts
   (``api.paypal.com`` / ``api-m.paypal.com`` / ``paypal.com``) are rejected.
 - API paths are relative; absolute URLs and parent-directory traversal are refused.
 - Redirects are never followed; redirect responses raise.
@@ -17,7 +17,7 @@ Security posture
 
 Verified against PayPal's official REST API documentation:
 - Token endpoint: ``POST https://api-m.sandbox.paypal.com/v1/oauth2/token``
-  (the codebase contract pins the ``api.sandbox.paypal.com`` host; see
+  (the codebase contract pins the ``api-m.sandbox.paypal.com`` host; see
   ``apps.payments.paypal.config.SANDBOX_API_BASE_URL``).
 - Authentication: HTTP Basic ``Base64(client_id:client_secret)``.
 - Body: ``grant_type=client_credentials`` (form-urlencoded).

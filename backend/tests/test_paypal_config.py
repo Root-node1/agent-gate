@@ -208,7 +208,7 @@ class PayPalSandboxURLTests(SimpleTestCase):
     """7. Sandbox URL invariant."""
 
     def test_api_base_url_is_sandbox(self):
-        self.assertEqual(SANDBOX_API_BASE_URL, "https://api.sandbox.paypal.com")
+        self.assertEqual(SANDBOX_API_BASE_URL, "https://api-m.sandbox.paypal.com")
 
     def test_web_base_url_is_sandbox(self):
         self.assertEqual(SANDBOX_WEB_BASE_URL, "https://www.sandbox.paypal.com")

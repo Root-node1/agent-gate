@@ -126,6 +126,91 @@ Procrastinate's `SELECT FOR UPDATE` inside the worker conflicts with
 Django's transactional test isolation. If the `TEST_DATABASE_URL` is unset,
 tests run on SQLite and the PostgreSQL-dependent tests are skipped.
 
+### Periodic approval expiration
+
+The `expire_approvals_periodic` task (`apps/background/tasks.py`) expires
+overdue pending approvals on a ~60-second schedule. It delegates to the
+existing, idempotent `apps.approvals.services.expire_due`, preserving its
+`limit=1000` and row-level (`SELECT FOR UPDATE`) locking:
+
+```python
+@app.periodic(cron="*/1 * * * *", periodic_id="approval_expiry")
+@app.task(
+    queue="approvals",
+    retry=RetryStrategy(max_attempts=3, wait=1),
+    queueing_lock="approval_expiry",
+)
+def expire_approvals_periodic(timestamp: int) -> int:
+    from apps.approvals.services import expire_due
+    return expire_due()
+```
+
+The worker owns scheduling, not cron: each worker defers periodic occurrences
+keyed by `periodic_id` + `defer_timestamp`, and the database deduplicates them,
+so the same scheduled occurrence is deferred at most once even with multiple
+workers.
+
+#### Scheduling safety
+
+- **No duplicate occurrences**: `defer_periodic_job` returns `NULL` (via
+  `ON CONFLICT DO NOTHING` on the `procrastinate_periodic_defers` unique
+  constraint on `(periodic_id, defer_timestamp)`) when a timestamp was already
+  deferred — it does not raise. `AlreadyEnqueued` is raised separately by the
+  `queueing_lock` unique index (see next bullet). In-worker `last_defers`
+  tracking plus a 10-minute lateness cutoff (`procrastinate.periodic.MAX_DELAY`)
+  prevent catch-up storms after an outage.
+- **No duplicate transitions / audit events**: `expire_due` re-checks
+  `outcome == PENDING` and `expires_at <= now` under row locks before
+  transitioning and records a single `APPROVAL_EXPIRED` audit event per
+  approval within the same transaction. Retries and re-runs are no-ops.
+- **No queued backlog**: `queueing_lock="approval_expiry"` maps to the unique
+  index `procrastinate_jobs_queueing_lock_idx_v1` on `(queueing_lock) WHERE
+  status = 'todo'`, so a second expiry job cannot be enqueued while one is still
+  queued. The lock is released the moment a job is fetched (status `todo` →
+  `doing`), so the next scheduled occurrence can be enqueued and run naturally
+  without gaps. With the recommended worker (concurrency 1) only one run is
+  in-flight at a time.
+- **Retries**: `max_attempts=3` permits the initial execution plus up to 3
+  retries (4 total executions before the job is marked `failed`), with a 1s
+  constant backoff (`wait=1`). Because `retry_exceptions` is unset, every
+  exception type is retried — safe here because `expire_due` is idempotent and
+  has no payment or webhook side effects. When `attempts` reaches
+  `max_attempts`, no further retry is scheduled and the job is marked
+  `failed`, remaining observable in `procrastinate_jobs` / `procrastinate_events`
+  (see Failed-job inspection).
+
+Run the worker on the `approvals` queue:
+
+```bash
+python manage.py procrastinate worker -q approvals \
+  --listen-notify --delete-jobs=SUCCESSFUL
+```
+
+#### Cron coexistence
+
+A legacy `* * * * * .../manage.py expire_approvals` cron may already be
+deployed. Running it concurrently with the periodic task is harmless (both call
+the idempotent `expire_due`), but to avoid duplicate work, disable the cron
+*before* relying on the periodic task in production:
+
+1. Start the worker on the `approvals` queue and confirm the periodic task
+   registered (startup log `Registering task ... with periodic id 'approval_expiry'`,
+   or via the shell: `python manage.py procrastinate shell` then `list_tasks`).
+2. Confirm the worker has deferred at least one occurrence:
+
+   ```sql
+   SELECT count(*) FROM procrastinate_jobs
+   WHERE task_name = 'apps.background.tasks.expire_approvals_periodic';
+   ```
+
+3. On the host, remove or comment out the `* * * * * ... expire_approvals`
+   crontab entry (`crontab -e`) and disable the systemd timer that invokes the
+   command, if any.
+4. Leave the cron in place until step 2 is confirmed — until then the cron
+   remains the active scheduler.
+
+This change does not modify any production cron schedule.
+
 ### Failed-job inspection
 
 List failed jobs via the Procrastinate shell:

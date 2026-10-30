@@ -179,7 +179,9 @@ class SmokeTaskExecutionTests(PostgresTransactionTestCase):
         smoke_test.defer(message="once")
         self._run_worker()
 
-        todo_count = ProcrastinateJob.objects.filter(status="todo").count()
+        todo_count = ProcrastinateJob.objects.filter(
+            status="todo", queue_name="smoke"
+        ).count()
         self.assertEqual(todo_count, 0)
 
         self._run_worker()

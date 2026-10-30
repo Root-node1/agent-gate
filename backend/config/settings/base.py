@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "drf_spectacular",
+    "procrastinate.contrib.django",
     "allauth.account",
     "allauth.socialaccount",
     "allauth.socialaccount.providers.github",
@@ -47,6 +48,7 @@ INSTALLED_APPS = [
     "apps.approvals",
     "apps.payments",
     "apps.audit",
+    "apps.background",
     "gate",
 ]
 
@@ -347,3 +349,17 @@ _LOGGING["loggers"]["agentgate.security"] = {
 }
 
 LOGGING = _LOGGING
+
+# ---------------------------------------------------------------------------
+# Procrastinate background-job configuration
+# ---------------------------------------------------------------------------
+# Procrastinate uses the same PostgreSQL database as Django. The Django
+# integration reads DATABASES["default"] automatically; no separate
+# connection string is needed. In production, the worker must connect via the
+# *direct* Neon URL (not the transaction pooler), because LISTEN/NOTIFY does
+# not work through a pooler. See backend/OPERATIONS.md for details.
+#
+# The smoke-test task lives in apps.background.tasks. No periodic tasks are
+# registered at this stage; approval-expiration and payment-execution tasks
+# will be added after Procrastinate is verified end-to-end.
+PROCRASTINATE_DATABASE_ALIAS = os.environ.get("PROCRASTINATE_DATABASE_ALIAS", "default")

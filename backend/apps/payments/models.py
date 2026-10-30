@@ -111,6 +111,7 @@ class CheckoutOrder(models.Model):
 
     paypal_order_id = models.CharField(max_length=100, null=True, blank=True)
     paypal_capture_id = models.CharField(max_length=100, null=True, blank=True)
+    payer_action_url = models.URLField(max_length=2048, null=True, blank=True)
 
     status = models.CharField(
         max_length=25, choices=Status.choices, default=Status.CREATED

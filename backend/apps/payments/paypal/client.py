@@ -347,11 +347,21 @@ class PayPalClient:
                 "only contacts the sandbox."
             )
         if host != _SANDBOX_HOST:
-            raise PayPalRedirectError(f"Request escapes the sandbox origin (host {host!r}).")
+            raise PayPalRedirectError(
+                f"Request escapes the sandbox origin (host {host!r})."
+            )
         return url
 
-    def _request(self, method, path, *, params=None, json_body=None,
-                 request_id=None, retryable=False):
+    def _request(
+        self,
+        method,
+        path,
+        *,
+        params=None,
+        json_body=None,
+        request_id=None,
+        retryable=False,
+    ):
         url = self._build_url(path)
         token = self.get_token()
         headers = {"Authorization": f"Bearer {token}"}
@@ -387,11 +397,7 @@ class PayPalClient:
                     self._backoff(attempt)
                     attempt += 1
                     continue
-                if (
-                    not retryable
-                    and method == "POST"
-                    and response.status_code >= 500
-                ):
+                if not retryable and method == "POST" and response.status_code >= 500:
                     raise PayPalUncertainOutcomeError(
                         "POST request to PayPal returned a server error "
                         "(HTTP %d); the operation may have succeeded. "
@@ -403,7 +409,8 @@ class PayPalClient:
                 return response.json()
             except ValueError as exc:
                 raise PayPalAPIError(
-                    "Invalid JSON response from PayPal (HTTP %d)." % response.status_code
+                    "Invalid JSON response from PayPal (HTTP %d)."
+                    % response.status_code
                 ) from exc
 
     def _send(self, method, url, **kwargs):
@@ -421,7 +428,9 @@ class PayPalClient:
         except requests.exceptions.ConnectionError as exc:
             raise PayPalConnectionError("Connection to PayPal failed.") from exc
         except requests.exceptions.TooManyRedirects as exc:
-            raise PayPalRedirectError("Exceeded the maximum number of redirects.") from exc
+            raise PayPalRedirectError(
+                "Exceeded the maximum number of redirects."
+            ) from exc
         except requests.exceptions.RequestException as exc:
             raise PayPalTransportError("Request to PayPal failed.") from exc
 
@@ -462,8 +471,10 @@ class PayPalClient:
 
     # -- misc ----------------------------------------------------------------
     def _backoff(self, attempt):
-        delay = _BACKOFF_BASE_SECONDS * (2 ** attempt)
-        logger.debug("paypal backoff: sleeping %.2fs before retry %d", delay, attempt + 1)
+        delay = _BACKOFF_BASE_SECONDS * (2**attempt)
+        logger.debug(
+            "paypal backoff: sleeping %.2fs before retry %d", delay, attempt + 1
+        )
         time.sleep(delay)
 
     def __repr__(self):

@@ -58,9 +58,7 @@ def _parse_bool(raw_value, label):
         return True
     if normalized in _FALSE_VALUES:
         return False
-    raise PayPalConfigError(
-        f"{label} must be a boolean string ('true' or 'false')."
-    )
+    raise PayPalConfigError(f"{label} must be a boolean string ('true' or 'false').")
 
 
 def get_paypal_config(settings):
@@ -94,9 +92,7 @@ def get_paypal_config(settings):
     )
 
     if env not in SUPPORTED_ENVIRONMENTS:
-        raise PayPalConfigError(
-            f'PAYPAL_ENV must be "sandbox", got {env!r}.'
-        )
+        raise PayPalConfigError(f'PAYPAL_ENV must be "sandbox", got {env!r}.')
 
     if checkout_enabled and not (client_id and client_secret):
         raise PayPalConfigError(

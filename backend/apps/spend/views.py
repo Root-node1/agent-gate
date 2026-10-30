@@ -5,8 +5,13 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
-from apps.agents.authentication import AgentKeyAuthentication
+from apps.accounts.permissions import IsDashboardUser
+from apps.agents.authentication import (
+    AgentKeyAuthentication,
+    DashboardSessionAuthentication,
+)
 from apps.agents.throttling import AgentKeyRateThrottle
+from apps.common.pagination import DashboardPagination
 
 from . import services
 from .idempotency import key_is_valid
@@ -14,9 +19,29 @@ from .models import SpendRequest
 from .serializers import SpendRequestCreateSerializer, SpendRequestSerializer
 
 
+def spend_queryset(user):
+    """All spend requests belonging to organizations the caller is a member of."""
+    return (
+        SpendRequest.objects.filter(organization__memberships__user=user)
+        .select_related("approval")
+        .order_by("-created_at", "-id")
+    )
+
+
 class SpendRequestCreateView(APIView):
     authentication_classes = [AgentKeyAuthentication]
     throttle_classes = [AgentKeyRateThrottle, AnonRateThrottle]
+    pagination_class = DashboardPagination
+
+    def get_authenticators(self):
+        if getattr(self.request, "method", None) == "GET":
+            return [DashboardSessionAuthentication()]
+        return super().get_authenticators()
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsDashboardUser()]
+        return super().get_permissions()
 
     @extend_schema(
         request=SpendRequestCreateSerializer,
@@ -59,6 +84,16 @@ class SpendRequestCreateView(APIView):
         if replayed:
             response["Idempotent-Replayed"] = "true"
         return response
+
+    @extend_schema(
+        responses={200: SpendRequestSerializer(many=True)},
+        summary="List spend requests for the caller's organizations",
+    )
+    def get(self, request):
+        queryset = spend_queryset(request.user)
+        paginator = DashboardPagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        return paginator.get_paginated_response(SpendRequestSerializer(page, many=True).data)
 
 
 class SpendRequestDetailView(APIView):

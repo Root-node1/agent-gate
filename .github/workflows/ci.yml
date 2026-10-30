@@ -50,7 +50,9 @@ jobs:
       - run: ruff check .
       - run: lint-imports
       - run: python manage.py check
-      - run: python manage.py check --deploy --settings=config.settings.prod
+      - run: |
+          MFA_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+            python manage.py check --deploy --settings=config.settings.prod
         env:
           DJANGO_SECRET_KEY: ci-only-not-a-real-secret-but-long-enough-for-checks
           DJANGO_ALLOWED_HOSTS: example.com

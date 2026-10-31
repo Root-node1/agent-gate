@@ -291,6 +291,81 @@ Classification: steps 1-7 = runtime-observed via HTTP client against the proxy (
 - Verify Host-header validation and DNS-rebinding mitigation in the proxy.
 - Verify sidecar cleanup on app exit.
 
+## 13. TAURI-07C: Secure desktop loopback transport implementation
+
+### 13.1 Architecture implemented
+
+Embedded Rust HTTP server (`frontend/src-tauri/src/server.rs`) managed by the Tauri application lifecycle:
+- Binds only to `127.0.0.1:0` (ephemeral port).
+- Serves packaged frontend assets from `dist/` (SPA fallback to `index.html`).
+- Proxies only `/api` and `/v1` to the local Django backend (`http://127.0.0.1:8000`).
+- Rejects unexpected methods and routes; allowed methods: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS.
+- Host-header validation (loopback only) for DNS-rebinding resistance.
+- Request body limit: 10 MiB.
+- 30s read/write timeouts on proxied connections.
+- No open-proxy: only `/api` and `/v1` forwarded; no arbitrary URLs.
+- No backend credentials exposed to frontend.
+
+Tauri integration (`src/lib.rs`):
+- Debug builds: WebView loads `http://localhost:5173` (Vite dev, unchanged workflow).
+- Release builds: server starts before window creation; main window loads `http://127.0.0.1:<port>`.
+- `tauri.conf.json` window array emptied; window created programmatically.
+- `ServerHandle` dropped on app exit (clean shutdown, no orphaned listener).
+
+### 13.2 Security controls
+
+- Loopback-only bind; Host-header validation (127.0.0.1/localhost/[::1] with matching port).
+- No permissive credentialed CORS (same-origin, no CORS headers added).
+- No arbitrary proxy destinations (only `http://127.0.0.1:8000`).
+- Request-body limit and timeouts.
+- No sensitive data in logs (no cookie/token logging).
+- Capabilities remain `core:default`.
+- CSP unchanged (strict).
+- Financial boundaries preserved: no PayPal creds, no auto-retry, idempotency keys preserved.
+
+### 13.3 Authentication compatibility
+
+- HttpOnly session cookies, SameSite=Lax, CSRF all preserved (same-origin now in packaged mode).
+- allauth Headless endpoints unchanged.
+- Server-side MFA and org scoping unchanged.
+- Explicit logout via DELETE /auth/session works.
+
+### 13.4 Automated test results
+
+- Rust: `cargo fmt --check` PASS; `cargo clippy` PASS (0 warnings); `cargo test --lib` 6/6 PASS; `cargo check` PASS; `cargo build --release` PASS.
+- Frontend: `npm run build` PASS; `npm run lint` PASS.
+- Tauri: `npm run tauri:build` PASS (deb/rpm/AppImage).
+- Django: system check PASS (0 issues).
+
+Unit tests: host validation (accept/reject), proxy path classification, allowed methods, path traversal rejection.
+
+### 13.5 WebView runtime evidence
+
+Released binary (`target/release/app`) under WSLg:
+- Embedded server bound to ephemeral port (e.g., 43119).
+- `GET /` -> 200 (frontend served).
+- `GET /api/auth/headless/browser/v1/config` -> 200 (CSRF bootstrap, proxy works).
+- `Host: evil.com` -> 400 (host validation).
+- Full 7-step auth flow against loopback origin: all pass (login, authenticated GET, CSRF POST, logout, post-logout 401).
+- WebView process runs with Mesa/EGL software-rendering warnings (non-fatal); window registered in WSLg compositor (appId `app`). Visual pixel confirmation not captured in agent environment.
+
+### 13.6 Known limitations
+
+- WebView visual render not confirmed in agent environment (WSLg available; recommend interactive verification).
+- Windows origin (`https://tauri.localhost`) handling needs validation.
+- Host-header/DNS-rebinding hardening should be reviewed for production.
+- Sidecar/embedded server lifecycle on crash recovery.
+- Resource path resolution falls back to cwd-relative `dist`/`frontend/dist`.
+
+### 13.7 Release-blocking verification requirements
+
+- Interactive GUI verification on Linux and Windows.
+- Verify sidecar/server cleanup on app exit.
+- Verify no secrets in logs/crash reports.
+- Verify CSP in packaged build (done via tauri info).
+
+No push. Ready for TAURI-08 security regression.
+
 ## 9. Security acceptance criteria
 
 - [ ] CSP applied in both dev and prod builds (verified via tauri.conf).

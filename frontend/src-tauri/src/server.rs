@@ -362,7 +362,10 @@ pub fn start_server(dist: PathBuf) -> Result<ServerHandle, String> {
             match server.recv_timeout(Duration::from_millis(100)) {
                 Ok(Some(req)) => handle_request(req, &dist2, port),
                 Ok(None) => continue,
-                Err(_) => break,
+                Err(_) => {
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
             }
         }
     });
@@ -442,6 +445,53 @@ mod tests {
         assert!(safe_join_dist(&tmp, "/index.html").is_some());
         assert!(safe_join_dist(&tmp, "/\0foo").is_none());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn server_lifecycle_start_stop() {
+        let tmp = std::env::temp_dir().join("agentgate_lc_dist");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("index.html"), b"ok").unwrap();
+        let handle = start_server(tmp.clone()).expect("start");
+        let port = handle.port;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        // server responds
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+        use std::io::Write;
+        let req = format!(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+            port
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut buf = [0u8; 256];
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+        let n = stream.read(&mut buf).unwrap_or(0);
+        assert!(n > 0);
+        // drop handle -> stop
+        drop(handle);
+        // port should be closed (connection refused)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(TcpStream::connect(format!("127.0.0.1:{}", port)).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn minimal_tiny_http() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            if let Ok(Some(req)) = server.recv_timeout(std::time::Duration::from_secs(2)) {
+                let _ = req.respond(tiny_http::Response::from_string("hi"));
+            } else {
+            }
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+        use std::io::Write;
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .unwrap();
+        handle.join().unwrap();
     }
 
     #[test]

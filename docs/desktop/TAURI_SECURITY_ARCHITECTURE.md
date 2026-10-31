@@ -467,6 +467,56 @@ Clean. HEAD updated.
 
 All automated checks pass, 7-step auth flow passes against loopback origin, security hardening applied and tested, no secrets in source/build artifacts, financial boundaries preserved. Residual: interactive GUI visual confirmation (Linux + Windows), Windows origin handling validation, sidecar cleanup review. No push performed.
 
+## 15. TAURI-09: Linux runtime acceptance and lifecycle audit
+
+### 15.1 Lifecycle audit findings
+
+- Server startup: `start_server` binds `127.0.0.1:0` synchronously, spawns accept thread, returns port.
+- Readiness: listener is bound before `start_server` returns; WebView navigation occurs after.
+- Window creation failure after server startup: server handle is still managed and dropped on app exit (no orphaned listener).
+- Normal shutdown: `ServerHandle::Drop` sets stop flag and joins thread (recv_timeout 100ms ensures prompt exit).
+- Forced termination: OS reclaims the port; no persistent listener.
+- Repeated startup/shutdown: ephemeral port binding avoids conflicts.
+- Backend unavailable: proxy returns 502 (controlled).
+- Server thread panic: would terminate the thread; app continues but server stops (limitation; local-only).
+- Blocked request: proxy read has 30s timeout on upstream; client body read has no explicit timeout (limitation for local-only).
+- Logs: no sensitive data (no cookies/tokens/secrets logged).
+
+### 15.2 Lifecycle regression test
+
+Added `server_lifecycle_start_stop` (Rust unit test):
+- Start server → responds to HTTP request → drop handle → port released (connection refused).
+- Passes. Also `minimal_tiny_http` validates tiny_http recv_timeout behavior.
+
+### 15.3 Linux GUI verification evidence
+
+- Released binary launched under WSLg (DISPLAY=:0).
+- Weston compositor log records window registration: `appId: app`, `appWindowId: 0x4e`, `ClientGetAppidReq: pid:... appId:app WindowId:0x4e`.
+- Server bound ephemeral port; frontend `GET /` -> 200; CSRF bootstrap -> 200.
+- Full 7-step auth flow against loopback origin: all pass (login, authenticated GET, CSRF POST, logout, post-logout 401).
+- Mesa/EGL software-rendering warnings (non-fatal: ZINK failed to choose pdev).
+- Visual pixel confirmation not captured (no screenshot tool / interactive display in agent environment). Marked partially verified.
+- xwininfo cannot see the WSLg-internal window id (Bad Drawable).
+
+### 15.4 Known platform limitations
+
+- Windows: not built/tested. Origin `https://tauri.localhost`; loopback HTTP proxy is cross-origin unless frontend served over loopback HTTP. Requires Windows validation.
+- macOS: signing/notarization outstanding.
+- Linux: WSLg available; native Linux desktop should work but not separately tested.
+- Visual GUI confirmation unavailable in this agent environment.
+
+### 15.5 Remaining risks
+
+- WebView visual render not confirmed (window registered but pixels not captured).
+- Windows origin handling unvalidated.
+- Host-header/DNS-rebinding hardening review for production.
+- Sidecar/server cleanup on crash recovery (thread panic detection).
+- Client body read timeout (no explicit bound).
+
+### 15.6 Final verdict
+
+GO for Linux integration review. Cross-platform production readiness is NOT claimed (Windows/macOS unverified).
+
 ## 9. Security acceptance criteria
 
 - [ ] CSP applied in both dev and prod builds (verified via tauri.conf).

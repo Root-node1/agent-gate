@@ -29,6 +29,7 @@ from apps.payments.paypal.client import (
     PayPalClient,
     PayPalConnectionError,
     PayPalNotFoundError,
+    PayPalRateLimitError,
     PayPalServerError,
     PayPalTimeoutError,
     PayPalUncertainOutcomeError,
@@ -519,14 +520,22 @@ def capture_checkout_order(
         except CaptureVerificationError:
             _decline(checkout, "reconcile_capture_verification_failed")
             raise
-        if cap_status != _PAYPAL_CAPTURE_COMPLETED:
+        if cap_status == _PAYPAL_CAPTURE_COMPLETED:
+            replayed = _commit_completed(checkout, capture)
+            return checkout, CaptureOutcome.COMPLETED, replayed
+        if cap_status in _PAYPAL_CAPTURE_TERMINAL:
+            # Terminal failure status: the capture conclusively did not succeed
+            # and no settlement is pending — DECLINED is justified.
             checkout.refresh_from_db()
             _decline(checkout, f"paypal_capture_status_{cap_status}")
             raise CaptureVerificationError(
                 f"PayPal capture status is {cap_status!r}, expected COMPLETED."
             )
-        replayed = _commit_completed(checkout, capture)
-        return checkout, CaptureOutcome.COMPLETED, replayed
+        # PENDING or unknown/nonterminal status: the capture state is
+        # ambiguous.  Preserve CAPTURE_PENDING for reconciliation — never
+        # issue another capture POST automatically.
+        checkout.refresh_from_db()
+        return checkout, CaptureOutcome.PENDING, False
 
     if paypal_status != _PAYPAL_ORDER_APPROVED:
         checkout.refresh_from_db()
@@ -547,8 +556,14 @@ def capture_checkout_order(
         # Preserve CAPTURE_PENDING and the stable key for reconciliation.
         checkout.refresh_from_db()
         return checkout, CaptureOutcome.PENDING, False
+    except PayPalRateLimitError:
+        # 429 is not conclusive — the capture may have been processed before
+        # the rate limit kicked in.  Preserve CAPTURE_PENDING for reconciliation.
+        checkout.refresh_from_db()
+        return checkout, CaptureOutcome.PENDING, False
     except PayPalAPIError:
-        # PayPal definitively rejected the capture (4xx).
+        # Conclusive 4xx (400/401/403/404/409): PayPal rejected the capture
+        # without settling funds — DECLINED is justified.
         checkout.refresh_from_db()
         _decline(checkout, "paypal_capture_rejected")
         raise
@@ -560,15 +575,17 @@ def capture_checkout_order(
     except CaptureVerificationError:
         _decline(checkout, "capture_response_verification_failed")
         raise
-    if cap_status == _PAYPAL_CAPTURE_PENDING:
-        # The capture was created but PayPal reports it as still pending.
-        checkout.refresh_from_db()
-        return checkout, CaptureOutcome.PENDING, False
-    if cap_status != _PAYPAL_CAPTURE_COMPLETED:
+    if cap_status == _PAYPAL_CAPTURE_COMPLETED:
+        replayed = _commit_completed(checkout, capture)
+        return checkout, CaptureOutcome.COMPLETED, replayed
+    if cap_status in _PAYPAL_CAPTURE_TERMINAL:
+        # Terminal failure status: conclusive, no settlement pending.
         checkout.refresh_from_db()
         _decline(checkout, f"paypal_capture_status_{cap_status}")
         raise CaptureVerificationError(
             f"PayPal capture status is {cap_status!r}, expected COMPLETED."
         )
-    replayed = _commit_completed(checkout, capture)
-    return checkout, CaptureOutcome.COMPLETED, replayed
+    # PENDING or unknown/nonterminal: preserve CAPTURE_PENDING for later
+    # reconciliation.  Never issue another capture POST automatically.
+    checkout.refresh_from_db()
+    return checkout, CaptureOutcome.PENDING, False

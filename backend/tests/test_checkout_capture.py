@@ -22,6 +22,7 @@ from apps.payments.models import CheckoutOrder
 from apps.payments.paypal.client import (
     PayPalAPIError,
     PayPalClient,
+    PayPalRateLimitError,
     PayPalServerError,
     PayPalUncertainOutcomeError,
 )
@@ -463,7 +464,69 @@ class CaptureServiceTests(TestCase):
         self.checkout.refresh_from_db()
         self.assertEqual(self.checkout.status, CheckoutOrder.Status.DECLINED)
 
+    def test_unknown_capture_status_preserves_pending(self):
+        # INT-13H.1: PayPal returned a capture status we don't recognise
+        # (e.g. INSTRUMENT_DENIED).  This is nonterminal — preserve
+        # CAPTURE_PENDING, never DECLINED, never COMPLETED, never POST again.
+        response = _capture_response(capture_status="INSTRUMENT_DENIED")
+        client = make_capture_client(
+            get_response=_APPROVED_ORDER, post_response=response
+        )
+        checkout, outcome, _ = self._capture(client=client)
+
+        self.assertEqual(outcome, services.CaptureOutcome.PENDING)
+        checkout.refresh_from_db()
+        self.assertEqual(checkout.status, CheckoutOrder.Status.CAPTURE_PENDING)
+        self.assertIsNone(checkout.paypal_capture_id)
+        self.assertEqual(checkout.paypal_order_id, PAYPAL_ORDER_ID)
+        self.assertEqual(checkout.capture_idempotency_key, self.capture_key)
+
+    def test_unknown_capture_status_on_reconciliation_preserves_pending(self):
+        # During a GET reconciliation, PayPal reports the order COMPLETED but
+        # the capture carries an unknown status.  Preserve CAPTURE_PENDING —
+        # do not auto-complete or decline on ambiguity.
+        order = copy.deepcopy(_COMPLETED_ORDER)
+        order["purchase_units"][0]["payments"]["captures"][0]["status"] = (
+            "INSTRUMENT_DENIED"
+        )
+        client = make_capture_client(get_response=order)
+        checkout, outcome, _ = self._capture(client=client)
+
+        self.assertEqual(outcome, services.CaptureOutcome.PENDING)
+        checkout.refresh_from_db()
+        self.assertEqual(checkout.status, CheckoutOrder.Status.CAPTURE_PENDING)
+        self.assertIsNone(checkout.paypal_capture_id)
+        client.post.assert_not_called()
+
+    def test_terminal_capture_status_on_reconciliation_declines(self):
+        # A known terminal failure status (DENIED) on a COMPLETED order is
+        # conclusive — decline rather than preserve pending.
+        order = copy.deepcopy(_COMPLETED_ORDER)
+        order["purchase_units"][0]["payments"]["captures"][0]["status"] = "DENIED"
+        client = make_capture_client(get_response=order)
+        with self.assertRaises(services.CaptureVerificationError):
+            self._capture(client=client)
+        self.checkout.refresh_from_db()
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.DECLINED)
+        client.post.assert_not_called()
+
     # 19. Confirmed terminal failure (PayPal 4xx on capture POST) -------------
+
+    # 19a. 429 rate-limit preserves pending (non-conclusive) --------------------
+    def test_rate_limit_on_capture_preserves_pending(self):
+        client = make_capture_client(
+            get_response=_APPROVED_ORDER,
+            post_side_effect=PayPalRateLimitError("HTTP 429: rate limited"),
+        )
+        checkout, outcome, _ = self._capture(client=client)
+
+        self.assertEqual(outcome, services.CaptureOutcome.PENDING)
+        checkout.refresh_from_db()
+        self.assertEqual(checkout.status, CheckoutOrder.Status.CAPTURE_PENDING)
+        self.assertIsNone(checkout.paypal_capture_id)
+        self.assertEqual(checkout.capture_idempotency_key, self.capture_key)
+
+    # 19b. Confirmed terminal failure (400/401/403/404/409 on capture POST) -----
     def test_confirmed_terminal_failure_declines(self):
         client = make_capture_client(
             get_response=_APPROVED_ORDER,
@@ -629,6 +692,42 @@ class CaptureServiceTests(TestCase):
         self.checkout.refresh_from_db()
         self.assertEqual(self.checkout.status, CheckoutOrder.Status.COMPLETED)
         self.assertEqual(self.checkout.paypal_capture_id, PAYPAL_CAPTURE_ID)
+
+    # 25. Completed replay preserves original key (different key supplied) ------
+    def test_completed_replay_preserves_original_capture_key(self):
+        """A COMPLETED order replayed with a different key returns the original
+        capture result, never issues another PayPal POST, and clearly flags the
+        replay."""
+        client = make_capture_client(
+            get_response=_APPROVED_ORDER, post_response=_CAPTURE_RESPONSE
+        )
+        services.capture_checkout_order(
+            checkout_order=CheckoutOrder.objects.get(pk=self.checkout.pk),
+            organization_id=self.organization.pk,
+            capture_idempotency_key=self.capture_key,
+            client=client,
+        )
+        self.assertEqual(client.post.call_count, 1)
+
+        # Replay with a DIFFERENT key — the original key is immutable and must
+        # be preserved; the caller's key must not overwrite it.
+        replay_key = uuid.uuid4()
+        checkout, outcome, replayed = services.capture_checkout_order(
+            checkout_order=CheckoutOrder.objects.get(pk=self.checkout.pk),
+            organization_id=self.organization.pk,
+            capture_idempotency_key=replay_key,
+            client=client,
+        )
+        # No PayPal POST — the order is already completed.
+        self.assertEqual(client.post.call_count, 1)
+        self.assertEqual(outcome, services.CaptureOutcome.COMPLETED)
+        self.assertTrue(replayed)
+        # The original capture key is preserved, not the caller's different key.
+        self.assertEqual(checkout.capture_idempotency_key, self.capture_key)
+        self.assertNotEqual(replay_key, self.capture_key)
+        # The existing capture result is returned unchanged.
+        self.assertEqual(checkout.paypal_capture_id, PAYPAL_CAPTURE_ID)
+        self.assertEqual(checkout.status, CheckoutOrder.Status.COMPLETED)
 
 
 # ---------------------------------------------------------------------------
@@ -941,6 +1040,54 @@ class CheckoutCaptureViewTests(CheckoutViewBase):
         self.assertEqual(response.status_code, 502)
         order.refresh_from_db()
         self.assertEqual(order.status, CheckoutOrder.Status.DECLINED)
+
+    # 19b. Unknown capture status (view: 202 — preserve pending) ----------------
+    @patch("apps.payments.checkout.views.PayPalClient")
+    def test_unknown_capture_status_preserves_pending(self, mock_client_cls):
+        self._patch_client(
+            mock_client_cls,
+            get_response=_APPROVED_ORDER,
+            post_response=_capture_response(capture_status="INSTRUMENT_DENIED"),
+        )
+        order = self._make_approved_order()
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            CAPTURE_URL(order.pk),
+            {"capture_idempotency_key": str(uuid.uuid4())},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        data = response.json()
+        self.assertEqual(data["status"], CheckoutOrder.Status.CAPTURE_PENDING)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CheckoutOrder.Status.CAPTURE_PENDING)
+        self.assertEqual(order.paypal_order_id, PAYPAL_ORDER_ID)
+        self.assertIsNone(order.paypal_capture_id)
+
+    # 19c. 429 rate-limit (view: 202 — preserve pending) -----------------------
+    @patch("apps.payments.checkout.views.PayPalClient")
+    def test_rate_limit_on_capture_returns_accepted(self, mock_client_cls):
+        mock_client = MagicMock(spec=PayPalClient)
+        mock_client.get.return_value = _APPROVED_ORDER
+        mock_client.post.side_effect = PayPalRateLimitError("HTTP 429: rate limited")
+        mock_client_cls.return_value = mock_client
+        order = self._make_approved_order()
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            CAPTURE_URL(order.pk),
+            {"capture_idempotency_key": str(uuid.uuid4())},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 202)
+        data = response.json()
+        self.assertEqual(data["status"], CheckoutOrder.Status.CAPTURE_PENDING)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CheckoutOrder.Status.CAPTURE_PENDING)
+        self.assertEqual(order.paypal_order_id, PAYPAL_ORDER_ID)
 
     # 24. No double capture (view: already completed -> 0 POSTs) --------------
     @patch("apps.payments.checkout.views.PayPalClient")

@@ -9,7 +9,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-const BACKEND: &str = "http://127.0.0.1:8000";
+const DEFAULT_BACKEND: &str = "http://127.0.0.1:8000";
+fn backend_url() -> String {
+    std::env::var("AGENTGATE_BACKEND_URL").unwrap_or_else(|_| DEFAULT_BACKEND.to_string())
+}
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 const PROXY_PATHS: [&str; 2] = ["/api", "/v1"];
 const ALLOWED_METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -214,7 +217,7 @@ fn serve_static(req: tiny_http::Request, dist: &Path, path: &str) {
 }
 
 fn proxy_request(mut req: tiny_http::Request, method: &str, url: &str) {
-    let target = format!("{}{}", BACKEND, url);
+    let target = format!("{}{}", backend_url(), url);
     let mut body = Vec::new();
     let mut buf = [0u8; 8192];
     let mut total = 0usize;

@@ -517,6 +517,59 @@ Added `server_lifecycle_start_stop` (Rust unit test):
 
 GO for Linux integration review. Cross-platform production readiness is NOT claimed (Windows/macOS unverified).
 
+## 16. TAURI-10: Distribution architecture and release readiness
+
+### 16.1 Backend connectivity recommendation
+
+**Recommended: Hosted AgentGate backend over HTTPS.**
+
+- Embedded loopback server proxies `/api` and `/v1` to a configurable backend URL (`AGENTGATE_BACKEND_URL`; default `http://127.0.0.1:8000` for dev).
+- Django remains sole authorization authority; org scoping, MFA, CSRF/session security, idempotency, financial safeguards, and webhooks remain backend-enforced.
+- Alternatives (local backend service, bundled backend) rejected for initial release (maintenance burden, version skew, bundle size).
+
+### 16.2 Authentication implications
+
+- Dev: session cookies over HTTP localhost (validated).
+- Production: backend is HTTPS remote. The embedded proxy currently supports HTTP only (TLS client support not yet implemented — known limitation). The loopback origin must be retained so `SameSite=Lax` session cookies remain same-site. CSRF_TRUSTED_ORIGINS must include the desktop origin.
+- No JWT/OAuth/native credential storage introduced.
+
+### 16.3 Packaging status
+
+- Linux: `.deb`, `.rpm`, AppImage build successfully (x86_64). Not yet installed/tested on clean OS images.
+- Windows: not built/tested. WebView2 origin `https://tauri.localhost`; loopback proxy cross-origin unless frontend served over loopback HTTP. Needs Windows validation.
+- macOS: future target only.
+
+### 16.4 Timeout finding
+
+- Request body read has 10 MiB size limit but no explicit per-read timeout (client socket unbounded; upstream has 30s).
+- Risk: malicious local process could slow-send body and hold the single-threaded server (DoS).
+- Decision: not implemented (complexity/risk). Proposed alternative: async server (tokio + axum/hyper) with per-connection timeouts, or thread-per-request with watchdog.
+- Documented as known limitation.
+
+### 16.5 GUI verification
+
+- Window registered in WSLg compositor (appId `app`, windowId `0x4e`).
+- Full 7-step auth flow passes against loopback origin.
+- Visual pixel confirmation not captured (no screenshot tool). Partially verified.
+
+### 16.6 Remaining blockers
+
+- Code signing (Windows Authenticode, Linux GPG).
+- Windows runtime verification.
+- macOS support (future).
+- ARM64 builds.
+- Backend TLS in embedded proxy.
+- Interactive GUI verification.
+- CSRF_TRUSTED_ORIGINS for desktop origin in production backend.
+- Release notes/changelog.
+- Security review sign-off.
+
+### 16.7 Distinction
+
+- Linux integration readiness: GO.
+- Public download readiness: NO-GO (unsigned, unverified on clean OS images, GUI partially verified).
+- Cross-platform production readiness: NO-GO (Windows/macOS unverified).
+
 ## 9. Security acceptance criteria
 
 - [ ] CSP applied in both dev and prod builds (verified via tauri.conf).

@@ -140,6 +140,77 @@ Notes:
 - Idempotency keys generated once per user intent; reused only on explicit retry of the same request.
 - Webhook processing remains backend-only.
 
+## 11. TAURI-07A: Desktop session authentication compatibility proof
+
+### 11.1 Actual runtime origins
+
+| Context | Frontend origin | Backend origin | Relationship |
+|---|---|---|---|
+| Vite dev | `http://localhost:5173` | `http://127.0.0.1:8000` (proxied via Vite `/api`, `/v1`) | Same-origin from browser perspective (Vite proxy); backend sees `Origin: http://localhost:5173` |
+| Tauri dev WebView | `http://localhost:5173` (devUrl) | `http://127.0.0.1:8000` | Same as Vite dev |
+| Packaged Tauri (Linux) | `tauri://localhost` | `http://127.0.0.1:8000` | **Cross-origin and cross-site** |
+| Packaged Tauri (Windows) | `https://tauri.localhost` | `http://127.0.0.1:8000` | **Cross-origin and cross-site** |
+
+`tauri.conf.json` build.devUrl = `http://localhost:5173`; production serves `frontendDist` (`../dist`) over the `tauri://` protocol.
+
+### 11.2 Cookie compatibility findings
+
+- `SESSION_COOKIE_HTTPONLY=True`, `SESSION_COOKIE_SAMESITE=Lax`, `CSRF_COOKIE_HTTPONLY=False`, `CSRF_COOKIE_SAMESITE=Lax` (`base.py:197-201`).
+- In **dev** (Tauri dev WebView origin `http://localhost:5173`), requests are same-origin via the Vite proxy, so `SameSite=Lax` cookies are sent and CSRF works. Compatible.
+- In **packaged** Tauri (origin `tauri://localhost`), the backend (`http://127.0.0.1:8000`) is cross-site. `SameSite=Lax` cookies are **not** sent on cross-site subresource requests (fetch/XHR), so the session cookie will not accompany credentialed fetches. `CSRF_TRUSTED_ORIGINS` alone does **not** fix this — it only permits the CSRF check to pass; it cannot make the browser send a `SameSite=Lax` cookie cross-site.
+- `Secure` is not set (dev HTTP). Setting `SameSite=None` would require `Secure=True` and HTTPS, which `tauri://localhost` is not. Weakening `SameSite` to `None` without HTTPS is not acceptable and is not pursued.
+- Conclusion: the existing session-cookie architecture works in **dev** but **fails in the packaged app** unless the API is same-origin.
+
+### 11.3 CSRF/CORS findings
+
+- No `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` configured in `base.py` today.
+- Required for dev (and any cross-origin packaging): add desktop origins to `CSRF_TRUSTED_ORIGINS`. For packaged, this alone is insufficient (see 11.2); a same-origin proxy is required.
+- No wildcard-with-credentials. Desktop origins must be enumerated explicitly.
+
+### 11.4 Local test evidence (same-origin dev contract)
+
+Controlled proof against the local Django dev server (PostgreSQL `agentgate` DB, disposable user `desktop-proof@example.com`, ephemeral creds, no PayPal):
+
+1. CSRF bootstrap `GET /api/auth/headless/browser/v1/config` -> **200**, `csrftoken` cookie present. ✓
+2. Login `POST /auth/login` -> **200**. ✓
+3. Authenticated `GET /auth/session` -> **200**, `is_authenticated: true`. ✓
+4. CSRF-protected `POST /account/password/change` -> **200**. ✓
+5. Logout `DELETE /auth/session` -> **401** (session invalidated; session cookie cleared by backend). ✓
+6. Post-logout `GET /auth/session` -> **401**. ✓
+
+Evidence: Django dev server logs and urllib/curl runs (2026-10-31). No secrets logged. No production or PayPal access.
+
+### 11.5 Authentication strategy recommendation (TAURI-07)
+
+Given 11.2, the chosen implementation path is **A. Same-origin local API proxy**:
+
+- Serve the Django API behind the same origin as the packaged frontend. Options: (a) run Django as a Tauri sidecar on `http://127.0.0.1:<port>` and have the WebView treat it as same-origin via a custom protocol / reverse proxy, or (b) use Tauri's `tauri://localhost` asset protocol with a registered `http` handler that proxies `/api` and `/v1` to the local backend so the browser sees same-origin requests.
+- This keeps `SameSite=Lax` + HttpOnly session cookies and CSRF intact — no cookie security weakening.
+- Backend changes: only `CSRF_TRUSTED_ORIGINS` for the desktop origin as defense-in-depth; no new auth endpoints.
+- Alternative B (secure backend-supported desktop flow) and C (system-browser callback) are deferred; only pursue if the same-origin proxy proves infeasible on a target platform.
+
+### 11.6 Security risks
+
+- Packaged app cannot authenticate today without the same-origin proxy (cross-site `SameSite=Lax` blocks session cookie on fetch).
+- `unsafe-inline` styles in CSP (required by Vite/React) — keep scripts strict.
+- Agent keys in React state only; ensure no persistence or logging.
+- No auto-retry on financial POSTs.
+
+### 11.7 Required backend/frontend changes
+
+- Backend: `CSRF_TRUSTED_ORIGINS` += desktop origins; optional `DESKTOP_ALLOWED_ORIGINS` env toggle.
+- Frontend/Tauri: register same-origin proxy for `/api` and `/v1` in packaged mode; reuse existing `bootstrapCsrf`/`headlessFetch`.
+- No auth code changes.
+
+### 11.8 Updated security acceptance criteria
+
+- [ ] Same-origin proxy verified in packaged Linux build (session cookie sent on fetch).
+- [ ] CSRF bootstrap + login + authenticated GET + CSRF POST + logout + 401 all pass in packaged app.
+- [ ] No `SameSite=None` or CSRF disablement introduced.
+- [ ] `CSRF_TRUSTED_ORIGINS` includes desktop origins.
+- [ ] Capabilities remain `core:default`.
+- [ ] No secrets in logs/crash reports.
+
 ## 9. Security acceptance criteria
 
 - [ ] CSP applied in both dev and prod builds (verified via tauri.conf).

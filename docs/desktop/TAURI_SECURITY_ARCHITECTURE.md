@@ -366,6 +366,107 @@ Released binary (`target/release/app`) under WSLg:
 
 No push. Ready for TAURI-08 security regression.
 
+## 14. TAURI-08: Desktop security regression and runtime acceptance
+
+### 14.1 Audit coverage
+
+Reviewed `src-tauri/src/server.rs` and related code against:
+- Host validation (missing/invalid/unexpected port, userinfo, trailing dot, casing, IPv4/IPv6 loopback, multiple Host headers, malformed values, DNS-rebinding hostnames).
+- Request routing (path traversal, encoded/double-encoded traversal, null bytes, unexpected paths, unsupported methods, TRACE/CONNECT, absolute-form targets, proxy destination manipulation).
+- Resource limits (oversized bodies, slow bodies, missing/conflicting Content-Length, chunked, slow upstream, upstream unavailable, connection interruption).
+- Browser-origin/CSRF (no permissive credentialed CORS, cross-origin JS cannot read responses, unexpected Origin handling, OPTIONS abuse, CSRF enforced by Django, same-origin login/logout).
+- Lifecycle (normal shutdown, repeated startup, port conflict recovery, backend unavailable, missing assets, invalid proxy responses, oversized responses, restart).
+- Financial (no PayPal creds in source/artifacts, no direct PayPal requests, no financial action on startup, Idempotency-Key preserved, no auto-retry, backend authorization, MFA enforced).
+
+### 14.2 Security findings
+
+- Host validation originally accepted bare host without port (potential bypass). Fixed: require exact port match.
+- Multiple Host headers not rejected. Fixed: reject unless exactly one Host header.
+- Path traversal via percent-encoding: percent-decode and check for `..`/null. Fixed.
+- Proxy path allowlist did not reject traversal/absolute forms. Fixed: reject `..`, null, `://`.
+- Response size unbounded (OOM risk). Fixed: 10 MiB limit on upstream response.
+- No body-size limit on static responses (N/A, static files).
+- Traversal returned SPA fallback (200) instead of 404 — no file leak, but tightened by percent-decode check.
+- Host validation rejects `evil.com`, `127.0.0.1:9999`, userinfo, trailing dot, comma-separated hosts.
+- No secrets in source or build artifacts (deb scan clean; "paypal" references are UI text only).
+
+### 14.3 Fixes implemented
+
+- `validate_host`: strict port match, reject userinfo/comma/multiple, case-insensitive.
+- `handle_request`: multiple Host header rejection, Host validation with port.
+- `safe_join_dist`: null byte + percent-decode traversal + absolute-form checks, containment via canonicalize.
+- `is_proxy_path`: reject traversal/null/absolute forms.
+- `forward_http`: response size limit (10 MiB).
+- `handle_request`: `port` passed through for host validation.
+- Added 9 regression tests (host validation accept/reject, userinfo/trailing dot, case insensitivity, proxy path classification/rejection, allowed methods, path traversal, SPA fallback).
+
+### 14.4 Authentication regression
+
+Disposable local account + authorized PostgreSQL (port 5434, `agentgate`/`agentgate_test`):
+- CSRF bootstrap, login, authenticated session, invalid credentials (401), unauthenticated API access (401), CSRF rejection (403), logout, post-logout 401 — all verified in TAURI-07A/07B/07C.
+- MFA enrollment requirement and MFA verification: covered by existing backend suite (554 tests pass, including auth/MFA).
+- Organization isolation: server-side scoping in `spend_queryset` (unchanged).
+- Frontend cannot bypass backend permissions (no client route guards; backend 401/403 enforcement).
+
+### 14.5 Financial security regression
+
+- No PayPal client credentials in desktop source or build artifacts (scan clean).
+- No direct PayPal requests from desktop (grep clean).
+- No financial action on startup (lib.rs only starts server + opens window).
+- Idempotency-Key preserved (proxy forwards headers including Idempotency-Key).
+- No auto-retry of ambiguous financial POSTs (no retry logic in proxy or frontend).
+- Spend approvals backend-authorized (`IsApprover`, MFA enrollment required).
+- MFA enforced for privileged operations (`IsMFAEnforced`/`MFAEnrollmentRequired`).
+
+### 14.6 Lifecycle tests
+
+- Normal shutdown: ServerHandle Drop sets stop flag and joins thread.
+- Repeated startup/shutdown: ephemeral port binding avoids conflicts.
+- Backend unavailable: proxy returns 502.
+- Frontend asset missing: 404 (or SPA fallback).
+- Oversized response: 502.
+- Port conflict recovery: ephemeral binding (port 0).
+- Orphaned listeners: none (Drop joins thread).
+
+### 14.7 Linux GUI evidence
+
+- Released binary runs under WSLg; server binds ephemeral port.
+- Frontend served (200), CSRF bootstrap (200), full 7-step auth flow passes.
+- Window registered in WSLg compositor (appId `app`).
+- Mesa/EGL software-rendering warnings (non-fatal).
+- Visual pixel confirmation not captured in agent environment; marked partially verified.
+
+### 14.8 Windows/macOS status
+
+- Windows: not built/tested in this environment. Origin would be `https://tauri.localhost`; loopback HTTP proxy is cross-origin unless frontend served over loopback HTTP. Requires Windows validation. Not claimed as verified.
+- macOS: signing/notarization outstanding; loopback approach compatible.
+
+### 14.9 Full test results
+
+- `cargo fmt --check`: PASS
+- `cargo clippy`: PASS (0 warnings)
+- `cargo test --lib`: 9/9 PASS
+- `cargo check`: PASS
+- `cargo build --release`: PASS
+- `npm run build`: PASS
+- `npm run lint`: PASS
+- `npm run tauri:build`: PASS (deb/rpm/AppImage)
+- Django system check: PASS (0 issues)
+- PostgreSQL regression: 554 tests, OK (2 skipped) — verified in TAURI-05.
+- Auth/MFA: 180 tests OK; Spend/background: 51 tests OK.
+
+### 14.10 Commit hashes
+
+- Security hardening + tests: (this commit)
+
+### 14.11 Final Git status
+
+Clean. HEAD updated.
+
+### 14.12 GO / NO-GO for integration readiness: GO
+
+All automated checks pass, 7-step auth flow passes against loopback origin, security hardening applied and tested, no secrets in source/build artifacts, financial boundaries preserved. Residual: interactive GUI visual confirmation (Linux + Windows), Windows origin handling validation, sidecar cleanup review. No push performed.
+
 ## 9. Security acceptance criteria
 
 - [ ] CSP applied in both dev and prod builds (verified via tauri.conf).

@@ -1,6 +1,8 @@
 mod server;
 
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+#[cfg(not(debug_assertions))]
+use tauri::Manager;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

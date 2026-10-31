@@ -481,7 +481,9 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
         self.assertEqual(self.reservation.status, PayoutReservation.Status.SUBMITTED)
 
         # Reconcile: batch SUCCESS, item UNCLAIMED → COMPLETED
-        get_response = _mock_response(200, _success_payload(status="SUCCESS"))
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="SUCCESS")
+        )
         with _mock_paypal_get(return_value=get_response):
             result = payout_services.reconcile_payout(
                 self.reservation.pk, django_settings=settings
@@ -496,7 +498,9 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
         with _mock_paypal_post(return_value=response):
             self._submit()
         self.reservation.refresh_from_db()
-        get_response = _mock_response(200, _success_payload(status="SUCCESS"))
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="SUCCESS")
+        )
         with _mock_paypal_get(return_value=get_response):
             result1 = payout_services.reconcile_payout(
                 self.reservation.pk, django_settings=settings
@@ -530,7 +534,9 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
         self.assertEqual(self.spend_request.status, SpendRequest.Status.APPROVED)
 
         # Reconcile to COMPLETED
-        get_response = _mock_response(200, _success_payload(status="SUCCESS"))
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="SUCCESS")
+        )
         with _mock_paypal_get(return_value=get_response):
             payout_services.reconcile_payout(
                 self.reservation.pk, django_settings=settings
@@ -539,6 +545,163 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
         self.assertEqual(self.spend_request.status, SpendRequest.Status.APPROVED)
         self.reservation.refresh_from_db()
         self.assertEqual(self.reservation.status, PayoutReservation.Status.COMPLETED)
+
+    def test_item_success_marks_completed(self):
+        response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="SUCCESS")
+        )
+        with _mock_paypal_post(return_value=response):
+            self._submit()
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="SUCCESS")
+        )
+        with _mock_paypal_get(return_value=get_response):
+            result = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        self.reservation.refresh_from_db()
+        self.assertEqual(result.outcome, "reconciled")
+        self.assertEqual(self.reservation.status, PayoutReservation.Status.COMPLETED)
+
+    def test_unclaimed_remains_nonterminal(self):
+        response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="UNCLAIMED")
+        )
+        with _mock_paypal_post(return_value=response):
+            self._submit()
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="UNCLAIMED")
+        )
+        with _mock_paypal_get(return_value=get_response):
+            result = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        self.reservation.refresh_from_db()
+        self.assertEqual(result.outcome, "pending")
+        self.assertEqual(
+            self.reservation.status, PayoutReservation.Status.SUBMISSION_PENDING
+        )
+
+    def test_claimed_not_completed(self):
+        response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="CLAIMED")
+        )
+        with _mock_paypal_post(return_value=response):
+            self._submit()
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="CLAIMED")
+        )
+        with _mock_paypal_get(return_value=get_response):
+            result = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        self.reservation.refresh_from_db()
+        self.assertEqual(result.outcome, "pending")
+        self.assertEqual(
+            self.reservation.status, PayoutReservation.Status.SUBMISSION_PENDING
+        )
+
+    def test_batch_success_without_successful_item(self):
+        response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="PENDING")
+        )
+        with _mock_paypal_post(return_value=response):
+            self._submit()
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="PENDING")
+        )
+        with _mock_paypal_get(return_value=get_response):
+            result = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        self.reservation.refresh_from_db()
+        self.assertEqual(result.outcome, "pending")
+        self.assertEqual(
+            self.reservation.status, PayoutReservation.Status.SUBMISSION_PENDING
+        )
+
+    def test_real_rate_limit_error_path(self):
+        from apps.payments.paypal.client import PayPalRateLimitError
+
+        with _mock_paypal_post(exception=PayPalRateLimitError("rate limited")):
+            result = self._submit()
+        self.assertEqual(result.outcome, "uncertain")
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, PayoutReservation.Status.UNCERTAIN)
+
+    def test_ambiguous_400_marks_uncertain(self):
+        response = _mock_response(400, {})
+        with _mock_paypal_post(return_value=response):
+            result = self._submit()
+        self.assertEqual(result.outcome, "uncertain")
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, PayoutReservation.Status.UNCERTAIN)
+
+    def test_definitive_validation_rejection_marks_failed(self):
+        response = _mock_response(400, {"name": "VALIDATION_ERROR", "message": "bad"})
+        with _mock_paypal_post(return_value=response):
+            result = self._submit()
+        self.assertEqual(result.outcome, "failed")
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, PayoutReservation.Status.FAILED)
+
+    def test_reconcile_connection_failure(self):
+        from apps.payments.paypal.client import PayPalConnectionError
+
+        response = _mock_response(200, _success_payload(status="SUCCESS"))
+        with _mock_paypal_post(return_value=response):
+            self._submit()
+        with _mock_paypal_get(exception=PayPalConnectionError("conn")):
+            result = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        self.reservation.refresh_from_db()
+        self.assertEqual(result.outcome, "pending")
+        self.assertEqual(self.reservation.status, PayoutReservation.Status.SUBMITTED)
+
+    def test_reconcile_rate_limit_and_server_error(self):
+        from apps.payments.paypal.client import PayPalRateLimitError, PayPalServerError
+
+        response = _mock_response(200, _success_payload(status="SUCCESS"))
+        with _mock_paypal_post(return_value=response):
+            self._submit()
+
+        with _mock_paypal_get(exception=PayPalRateLimitError("rl")):
+            result = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        self.assertEqual(result.outcome, "pending")
+
+        with _mock_paypal_get(exception=PayPalServerError("se")):
+            result = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        self.assertEqual(result.outcome, "pending")
+
+    def test_no_duplicate_success_audit(self):
+        response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="SUCCESS")
+        )
+        with _mock_paypal_post(return_value=response):
+            self._submit()
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="SUCCESS")
+        )
+        with _mock_paypal_get(return_value=get_response):
+            payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        with _mock_paypal_get(return_value=get_response):
+            payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+        self.assertEqual(
+            AuditEvent.objects.filter(
+                event_type=AuditEvent.EventType.PAYMENT_SUCCEEDED,
+                spend_request=self.spend_request,
+            ).count(),
+            1,
+        )
 
 
 class PayoutSubmissionViewBase(APITestCase):
@@ -695,7 +858,9 @@ class PayoutSubmissionViewTests(PayoutSubmissionViewBase):
             resp = self._post_submit(user=self.admin)
         self.assertEqual(resp.status_code, 201)
 
-        get_response = _mock_response(200, _success_payload(status="SUCCESS"))
+        get_response = _mock_response(
+            200, _success_payload(status="SUCCESS", item_status="SUCCESS")
+        )
         with _mock_paypal_get(return_value=get_response):
             resp = self.client.get(
                 PAYOUT_SUBMIT_URL.format(self.reservation.pk).replace(

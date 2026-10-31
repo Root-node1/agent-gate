@@ -467,7 +467,13 @@ class PayPalClient:
             error_cls = PayPalServerError
         else:
             error_cls = PayPalAPIError
-        return error_cls("PayPal API returned HTTP %d: %s" % (status, detail))
+        error = error_cls("PayPal API returned HTTP %d: %s" % (status, detail))
+        error.status_code = status
+        error.error_name = name if isinstance(body, dict) else None
+        error.error_message = message if isinstance(body, dict) else None
+        error.debug_id = debug_id
+        error.details = body.get("details") if isinstance(body, dict) else None
+        return error
 
     # -- misc ----------------------------------------------------------------
     def _backoff(self, attempt):

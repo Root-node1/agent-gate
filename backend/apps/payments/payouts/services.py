@@ -11,6 +11,12 @@ Public API:
 - :func:`reconcile_payout` — queries PayPal batch/item status for a pending
   submission and advances the reservation to an authoritative state.
 
+SpendRequest lifecycle invariant (INT-13J.2):
+  PayoutReservation is the authoritative payout lifecycle.  SpendRequest stays
+  APPROVED after reservation, submission, and completion so approved spending
+  remains counted in BUDGET_STATUSES without a broader state-machine redesign.
+  Payment execution evidence is recorded on PayoutReservation and AuditEvent.
+
 All financial and recipient values are immutable snapshots taken from the
 SpendRequest at reservation time.
 """
@@ -30,7 +36,9 @@ from apps.payees.models import DestinationType, Payee
 from apps.payments.paypal.client import (
     PayPalAPIError,
     PayPalClient,
+    PayPalClientError,
     PayPalConflictError,
+    PayPalRateLimitError,
     PayPalTransportError,
     PayPalUncertainOutcomeError,
 )
@@ -426,8 +434,51 @@ def _submit_to_paypal(
             "PayPal rate-limited the request; outcome uncertain."
         )
     if status >= 400:
-        raise PayPalAPIError(f"PayPal returned HTTP {status}.")
+        body = None
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        structured = isinstance(body, dict) and bool(
+            body.get("name") or body.get("message") or body.get("details")
+        )
+        if structured:
+            exc = PayPalAPIError(f"PayPal returned HTTP {status}.")
+            exc.status_code = status
+            if isinstance(body, dict):
+                exc.error_name = body.get("name")
+                exc.error_message = body.get("message")
+                exc.details = body.get("details")
+            raise exc
+        raise PayPalUncertainOutcomeError(
+            f"PayPal returned HTTP {status}; outcome uncertain."
+        )
     return _parse_payout_response(response.json())
+
+
+def _is_definitive_rejection(exc) -> bool:
+    """Whether a PayPalAPIError proves the payout was not executed.
+
+    Only structured 4xx responses (other than 409/429) count as definitive
+    validation rejections.  Transport, rate-limit, conflict, and unstructured
+    responses remain uncertain.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        import re
+
+        match = re.search(r"HTTP (\d+)", str(exc))
+        if match:
+            status = int(match.group(1))
+    if status is None or status == 429 or status == 409:
+        return False
+    if not (400 <= status < 500):
+        return False
+    return bool(
+        getattr(exc, "error_name", None)
+        or getattr(exc, "error_message", None)
+        or getattr(exc, "details", None)
+    )
 
 
 def _reconcile_with_paypal(
@@ -570,12 +621,39 @@ def submit_payout(
             paypal_item_id=reservation.paypal_payout_item_id,
         )
     except PayPalAPIError as exc:
-        # Hard client error (4xx): authoritative that submission won't succeed.
-        # Reload under lock and transition to FAILED with a sanitized error.
+        # Rate limits, conflicts, transport-derived, and unstructured 4xx
+        # responses are treated as uncertain.  Only definitive validation
+        # rejections (structured 4xx) mark the reservation FAILED.
+        uncertain = (
+            isinstance(exc, PayPalRateLimitError)
+            or getattr(exc, "status_code", None) == 429
+            or not _is_definitive_rejection(exc)
+        )
         with transaction.atomic():
             reservation = PayoutReservation.objects.select_for_update().get(
                 pk=reservation_id
             )
+            if uncertain:
+                _transition_to_uncertain(reservation)
+                AuditEvent.record(
+                    AuditEvent.EventType.PAYMENT_FAILED,
+                    organization=reservation.organization,
+                    agent=reservation.spend_request.agent,
+                    spend_request=reservation.spend_request,
+                    actor_type=AuditEvent.ActorType.SYSTEM,
+                    actor_id="",
+                    amount=to_major(reservation.amount_minor, reservation.currency),
+                    currency=reservation.currency,
+                    merchant=reservation.spend_request.merchant_ref,
+                    payout_reservation_id=str(reservation.id),
+                    error="uncertain_outcome",
+                )
+                return SubmissionResult(
+                    reservation,
+                    "uncertain",
+                    paypal_batch_id=reservation.paypal_payout_batch_id,
+                    paypal_item_id=reservation.paypal_payout_item_id,
+                )
             _transition_to_failed(reservation, str(exc))
             AuditEvent.record(
                 AuditEvent.EventType.PAYMENT_FAILED,
@@ -668,8 +746,9 @@ def reconcile_payout(
     # SUBMISSION_PENDING or UNCERTAIN: query PayPal.
     try:
         result = _reconcile_with_paypal(reservation, django_settings, session=session)
-    except PayPalAPIError as exc:
-        # Cannot reach PayPal: keep current state, remain recoverable.
+    except PayPalClientError as exc:
+        # Cannot reach PayPal (or PayPal rejected the lookup): keep current
+        # state recoverable.  Never claim completion or failure.
         return SubmissionResult(
             reservation,
             "pending",
@@ -723,11 +802,10 @@ def reconcile_payout(
                 batch_status=batch_status,
             )
         elif status_upper in ("SUCCESS", "COMPLETED"):
-            # Batch accepted by PayPal — but completion requires item-level
-            # confirmation.  Batch acceptance alone is NOT proof the
-            # recipient received funds.
-            if item_status_upper in ("UNCLAIMED", "CLAIMED"):
-                # Item-level confirmation: PayPal has executed the payout.
+            # Batch accepted by PayPal — completion requires authoritative
+            # item-level evidence.  Batch acceptance alone is NOT proof.
+            if item_status_upper == "SUCCESS":
+                # Authoritative item-level completion.
                 reservation.status = PayoutReservation.Status.COMPLETED
                 outcome = "reconciled"
                 AuditEvent.record(
@@ -752,6 +830,7 @@ def reconcile_payout(
                 "REFUNDED",
                 "RETURNED",
                 "REVERSED",
+                "BLOCKED",
             ):
                 # Batch processed but the individual item did not succeed.
                 reservation.status = PayoutReservation.Status.FAILED
@@ -776,15 +855,20 @@ def reconcile_payout(
                     batch_status=batch_status,
                 )
             else:
-                # Item status unknown or still pending: keep recoverable.
+                # UNCLAIMED, CLAIMED, PENDING, ONHOLD, or unknown: keep
+                # recoverable (nonterminal).
                 reservation.status = PayoutReservation.Status.SUBMISSION_PENDING
                 outcome = "pending"
         else:
-            # PENDING, PROCESSING, UNCLAIMED (batch-level), or unknown:
-            # keep recoverable.
+            # PENDING, PROCESSING, or unknown batch status: keep recoverable.
             reservation.status = PayoutReservation.Status.SUBMISSION_PENDING
             outcome = "pending"
 
+        reservation.reconciliation_metadata = {
+            **(reservation.reconciliation_metadata or {}),
+            "batch_status": batch_status,
+            "item_transaction_status": item_transaction_status,
+        }
         reservation.save()
 
     return SubmissionResult(

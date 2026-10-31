@@ -13,6 +13,13 @@ from django.utils import timezone as django_timezone
 
 from apps.audit.models import AuditEvent
 from apps.common.money import to_major
+from apps.payments.checkout.services import (
+    CaptureVerificationError,
+    _extract_capture,
+    _verify_capture,
+    _verify_paypal_order,
+    get_paypal_order,
+)
 from apps.payments.models import CheckoutOrder, WebhookEvent
 from apps.payments.payouts.models import PayoutReservation
 from apps.payments.payouts.services import reconcile_payout
@@ -90,18 +97,42 @@ def process_checkout_capture_completed(webhook_event, django_settings):
     if not _verify_checkout_amount(resource, checkout):
         return "retryable"
 
+    # Provider lookup outside any database transaction.
+    from apps.payments.paypal.client import PayPalClient
+
+    client = PayPalClient.from_settings(django_settings)
+    try:
+        paypal_order = get_paypal_order(checkout_order=checkout, client=client)
+    except PayPalClientError:
+        return "retryable"
+    if not paypal_order:
+        return "retryable"
+    try:
+        _verify_paypal_order(paypal_order, checkout)
+        capture = _extract_capture(paypal_order)
+        capture_status = _verify_capture(capture, checkout)
+    except CaptureVerificationError:
+        return "retryable"
+    capture_id = capture.get("id") if capture else None
+    if resource.get("id") and capture_id and resource.get("id") != capture_id:
+        return "retryable"
+    if capture_status != "COMPLETED":
+        return "retryable"
+
     with transaction.atomic():
+        locked_event = WebhookEvent.objects.select_for_update().get(pk=webhook_event.pk)
+        if locked_event.processed_at is not None:
+            return "already_processed"
         checkout = CheckoutOrder.objects.select_for_update().get(pk=checkout.pk)
         if checkout.status == CheckoutOrder.Status.COMPLETED:
-            _mark_processed(webhook_event)
+            locked_event.processed_at = django_timezone.now()
+            locked_event.save(update_fields=["processed_at", "updated_at"])
             return "already_processed"
         if checkout.status not in (
             CheckoutOrder.Status.APPROVED,
             CheckoutOrder.Status.CAPTURE_PENDING,
         ):
-            # Do not mutate from an out-of-order or incompatible state.
             return "retryable"
-        capture_id = resource.get("id")
         if capture_id:
             checkout.paypal_capture_id = capture_id
         checkout.transition_to(CheckoutOrder.Status.COMPLETED)
@@ -117,7 +148,8 @@ def process_checkout_capture_completed(webhook_event, django_settings):
             amount=str(to_major(checkout.amount_minor, checkout.currency)),
             currency=checkout.currency,
         )
-    _mark_processed(webhook_event)
+        locked_event.processed_at = django_timezone.now()
+        locked_event.save(update_fields=["processed_at", "updated_at"])
     return "processed"
 
 
@@ -127,12 +159,16 @@ def process_checkout_capture_denied(webhook_event, django_settings):
     if checkout is None:
         return "unknown_identifier"
     with transaction.atomic():
+        locked_event = WebhookEvent.objects.select_for_update().get(pk=webhook_event.pk)
+        if locked_event.processed_at is not None:
+            return "already_processed"
         checkout = CheckoutOrder.objects.select_for_update().get(pk=checkout.pk)
         if checkout.status in (
             CheckoutOrder.Status.COMPLETED,
             CheckoutOrder.Status.DECLINED,
         ):
-            _mark_processed(webhook_event)
+            locked_event.processed_at = django_timezone.now()
+            locked_event.save(update_fields=["processed_at", "updated_at"])
             return "already_processed"
         if checkout.status == CheckoutOrder.Status.CAPTURE_PENDING:
             checkout.transition_to(CheckoutOrder.Status.DECLINED)
@@ -144,7 +180,8 @@ def process_checkout_capture_denied(webhook_event, django_settings):
                 failure_reason="capture_denied",
                 paypal_order_id=checkout.paypal_order_id,
             )
-    _mark_processed(webhook_event)
+        locked_event.processed_at = django_timezone.now()
+        locked_event.save(update_fields=["processed_at", "updated_at"])
     return "processed"
 
 
@@ -168,78 +205,53 @@ def process_payout_event(webhook_event, django_settings):
     if reservation is None:
         return "unknown_identifier"
 
-    item_status = (resource.get("transaction_status") or "").upper()
-    # If no authoritative item status is present, reconcile via PayPal GET.
-    if not item_status:
-        try:
-            reconcile_payout(reservation.pk, django_settings)
-        except PayPalClientError:
-            return "retryable"
-        _mark_processed(webhook_event)
-        return "processed"
+    # Binding checks: conflicting identifiers are not applied.
+    resource_batch_id = resource.get("payout_batch_id")
+    if (
+        resource_batch_id
+        and reservation.paypal_payout_batch_id
+        and str(resource_batch_id) != str(reservation.paypal_payout_batch_id)
+    ):
+        return "retryable"
+    resource_sender_batch_id = resource.get("sender_batch_id")
+    if (
+        resource_sender_batch_id
+        and reservation.sender_batch_id is not None
+        and str(resource_sender_batch_id) != str(reservation.sender_batch_id)
+    ):
+        return "retryable"
 
-    terminal = reservation.status in (
-        PayoutReservation.Status.COMPLETED,
-        PayoutReservation.Status.FAILED,
-    )
+    # Provider lookup/reconciliation outside the final DB transaction.
+    try:
+        result = reconcile_payout(reservation.pk, django_settings)
+    except Exception:
+        return "retryable"
+    if getattr(result, "error", None):
+        return "retryable"
 
     with transaction.atomic():
+        locked_event = WebhookEvent.objects.select_for_update().get(pk=webhook_event.pk)
+        if locked_event.processed_at is not None:
+            return "already_processed"
         reservation = PayoutReservation.objects.select_for_update().get(
             pk=reservation.pk
         )
-        if terminal or reservation.status in (
+        if reservation.status in (
             PayoutReservation.Status.COMPLETED,
             PayoutReservation.Status.FAILED,
         ):
-            _mark_processed(webhook_event)
+            locked_event.processed_at = django_timezone.now()
+            locked_event.save(update_fields=["processed_at", "updated_at"])
             return "already_processed"
-        if item_status == "SUCCESS":
-            reservation.status = PayoutReservation.Status.COMPLETED
-            AuditEvent.record(
-                AuditEvent.EventType.PAYMENT_SUCCEEDED,
-                organization=reservation.organization,
-                agent=reservation.spend_request.agent,
-                spend_request=reservation.spend_request,
-                actor_type=AuditEvent.ActorType.PAYPAL,
-                actor_id=resource.get("payout_item_id") or "",
-                amount=to_major(reservation.amount_minor, reservation.currency),
-                currency=reservation.currency,
-                merchant=reservation.spend_request.merchant_ref,
-                payout_reservation_id=str(reservation.id),
-                paypal_payout_batch_id=reservation.paypal_payout_batch_id,
-                paypal_payout_item_id=reservation.paypal_payout_item_id,
-            )
-        elif item_status in (
-            "FAILED",
-            "DENIED",
-            "CANCELED",
-            "REFUNDED",
-            "RETURNED",
-            "REVERSED",
-            "BLOCKED",
+        # reconcile_payout already applied authoritative state; keep nonterminal
+        # reservations recoverable.
+        if reservation.status not in (
+            PayoutReservation.Status.COMPLETED,
+            PayoutReservation.Status.FAILED,
         ):
-            reservation.status = PayoutReservation.Status.FAILED
-            reservation.submission_error = f"PayPal item status: {item_status}"
-            AuditEvent.record(
-                AuditEvent.EventType.PAYMENT_FAILED,
-                organization=reservation.organization,
-                agent=reservation.spend_request.agent,
-                spend_request=reservation.spend_request,
-                actor_type=AuditEvent.ActorType.PAYPAL,
-                actor_id=resource.get("payout_item_id") or "",
-                amount=to_major(reservation.amount_minor, reservation.currency),
-                currency=reservation.currency,
-                merchant=reservation.spend_request.merchant_ref,
-                payout_reservation_id=str(reservation.id),
-                paypal_payout_batch_id=reservation.paypal_payout_batch_id,
-                paypal_payout_item_id=reservation.paypal_payout_item_id,
-            )
-        else:
-            # UNCLAIMED, PENDING, ONHOLD, unknown: remain recoverable.
-            reservation.status = PayoutReservation.Status.SUBMISSION_PENDING
-        reservation.save()
-
-    _mark_processed(webhook_event)
+            reservation.save(update_fields=["status", "updated_at"])
+        locked_event.processed_at = django_timezone.now()
+        locked_event.save(update_fields=["processed_at", "updated_at"])
     return "processed"
 
 

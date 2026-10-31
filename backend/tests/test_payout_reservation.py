@@ -581,6 +581,14 @@ class PayoutConcurrencyTests(PostgresTransactionTestCase):
         )
         self.key = uuid.uuid4()
 
+    def _reserve(self):
+        return payout_services.reserve_payout(
+            self.organization,
+            spend_request_id=self.spend_request.pk,
+            idempotency_key=self.key,
+            django_settings=settings,
+        )
+
     @override_settings(**PAYOUT_SETTINGS)
     def test_concurrent_same_key_single_reservation(self):
         barrier = threading.Barrier(2)
@@ -620,3 +628,89 @@ class PayoutConcurrencyTests(PostgresTransactionTestCase):
         self.assertEqual(reservation_count, 1)
         reservation = PayoutReservation.objects.get(spend_request=self.spend_request)
         self.assertEqual(reservation.idempotency_key, self.key)
+
+    @override_settings(**PAYOUT_SETTINGS)
+    def test_concurrent_different_spend_requests_same_budget(self):
+        """Two approved SpendRequests for the same agent reserve concurrently."""
+        key2 = uuid.uuid4()
+        spend_request2 = _make_spend_request(
+            self.organization,
+            self.agent,
+            self.policy,
+            payee=self.payee,
+            amount_minor=500,  # $5.00 each, well within any reasonable budget
+        )
+        results = {}
+
+        def worker(label, sr_id, key):
+            from django.db import connection as _conn
+
+            _conn.close_if_unusable_or_obsolete()
+            try:
+                results[label] = payout_services.reserve_payout(
+                    self.organization,
+                    spend_request_id=sr_id,
+                    idempotency_key=key,
+                    django_settings=settings,
+                )
+            except Exception as exc:
+                results[label] = exc
+            finally:
+                _conn.close_if_unusable_or_obsolete()
+
+        threads = [
+            threading.Thread(
+                target=worker, args=("worker1", self.spend_request.pk, self.key)
+            ),
+            threading.Thread(target=worker, args=("worker2", spend_request2.pk, key2)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        for label, value in results.items():
+            self.assertNotIsInstance(value, Exception, f"{label} raised {value!r}")
+            reservation, replayed = value
+            self.assertFalse(replayed)
+            self.assertEqual(reservation.status, PayoutReservation.Status.RESERVED)
+
+        self.assertEqual(
+            PayoutReservation.objects.filter(
+                spend_request__in=[self.spend_request, spend_request2]
+            ).count(),
+            2,
+        )
+
+    @override_settings(**PAYOUT_SETTINGS)
+    def test_reservation_rejects_pending_approval(self):
+        """A SpendRequest whose approval is still PENDING cannot reserve."""
+        pending_approval = _make_spend_request(
+            self.organization,
+            self.agent,
+            self.policy,
+            payee=self.payee,
+            decision=SpendRequest.Decision.NEEDS_APPROVAL,
+            status=SpendRequest.Status.APPROVED,
+        )
+        Approval.objects.create(
+            organization=self.organization,
+            spend_request=pending_approval,
+            outcome=Approval.Outcome.PENDING,
+            expires_at=timezone.now() + timedelta(minutes=60),
+        )
+        with self.assertRaises(payout_services.PayoutNotEligible):
+            payout_services.reserve_payout(
+                self.organization,
+                spend_request_id=pending_approval.pk,
+                idempotency_key=self.key,
+                django_settings=settings,
+            )
+
+    @override_settings(**PAYOUT_SETTINGS)
+    def test_reservation_does_not_mark_executed(self):
+        """Reservation must not change SpendRequest status to EXECUTING/SUCCEEDED."""
+        self._reserve()
+        self.spend_request.refresh_from_db()
+        self.assertEqual(self.spend_request.status, SpendRequest.Status.APPROVED)
+        self.assertIsNone(self.spend_request.executed_at)

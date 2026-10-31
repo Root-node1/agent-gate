@@ -122,8 +122,10 @@ def reserve_payout(
 
     # --- 1. Lock and load the SpendRequest --------------------------------
     try:
-        spend_request = SpendRequest.objects.select_for_update(of=("self",)).get(
-            pk=spend_request_id, organization=organization
+        spend_request = (
+            SpendRequest.objects.select_for_update(of=("self",))
+            .select_related("approval")
+            .get(pk=spend_request_id, organization=organization)
         )
     except SpendRequest.DoesNotExist:
         raise PayoutNotEligible("SpendRequest not found or not in this organization.")

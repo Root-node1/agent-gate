@@ -49,6 +49,11 @@ class PayoutReservation(models.Model):
 
     class Status(models.TextChoices):
         RESERVED = "reserved", "Reserved"
+        SUBMISSION_PENDING = "submission_pending", "Submission pending"
+        SUBMITTED = "submitted", "Submitted to PayPal"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        UNCERTAIN = "uncertain", "Outcome uncertain"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -78,9 +83,16 @@ class PayoutReservation(models.Model):
 
     idempotency_key = models.UUIDField(null=True, blank=True, editable=False)
 
-    # Nullable future PayPal Payouts identifiers (not set during reservation).
+    # Stable PayPal sender batch ID, generated once at submission and reused
+    # across retries so PayPal dedupes duplicate batches.
+    sender_batch_id = models.UUIDField(null=True, blank=True, editable=False)
+
+    # Nullable future PayPal Payouts identifiers (set after submission).
     paypal_payout_batch_id = models.CharField(max_length=100, null=True, blank=True)
     paypal_payout_item_id = models.CharField(max_length=100, null=True, blank=True)
+
+    submission_attempted_at = models.DateTimeField(null=True, blank=True)
+    submission_error = models.TextField(null=True, blank=True)
 
     status = models.CharField(
         max_length=25, choices=Status.choices, default=Status.RESERVED
@@ -121,6 +133,11 @@ class PayoutReservation(models.Model):
                 condition=Q(paypal_payout_item_id__isnull=False),
                 name="unique_paypal_payout_item_id",
             ),
+            models.UniqueConstraint(
+                fields=["sender_batch_id"],
+                condition=Q(sender_batch_id__isnull=False),
+                name="unique_payout_sender_batch_id",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -138,21 +155,11 @@ class PayoutReservation(models.Model):
         instance._original_destination_type = instance.destination_type
         instance._original_destination_value = instance.destination_value
         instance._original_destination_fingerprint = instance.destination_fingerprint
+        instance._original_sender_batch_id = instance.sender_batch_id
         return instance
 
     def save(self, *args, **kwargs):
         self.currency = normalize_currency(self.currency)
-
-        original_status = getattr(self, "_original_status", None)
-        if (
-            not self._state.adding
-            and original_status is not None
-            and original_status != self.status
-        ):
-            raise ValueError(
-                f"Invalid status transition from {original_status!r} to "
-                f"{self.status!r} for PayoutReservation {self.pk}."
-            )
 
         if not self._state.adding:
             if (
@@ -196,6 +203,11 @@ class PayoutReservation(models.Model):
                 != self._original_destination_fingerprint
             ):
                 raise ValueError("destination_fingerprint is immutable after creation.")
+            if (
+                getattr(self, "_original_sender_batch_id", None) is not None
+                and self.sender_batch_id != self._original_sender_batch_id
+            ):
+                raise ValueError("sender_batch_id is immutable after creation.")
 
         super().save(*args, **kwargs)
         self._original_status = self.status
@@ -207,3 +219,4 @@ class PayoutReservation(models.Model):
         self._original_destination_type = self.destination_type
         self._original_destination_value = self.destination_value
         self._original_destination_fingerprint = self.destination_fingerprint
+        self._original_sender_batch_id = self.sender_batch_id

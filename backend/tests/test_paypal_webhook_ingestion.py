@@ -186,7 +186,36 @@ class PayPalWebhookIngestionTests(TestCase):
         self.assertNotIn("test-client-secret", str(resp.content))
         self.assertNotIn("secret", str(resp.content).lower())
 
-    def test_acknowledgment_after_commit(self):
+    def test_verification_authorization_failure(self):
+        for code in (401, 403):
+            with _mock_verify(return_value=_mock_response(code, {})):
+                resp = self._post()
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(WebhookEvent.objects.count(), 0)
+
+    def test_verification_rate_limited_or_server_error(self):
+        for code in (429, 500, 503):
+            with _mock_verify(return_value=_mock_response(code, {})):
+                resp = self._post()
+            self.assertEqual(resp.status_code, 503)
+            self.assertEqual(WebhookEvent.objects.count(), 0)
+
+    def test_malformed_verification_response(self):
+        bad = MagicMock()
+        bad.status_code = 200
+        bad.json.side_effect = ValueError("bad")
+        with _mock_verify(return_value=bad):
+            resp = self._post()
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(WebhookEvent.objects.count(), 0)
+
+    def test_verification_explicit_failure_rejected(self):
+        with _mock_verify(
+            return_value=_mock_response(200, {"verification_status": "FAILURE"})
+        ):
+            resp = self._post()
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(WebhookEvent.objects.count(), 0)
         response_obj = _mock_response(200, {"verification_status": "SUCCESS"})
         with _mock_verify(return_value=response_obj):
             resp = self._post()

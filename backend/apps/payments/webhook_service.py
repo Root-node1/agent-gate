@@ -2,6 +2,13 @@
 
 This module only authenticates and durably stores incoming webhook events.
 It does not mutate payout, checkout, or spend state.
+
+Trust boundary (INT-13K.1):
+- Verification uses the server-configured webhook ID only.
+- No organization or payment identifier from the payload is trusted.
+- Raw payloads are persisted only after successful signature verification.
+- Webhook ingestion never updates financial state; processing is deferred to
+  INT-13L.
 """
 
 import json
@@ -125,6 +132,14 @@ def ingest_paypal_webhook(*, body, headers, django_settings):
         raise WebhookVerificationError(str(exc)) from exc
 
     status_code = getattr(response, "status_code", 200) or 200
+    if status_code in (401, 403):
+        raise WebhookVerificationError(
+            f"PayPal verification authorization failed (HTTP {status_code})."
+        )
+    if status_code == 429 or status_code >= 500:
+        raise WebhookTransportError(
+            f"PayPal verification unavailable (HTTP {status_code})."
+        )
     if status_code >= 400:
         raise WebhookVerificationError(
             f"PayPal verification returned HTTP {status_code}."
@@ -132,9 +147,11 @@ def ingest_paypal_webhook(*, body, headers, django_settings):
     try:
         verification_status = response.json().get("verification_status")
     except Exception as exc:
-        raise WebhookVerificationError("Invalid verification response.") from exc
-    if verification_status != "SUCCESS":
+        raise WebhookTransportError("Invalid verification response.") from exc
+    if verification_status == "FAILURE":
         raise WebhookVerificationError("Webhook signature verification failed.")
+    if verification_status != "SUCCESS":
+        raise WebhookTransportError("Unknown verification response.")
 
     try:
         with transaction.atomic():

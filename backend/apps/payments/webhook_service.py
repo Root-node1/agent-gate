@@ -167,3 +167,21 @@ def ingest_paypal_webhook(*, body, headers, django_settings):
         raise WebhookStorageError(str(exc)) from exc
 
     return "created"
+
+
+def process_webhook_event(*args, **kwargs):
+    from apps.payments.webhook_processing import process_webhook_event as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def process_paypal_webhook(*args, **kwargs):
+    from apps.payments.webhook_processing import process_paypal_webhook as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def process_webhook_events(*args, **kwargs):
+    from apps.payments.webhook_processing import process_webhook_events as _impl
+
+    return _impl(*args, **kwargs)

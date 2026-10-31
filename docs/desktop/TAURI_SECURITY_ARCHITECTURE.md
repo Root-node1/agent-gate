@@ -2,6 +2,10 @@
 
 Status: architecture for Tech Lead review. No authentication behavior changes are implemented by this document.
 
+# AgentGate Desktop — Tauri v2 Security Architecture
+
+Status: architecture for Tech Lead review. No authentication behavior changes are implemented by this document.
+
 ## 1. Existing authentication contracts
 
 ### 1.1 Dashboard (human) authentication
@@ -210,6 +214,82 @@ Given 11.2, the chosen implementation path is **A. Same-origin local API proxy**
 - [ ] `CSRF_TRUSTED_ORIGINS` includes desktop origins.
 - [ ] Capabilities remain `core:default`.
 - [ ] No secrets in logs/crash reports.
+
+## 12. TAURI-07B: Packaged desktop authentication transport proof
+
+### 12.1 Actual packaged origin
+
+- Linux WebKitGTK: `tauri://localhost` (Tauri v2 custom protocol). Confirmed via `tauri info` (CSP/frontendDist) and Tauri v2 protocol convention; dev build ran under WSLg with appId `app`.
+- Windows WebView2: `https://tauri.localhost`.
+- macOS: `tauri://localhost`.
+- Backend API: `http://127.0.0.1:8000`.
+- In packaged mode the frontend origin and backend origin are distinct (cross-origin, cross-site).
+
+### 12.2 Candidate comparison
+
+**A. Tauri custom-protocol request handling (`tauri://localhost` proxying `/api`):**
+- Would make requests appear same-origin to the WebView, but WebKitGTK's cookie store for custom schemes (`tauri://`) does not reliably persist/send `HttpOnly` session cookies the way an HTTP origin does. Tauri's asset protocol is not a browser-managed HTTP origin.
+- Risk: session cookie not stored or not attached; auth silently fails.
+- Verdict: **rejected** for cookie-based auth. Not validated.
+
+**B. Local HTTP application origin (loopback HTTP serving frontend + proxying API):**
+- Serve the built frontend and proxy `/api`, `/v1` from one loopback HTTP origin (e.g. `http://127.0.0.1:<port>`). Browser sees same-origin requests → `SameSite=Lax` session cookie sent and CSRF works.
+- Validated experimentally (see 12.3): all 7 auth steps pass.
+- Verdict: **selected**.
+
+**C. Backend-supported desktop authentication (token-based):**
+- Only if B fails. B works, so C is deferred. No JWT/OAuth/native credential storage introduced.
+
+### 12.3 Experimental evidence (Candidate B)
+
+Temporary proof harness (not committed): Python `ThreadingHTTPServer` on `127.0.0.1:8080` serving `frontend/dist` and proxying `/api` + `/v1` to Django `127.0.0.1:8000` (loopback-only). Django on authorized PostgreSQL `agentgate` DB; disposable user; no PayPal access.
+
+Results against single origin `http://127.0.0.1:8080`:
+1. Packaged frontend load `GET /` -> **200** ✓
+2. CSRF bootstrap `GET /api/auth/headless/browser/v1/config` -> **200**, csrftoken present ✓
+3. Login `POST /auth/login` -> **200** ✓
+4. Authenticated `GET /auth/session` -> **200**, is_authenticated true ✓
+5. CSRF-protected `POST /account/password/change` -> **200** ✓
+6. Logout `DELETE /auth/session` -> **401** (session invalidated, cookie cleared) ✓
+7. Post-logout `GET /auth/session` -> **401** ✓
+
+Classification: steps 1-7 = runtime-observed via HTTP client against the proxy (automated). Visual WebView rendering of the packaged app was not observed (no interactive display in this agent environment); the proxy proof demonstrates the transport contract.
+
+### 12.4 Security analysis (loopback HTTP)
+
+- Loopback-only binding (`127.0.0.1`): no remote exposure. ✓
+- Random/fixed port: use a fixed or OS-assigned port; if fixed, document it. Prefer OS-assigned with discovery via Tauri state to reduce conflicts.
+- Host-header validation: proxy must reject requests whose `Host` is not `127.0.0.1:<port>` / `localhost:<port>` to mitigate DNS rebinding.
+- DNS rebinding: mitigated by Host-header validation and loopback binding; do not trust `Origin` alone.
+- Cross-origin requests from malicious websites: backend must not accept cross-origin credentialed requests from arbitrary origins; `CSRF_TRUSTED_ORIGINS` enumerates desktop origin only.
+- CSRF/origin checks: preserved (no weakening).
+- Request forwarding restrictions: proxy forwards only `/api` and `/v1`; deny all other paths to backend.
+- Process lifecycle/cleanup: sidecar must be terminated on app exit (Tauri sidecar lifecycle or explicit kill).
+- TLS: loopback HTTP is acceptable for local dev; remote production APIs must use HTTPS (out of scope for desktop local backend).
+
+### 12.5 Cross-platform limitations
+
+- Linux/macOS: `tauri://localhost` origin; loopback proxy approach works.
+- Windows: WebView2 origin `https://tauri.localhost` (HTTPS). A loopback HTTP proxy is still same-origin only if the frontend is served from the same HTTP origin; if the frontend remains on `https://tauri.localhost`, the proxy is cross-origin. On Windows, either serve frontend over the loopback HTTP origin too, or use a local HTTPS origin with a trusted cert. To be validated in a Windows environment.
+- macOS code signing / Gatekeeper: sidecar binary must be signed.
+
+### 12.6 Selected implementation path
+
+**B. Local HTTP loopback origin** (sidecar or embedded Rust HTTP server serving built frontend + proxying `/api`, `/v1` to local Django). Preserves `SameSite=Lax` + HttpOnly session cookie + CSRF. No cookie security weakening. Candidate A rejected (unreliable cookie handling on custom scheme). Candidate C deferred.
+
+### 12.7 Required backend/frontend/Tauri changes
+
+- Backend: `CSRF_TRUSTED_ORIGINS` += loopback origin (`http://127.0.0.1:<port>`) and desktop origin; optional `DESKTOP_ALLOWED_ORIGINS` env toggle.
+- Tauri: add sidecar or embedded HTTP server; configure `devUrl`/`frontendDist` to the loopback origin in packaged mode; ensure sidecar lifecycle cleanup.
+- Frontend: no auth code changes; keep `bootstrapCsrf`/`headlessFetch` with relative URLs.
+- Capabilities remain `core:default`; add no broad permissions.
+
+### 12.8 Remaining verification requirements
+
+- Run the 7-step auth flow against a real packaged Tauri build on Linux (binary already builds; interactive WebView test pending).
+- Validate Windows origin (`https://tauri.localhost`) handling.
+- Verify Host-header validation and DNS-rebinding mitigation in the proxy.
+- Verify sidecar cleanup on app exit.
 
 ## 9. Security acceptance criteria
 

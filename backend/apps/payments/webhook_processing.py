@@ -170,6 +170,44 @@ def process_checkout_capture_denied(webhook_event, django_settings):
     checkout = _checkout_order_from_resource(resource)
     if checkout is None:
         return "unknown_identifier"
+
+    capture_id = resource.get("id")
+    if not capture_id:
+        return "retryable"
+    if not _verify_checkout_amount(resource, checkout):
+        return "retryable"
+
+    # Provider lookup outside any database transaction.
+    from apps.payments.paypal.client import PayPalClient
+
+    client = PayPalClient.from_settings(django_settings)
+    try:
+        response = get_paypal_order(checkout_order=checkout, client=client)
+    except PayPalClientError:
+        return "retryable"
+    if response is None:
+        return "retryable"
+    status_code = getattr(response, "status_code", 200) or 200
+    if status_code >= 400:
+        return "retryable"
+    try:
+        paypal_order = response.json()
+    except Exception:
+        return "retryable"
+    if not isinstance(paypal_order, dict):
+        return "retryable"
+    try:
+        _verify_paypal_order(paypal_order, checkout)
+        capture = _extract_capture(paypal_order)
+        capture_status = _verify_capture(capture, checkout)
+    except CaptureVerificationError:
+        return "retryable"
+    provider_capture_id = capture.get("id") if capture else None
+    if provider_capture_id and provider_capture_id != capture_id:
+        return "retryable"
+    if capture_status not in ("DENIED", "DECLINED"):
+        return "retryable"
+
     with transaction.atomic():
         locked_event = WebhookEvent.objects.select_for_update().get(pk=webhook_event.pk)
         if locked_event.processed_at is not None:
@@ -182,19 +220,20 @@ def process_checkout_capture_denied(webhook_event, django_settings):
             locked_event.processed_at = django_timezone.now()
             locked_event.save(update_fields=["processed_at", "updated_at"])
             return "already_processed"
-        if checkout.status in (
+        if checkout.status not in (
             CheckoutOrder.Status.APPROVED,
             CheckoutOrder.Status.CAPTURE_PENDING,
         ):
-            checkout.transition_to(CheckoutOrder.Status.DECLINED)
-            checkout.save(update_fields=["status", "updated_at"])
-            AuditEvent.record(
-                AuditEvent.EventType.PAYMENT_FAILED,
-                organization=checkout.organization,
-                actor_type=AuditEvent.ActorType.PAYPAL,
-                failure_reason="capture_denied",
-                paypal_order_id=checkout.paypal_order_id,
-            )
+            return "retryable"
+        checkout.transition_to(CheckoutOrder.Status.DECLINED)
+        checkout.save(update_fields=["status", "updated_at"])
+        AuditEvent.record(
+            AuditEvent.EventType.PAYMENT_FAILED,
+            organization=checkout.organization,
+            actor_type=AuditEvent.ActorType.PAYPAL,
+            failure_reason="capture_denied",
+            paypal_order_id=checkout.paypal_order_id,
+        )
         locked_event.processed_at = django_timezone.now()
         locked_event.save(update_fields=["processed_at", "updated_at"])
     return "processed"

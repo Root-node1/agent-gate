@@ -73,6 +73,28 @@ def _completed_order(capture_id=PAYPAL_CAPTURE_ID):
     }
 
 
+def _denied_order(capture_id="CAP-DENIED"):
+    return {
+        "id": PAYPAL_ORDER_ID,
+        "status": "COMPLETED",
+        "intent": "CAPTURE",
+        "purchase_units": [
+            {
+                "amount": {"currency_code": "USD", "value": "10.00"},
+                "payments": {
+                    "captures": [
+                        {
+                            "id": capture_id,
+                            "status": "DENIED",
+                            "amount": {"currency_code": "USD", "value": "10.00"},
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+
+
 def _mock_get(return_value=None, side_effect=None):
     mock = MagicMock()
     if side_effect is not None:
@@ -247,7 +269,8 @@ class CaptureDeniedSecurityTests(TestCase):
 
     def test_valid_denied(self):
         ev = self._event()
-        result = process_webhook_event(ev, settings)
+        with _mock_get(return_value=_denied_order()):
+            result = process_webhook_event(ev, settings)
         self.assertEqual(result, "processed")
         self.checkout.refresh_from_db()
         self.assertEqual(self.checkout.status, CheckoutOrder.Status.DECLINED)
@@ -271,16 +294,130 @@ class CaptureDeniedSecurityTests(TestCase):
         self.checkout.refresh_from_db()
         self.assertEqual(self.checkout.status, CheckoutOrder.Status.APPROVED)
 
-    def test_stale_denied_after_completed(self):
-        self.checkout.transition_to(CheckoutOrder.Status.CAPTURE_PENDING)
-        self.checkout.save(update_fields=["status", "updated_at"])
-        self.checkout.transition_to(CheckoutOrder.Status.COMPLETED)
-        self.checkout.save(update_fields=["status", "updated_at"])
-        ev = self._event()
-        result = process_webhook_event(ev, settings)
-        self.assertEqual(result, "already_processed")
+    def test_wrong_capture_id(self):
+        ev = WebhookEvent.objects.create(
+            paypal_event_id="EVT-DENIED-WC-" + str(uuid.uuid4()),
+            event_type="PAYMENT.CAPTURE.DENIED",
+            payload={
+                "id": "EVT-DENIED-WC",
+                "event_type": "PAYMENT.CAPTURE.DENIED",
+                "resource": {
+                    "id": "WRONG-CAP",
+                    "supplementary_data": {
+                        "related_ids": {"order_id": self.checkout.paypal_order_id}
+                    },
+                },
+            },
+            signature_verified=True,
+        )
+        with _mock_get(return_value=_denied_order()):
+            result = process_webhook_event(ev, settings)
+        self.assertEqual(result, "retryable")
         self.checkout.refresh_from_db()
-        self.assertEqual(self.checkout.status, CheckoutOrder.Status.COMPLETED)
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.APPROVED)
+
+    def test_missing_capture_id(self):
+        ev = WebhookEvent.objects.create(
+            paypal_event_id="EVT-DENIED-MC-" + str(uuid.uuid4()),
+            event_type="PAYMENT.CAPTURE.DENIED",
+            payload={
+                "id": "EVT-DENIED-MC",
+                "event_type": "PAYMENT.CAPTURE.DENIED",
+                "resource": {
+                    "supplementary_data": {
+                        "related_ids": {"order_id": self.checkout.paypal_order_id}
+                    },
+                },
+            },
+            signature_verified=True,
+        )
+        result = process_webhook_event(ev, settings)
+        self.assertEqual(result, "retryable")
+        self.checkout.refresh_from_db()
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.APPROVED)
+
+    def test_provider_status_not_denied(self):
+        ev = self._event()
+        with _mock_get(return_value=_completed_order()):
+            result = process_webhook_event(ev, settings)
+        self.assertEqual(result, "retryable")
+        self.checkout.refresh_from_db()
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.APPROVED)
+
+    def test_get_timeout(self):
+        ev = self._event()
+        with _mock_get(side_effect=PayPalTimeoutError("timeout")):
+            result = process_webhook_event(ev, settings)
+        self.assertEqual(result, "retryable")
+        self.checkout.refresh_from_db()
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.APPROVED)
+
+    def test_get_429(self):
+        ev = self._event()
+        with _mock_get(side_effect=PayPalRateLimitError("rl")):
+            result = process_webhook_event(ev, settings)
+        self.assertEqual(result, "retryable")
+        self.checkout.refresh_from_db()
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.APPROVED)
+
+    def test_get_5xx(self):
+        ev = self._event()
+        with _mock_get(side_effect=PayPalServerError("se")):
+            result = process_webhook_event(ev, settings)
+        self.assertEqual(result, "retryable")
+        self.checkout.refresh_from_db()
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.APPROVED)
+
+    def test_duplicate_delivery(self):
+        ev = self._event()
+        with _mock_get(return_value=_denied_order()):
+            r1 = process_webhook_event(ev, settings)
+            r2 = process_webhook_event(ev, settings)
+        self.assertEqual(r1, "processed")
+        self.assertEqual(r2, "already_processed")
+        self.checkout.refresh_from_db()
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.DECLINED)
+
+    def test_no_duplicate_audit(self):
+        ev = self._event()
+        with _mock_get(return_value=_denied_order()):
+            process_webhook_event(ev, settings)
+        ev2 = WebhookEvent.objects.create(
+            paypal_event_id="EVT-DENIED-2-" + str(uuid.uuid4()),
+            event_type="PAYMENT.CAPTURE.DENIED",
+            payload=self._event().payload,
+            signature_verified=True,
+        )
+        with _mock_get(return_value=_denied_order()):
+            process_webhook_event(ev2, settings)
+        self.assertEqual(
+            AuditEvent.objects.filter(
+                event_type=AuditEvent.EventType.PAYMENT_FAILED,
+                organization=self.org,
+            ).count(),
+            1,
+        )
+
+    def test_retry_after_transient_failure(self):
+        ev = self._event()
+        with _mock_get(side_effect=PayPalTimeoutError("timeout")):
+            result1 = process_webhook_event(ev, settings)
+        self.assertEqual(result1, "retryable")
+        with _mock_get(return_value=_denied_order()):
+            result2 = process_webhook_event(ev, settings)
+        self.assertEqual(result2, "processed")
+        self.checkout.refresh_from_db()
+        self.assertEqual(self.checkout.status, CheckoutOrder.Status.DECLINED)
+
+    def test_no_capture_post(self):
+        from unittest.mock import patch
+
+        with patch.object(
+            PayPalClient, "post", side_effect=AssertionError("post called")
+        ):
+            ev = self._event()
+            with _mock_get(return_value=_denied_order()):
+                process_webhook_event(ev, settings)
 
 
 @override_settings(

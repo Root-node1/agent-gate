@@ -1,6 +1,7 @@
 asgiref==3.12.1
 attrs==26.1.0
 click==8.5.0
+croniter==6.2.4
 cryptography==50.0.2
 Django==6.1.2
 django-allauth==65.21.0
@@ -14,7 +15,10 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 markdown-it-py==4.2.0
 mdurl==0.1.2
-psycopg[binary]==3.3.6
+packaging==26.3
+psycopg[binary,pool]==3.3.6
+procrastinate[django]==3.10.0
+python-dateutil==3.0.0
 Pygments==2.21.0
 python-dotenv==1.2.4
 PyYAML==6.0.3
@@ -24,6 +28,8 @@ requests==2.34.2
 rich==15.0.0
 rpds-py==2026.9.1
 ruff==0.17.0
+six==1.17.0
 sqlparse==0.6.0
+tzdata==2026.6
 typing_extensions==4.16.0
 uritemplate==4.2.0

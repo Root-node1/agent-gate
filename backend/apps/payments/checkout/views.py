@@ -1,4 +1,4 @@
-"""DRF views for PayPal sandbox checkout order creation (INT-13G).
+"""DRF views for PayPal sandbox checkout order creation and capture (INT-13G, INT-13H).
 
 Authentication: DashboardSessionAuthentication (human admin sessions only;
 machine-agent API keys are intentionally rejected for financial-initiation
@@ -6,7 +6,10 @@ endpoints).
 
 Permissions: IsOrganizationAdmin (admin role + MFA enforced upstream).
 
-The endpoint is deliberately minimal: ``POST /v1/checkout-orders/``.
+Endpoints:
+- ``POST /v1/checkout-orders/`` — create a checkout order (CAPTURE intent).
+- ``POST /v1/checkout-orders/{id}/capture/`` — explicitly capture an approved
+  order.  Approval is never inferred from a redirect or browser parameter.
 """
 
 from django.conf import settings
@@ -20,11 +23,16 @@ from apps.accounts.models import Organization, OrgMembership
 from apps.accounts.permissions import IsOrganizationAdmin
 from apps.agents.authentication import DashboardSessionAuthentication
 from apps.common.money import to_minor
+from apps.payments.models import CheckoutOrder
 from apps.payments.paypal.client import PayPalAPIError, PayPalClient
 from apps.payments.paypal.config import PayPalConfigError, get_paypal_config
 
 from . import services
-from .serializers import CheckoutOrderCreateSerializer, CheckoutOrderSerializer
+from .serializers import (
+    CheckoutOrderCaptureSerializer,
+    CheckoutOrderCreateSerializer,
+    CheckoutOrderSerializer,
+)
 
 
 class CheckoutOrderCreateView(APIView):
@@ -108,5 +116,103 @@ class CheckoutOrderCreateView(APIView):
             ),
         )
         if replayed:
+            response["Idempotent-Replayed"] = "true"
+        return response
+
+
+class CheckoutOrderCaptureView(APIView):
+    """Explicitly capture a previously-approved PayPal checkout order.
+
+    The payer returning from PayPal is *not* proof of approval or payment;
+    approval is verified server-side via ``GET /v2/checkout/orders/{id}``
+    before the capture is submitted.  The endpoint is admin-only and returns
+    safe, normalized responses for every terminal and recoverable outcome.
+    """
+
+    authentication_classes = [DashboardSessionAuthentication]
+    permission_classes = [IsOrganizationAdmin]
+
+    @extend_schema(
+        request=CheckoutOrderCaptureSerializer,
+        responses={
+            200: CheckoutOrderSerializer,
+            202: CheckoutOrderSerializer,
+            409: CheckoutOrderSerializer,
+            422: CheckoutOrderSerializer,
+            502: CheckoutOrderSerializer,
+            503: CheckoutOrderSerializer,
+        },
+        summary="Capture an approved PayPal sandbox checkout order",
+    )
+    def post(self, request, pk):
+        serializer = CheckoutOrderCaptureSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        capture_key = serializer.validated_data["capture_idempotency_key"]
+
+        # --- Feature gate + credential check ----------------------------------
+        try:
+            config = get_paypal_config(settings)
+        except PayPalConfigError:
+            return Response(
+                {"detail": "PayPal is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        if not config.checkout_enabled:
+            return Response(
+                {"detail": "Checkout is not enabled."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # --- Organization scoping (admin-only; 404 hides existence) ----------
+        checkout = get_object_or_404(
+            CheckoutOrder.objects.filter(
+                organization__in=Organization.objects.filter(
+                    memberships__user=request.user,
+                    memberships__role=OrgMembership.Role.ADMIN,
+                ),
+            ),
+            pk=pk,
+        )
+
+        client = PayPalClient(config.client_id, config.client_secret)
+
+        # --- Delegate to the service layer ------------------------------------
+        try:
+            checkout, outcome, replayed = services.capture_checkout_order(
+                checkout_order=checkout,
+                organization_id=checkout.organization_id,
+                capture_idempotency_key=capture_key,
+                client=client,
+            )
+        except services.CaptureConflict:
+            return Response(
+                {
+                    "detail": "A capture operation is already in progress for this order."
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        except services.CaptureNotApproved as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except services.CaptureVerificationError as exc:
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except PayPalAPIError as exc:
+            # PayPal rejected the attempt; the order is already marked DECLINED.
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # --- Response --------------------------------------------------------
+        response = Response(
+            CheckoutOrderSerializer(checkout).data,
+            status=(
+                status.HTTP_200_OK
+                if outcome == services.CaptureOutcome.COMPLETED
+                else status.HTTP_202_ACCEPTED
+            ),
+        )
+        if outcome == services.CaptureOutcome.COMPLETED and replayed:
             response["Idempotent-Replayed"] = "true"
         return response

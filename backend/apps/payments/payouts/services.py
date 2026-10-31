@@ -432,10 +432,11 @@ def _submit_to_paypal(
 
 def _reconcile_with_paypal(
     reservation: PayoutReservation, django_settings, session=None
-) -> tuple[str, str, str] | None:
+) -> tuple[str, str, str, str] | None:
     """Query PayPal batch/item status for a pending submission.
 
-    Returns (batch_id, item_id, batch_status) or None if not found.
+    Returns (batch_id, item_id, batch_status, item_transaction_status) or
+    None if the batch is not found in PayPal.
     """
     if not reservation.paypal_payout_batch_id:
         return None
@@ -447,17 +448,25 @@ def _reconcile_with_paypal(
     except PayPalAPIError as exc:
         if isinstance(exc, PayPalConflictError):
             # 409 — duplicate batch id; treat as already submitted
-            return (reservation.paypal_payout_batch_id, None, "SUBMITTED")
+            return (
+                reservation.paypal_payout_batch_id,
+                None,
+                "SUBMITTED",
+                None,
+            )
         raise
     batch_header = body.get("batch_header", {}) or {}
     batch_id = batch_header.get("payout_batch_id") or reservation.paypal_payout_batch_id
     batch_status = batch_header.get("batch_status")
     item_id = reservation.paypal_payout_item_id
-    if not item_id:
-        items = body.get("items", []) or []
-        if items:
-            item_id = items[0].get("payout_item_id")
-    return batch_id, item_id, batch_status
+    item_transaction_status = None
+    items = body.get("items", []) or []
+    if items:
+        item = items[0]
+        if not item_id:
+            item_id = item.get("payout_item_id")
+        item_transaction_status = item.get("transaction_status")
+    return batch_id, item_id, batch_status, item_transaction_status
 
 
 @transaction.atomic
@@ -508,6 +517,18 @@ def submit_payout(
             paypal_item_id=reservation.paypal_payout_item_id,
             error=reservation.submission_error,
         )
+    if reservation.status in (
+        PayoutReservation.Status.SUBMISSION_PENDING,
+        PayoutReservation.Status.UNCERTAIN,
+    ):
+        # A submission is already in flight or its outcome is uncertain.
+        # Never re-POST; direct the caller to reconcile instead.
+        return SubmissionResult(
+            reservation,
+            "pending",
+            paypal_batch_id=reservation.paypal_payout_batch_id,
+            paypal_item_id=reservation.paypal_payout_item_id,
+        )
 
     if reservation.status == PayoutReservation.Status.RESERVED:
         # Re-validate eligibility before committing to submission.
@@ -520,11 +541,31 @@ def submit_payout(
             reservation, django_settings, session=session
         )
     except PayPalUncertainOutcomeError:
-        # Timeout, connection loss, or 5xx: keep SUBMISSION_PENDING for
-        # reconciliation.  Never auto-retry.
+        # Timeout, connection loss, or 5xx: we cannot prove whether PayPal
+        # processed the request.  Transition to UNCERTAIN so the reservation
+        # is recoverable via reconciliation or manual investigation.  Never
+        # auto-retry POST.
+        with transaction.atomic():
+            reservation = PayoutReservation.objects.select_for_update().get(
+                pk=reservation_id
+            )
+            _transition_to_uncertain(reservation)
+            AuditEvent.record(
+                AuditEvent.EventType.PAYMENT_FAILED,
+                organization=reservation.organization,
+                agent=reservation.spend_request.agent,
+                spend_request=reservation.spend_request,
+                actor_type=AuditEvent.ActorType.SYSTEM,
+                actor_id="",
+                amount=to_major(reservation.amount_minor, reservation.currency),
+                currency=reservation.currency,
+                merchant=reservation.spend_request.merchant_ref,
+                payout_reservation_id=str(reservation.id),
+                error="uncertain_outcome",
+            )
         return SubmissionResult(
             reservation,
-            "pending",
+            "uncertain",
             paypal_batch_id=reservation.paypal_payout_batch_id,
             paypal_item_id=reservation.paypal_payout_item_id,
         )
@@ -610,17 +651,9 @@ def reconcile_payout(
         raise PayoutNotReserved("Payout reservation not found.")
 
     if reservation.status in (
-        PayoutReservation.Status.SUBMITTED,
         PayoutReservation.Status.COMPLETED,
+        PayoutReservation.Status.FAILED,
     ):
-        return SubmissionResult(
-            reservation,
-            "reconciled",
-            paypal_batch_id=reservation.paypal_payout_batch_id,
-            paypal_item_id=reservation.paypal_payout_item_id,
-            batch_status="SUBMITTED",
-        )
-    if reservation.status == PayoutReservation.Status.FAILED:
         return SubmissionResult(
             reservation,
             "reconciled",
@@ -654,8 +687,9 @@ def reconcile_payout(
             paypal_item_id=reservation.paypal_payout_item_id,
         )
 
-    batch_id, item_id, batch_status = result
+    batch_id, item_id, batch_status, item_transaction_status = result
     status_upper = (batch_status or "").upper()
+    item_status_upper = (item_transaction_status or "").upper()
 
     with transaction.atomic():
         reservation = PayoutReservation.objects.select_for_update().get(
@@ -667,25 +701,9 @@ def reconcile_payout(
         if item_id:
             reservation.paypal_payout_item_id = item_id
 
-        if status_upper in ("SUCCESS", "COMPLETED"):
-            reservation.status = PayoutReservation.Status.COMPLETED
-            outcome = "reconciled"
-            AuditEvent.record(
-                AuditEvent.EventType.PAYMENT_SUCCEEDED,
-                organization=reservation.organization,
-                agent=reservation.spend_request.agent,
-                spend_request=reservation.spend_request,
-                actor_type=AuditEvent.ActorType.PAYPAL,
-                actor_id="",
-                amount=to_major(reservation.amount_minor, reservation.currency),
-                currency=reservation.currency,
-                merchant=reservation.spend_request.merchant_ref,
-                payout_reservation_id=str(reservation.id),
-                paypal_payout_batch_id=batch_id,
-                paypal_payout_item_id=item_id,
-                batch_status=batch_status,
-            )
-        elif status_upper in ("FAILED", "DENIED", "CANCELED", "REFUNDED"):
+        # --- Batch-level outcomes ---------------------------------------
+        if status_upper in ("FAILED", "DENIED", "CANCELED", "REFUNDED"):
+            # Batch was definitively rejected by PayPal.
             reservation.status = PayoutReservation.Status.FAILED
             reservation.submission_error = f"PayPal batch status: {batch_status}"
             outcome = "reconciled"
@@ -704,8 +722,66 @@ def reconcile_payout(
                 paypal_payout_item_id=item_id,
                 batch_status=batch_status,
             )
+        elif status_upper in ("SUCCESS", "COMPLETED"):
+            # Batch accepted by PayPal — but completion requires item-level
+            # confirmation.  Batch acceptance alone is NOT proof the
+            # recipient received funds.
+            if item_status_upper in ("UNCLAIMED", "CLAIMED"):
+                # Item-level confirmation: PayPal has executed the payout.
+                reservation.status = PayoutReservation.Status.COMPLETED
+                outcome = "reconciled"
+                AuditEvent.record(
+                    AuditEvent.EventType.PAYMENT_SUCCEEDED,
+                    organization=reservation.organization,
+                    agent=reservation.spend_request.agent,
+                    spend_request=reservation.spend_request,
+                    actor_type=AuditEvent.ActorType.PAYPAL,
+                    actor_id="",
+                    amount=to_major(reservation.amount_minor, reservation.currency),
+                    currency=reservation.currency,
+                    merchant=reservation.spend_request.merchant_ref,
+                    payout_reservation_id=str(reservation.id),
+                    paypal_payout_batch_id=batch_id,
+                    paypal_payout_item_id=item_id,
+                    batch_status=batch_status,
+                )
+            elif item_status_upper in (
+                "FAILED",
+                "DENIED",
+                "CANCELED",
+                "REFUNDED",
+                "RETURNED",
+                "REVERSED",
+            ):
+                # Batch processed but the individual item did not succeed.
+                reservation.status = PayoutReservation.Status.FAILED
+                reservation.submission_error = (
+                    f"PayPal batch status: {batch_status}; "
+                    f"item status: {item_transaction_status}"
+                )
+                outcome = "reconciled"
+                AuditEvent.record(
+                    AuditEvent.EventType.PAYMENT_FAILED,
+                    organization=reservation.organization,
+                    agent=reservation.spend_request.agent,
+                    spend_request=reservation.spend_request,
+                    actor_type=AuditEvent.ActorType.PAYPAL,
+                    actor_id="",
+                    amount=to_major(reservation.amount_minor, reservation.currency),
+                    currency=reservation.currency,
+                    merchant=reservation.spend_request.merchant_ref,
+                    payout_reservation_id=str(reservation.id),
+                    paypal_payout_batch_id=batch_id,
+                    paypal_payout_item_id=item_id,
+                    batch_status=batch_status,
+                )
+            else:
+                # Item status unknown or still pending: keep recoverable.
+                reservation.status = PayoutReservation.Status.SUBMISSION_PENDING
+                outcome = "pending"
         else:
-            # PENDING, PROCESSING, UNCLAIMED, or unknown: keep recoverable.
+            # PENDING, PROCESSING, UNCLAIMED (batch-level), or unknown:
+            # keep recoverable.
             reservation.status = PayoutReservation.Status.SUBMISSION_PENDING
             outcome = "pending"
 

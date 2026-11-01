@@ -24,3 +24,5 @@ log = "0.4"
 tauri = { version = "2.12.5", features = [] }
 tauri-plugin-log = "2"
 tiny_http = "0.12"
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
+url = "2.5"

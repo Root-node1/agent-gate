@@ -91,3 +91,66 @@ jobs:
           cd frontend
           npm ci
           npm audit --audit-level=moderate
+
+  deployment-config:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create placeholder production environment
+        run: |
+          cp .env.production.example .env.production
+          sed -i 's/replace-with-a-long-random-secret/ci-placeholder-secret-not-a-real-value/' .env.production
+          sed -i 's/replace-with-a-strong-password/ci-placeholder-redis-password/' .env.production
+          sed -i 's/replace-with-fernet-key/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=/' .env.production
+          sed -i 's/replace-with-emergency-bypass-code/ci-placeholder-bypass/' .env.production
+          sed -i 's/app.example.com/ci.example.com/g' .env.production
+          sed -i 's/DOMAIN=.*/DOMAIN=ci.example.com/' .env.production
+
+      - name: Validate Compose configuration
+        run: docker compose --env-file .env.production config --quiet
+
+      - name: Static deployment topology assertions
+        run: |
+          pip install --quiet pyyaml
+          python3 - << 'PY'
+          import yaml, sys
+          d = yaml.safe_load(open("compose.yaml"))
+          svcs = d["services"]
+          nets = d["networks"]
+          # Expected services
+          assert set(svcs) == {"caddy", "web", "worker", "redis"}, f"services: {set(svcs)}"
+          # Expected networks
+          assert set(nets) == {"edge", "backend"}, f"networks: {set(nets)}"
+          # Network membership
+          assert svcs["caddy"]["networks"] == ["edge"], svcs["caddy"]["networks"]
+          assert set(svcs["web"]["networks"]) == {"edge", "backend"}, svcs["web"]["networks"]
+          assert svcs["worker"]["networks"] == ["backend"], svcs["worker"]["networks"]
+          assert svcs["redis"]["networks"] == ["backend"], svcs["redis"]["networks"]
+          # No internal: true
+          for n, cfg in nets.items():
+              assert not (cfg and cfg.get("internal") is True), f"{n} is internal"
+          # Only Caddy publishes ports
+          for name, svc in svcs.items():
+              ports = svc.get("ports", [])
+              if name == "caddy":
+                  assert "80:80" in ports and "443:443" in ports, ports
+              else:
+                  assert not ports, f"{name} publishes ports: {ports}"
+          # No PayPal in deployment files
+          import pathlib
+          for p in ["compose.yaml", "Dockerfile", ".env.production.example", "deploy/Caddyfile"]:
+              lines = [ln for ln in pathlib.Path(p).read_text().splitlines() if not ln.lstrip().startswith("#")]
+              txt = "\n".join(lines).lower()
+              assert "paypal" not in txt, f"PayPal found in {p}"
+          print("All static deployment assertions passed.")
+          PY
+
+      - name: Build core backend Docker image
+        run: docker build -t agentgate-web:ci .
+
+      - name: Clean up placeholder environment
+        if: always()
+        run: rm -f .env.production

@@ -18,7 +18,7 @@ Alternatives considered:
 ### Authentication implications
 
 - Development: session cookies over HTTP localhost (current, validated).
-- Production (hosted HTTPS backend): requires TLS in the embedded proxy (currently HTTP-only; documented limitation). CSRF_TRUSTED_ORIGINS must include the desktop origin. `SameSite=Lax` cookies work cross-origin only if same-site; with a remote HTTPS backend, the desktop origin (`tauri://localhost`) is cross-site, so the same-origin loopback proxy approach must be retained (frontend and proxy share `127.0.0.1:<port>`), and the proxy forwards to the HTTPS backend with TLS.
+- Production (hosted HTTPS backend): requires TLS in the embedded proxy (HTTPS now supported via rustls; HTTP retained for loopback dev). CSRF_TRUSTED_ORIGINS must include the desktop origin. `SameSite=Lax` cookies work cross-origin only if same-site; with a remote HTTPS backend, the desktop origin (`tauri://localhost`) is cross-site, so the same-origin loopback proxy approach must be retained (frontend and proxy share `127.0.0.1:<port>`), and the proxy forwards to the HTTPS backend with TLS.
 - No JWT/OAuth/native credential storage introduced.
 
 ### Environment configuration
@@ -99,7 +99,7 @@ Version: 0.1.0. Architecture: x86_64. No code signing yet.
 - Windows runtime verification (WebView2 origin + loopback proxy).
 - macOS support (future).
 - ARM64 builds.
-- Backend TLS support in embedded proxy (for hosted HTTPS).
+- Backend TLS support in embedded proxy: IMPLEMENTED (AG-04, ureq + rustls). Remaining: Windows runtime verification of HTTPS + cookies.
 - Interactive GUI verification.
 - CSRF_TRUSTED_ORIGINS configuration for desktop origin in production backend.
 - Release notes and changelog.

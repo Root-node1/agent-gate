@@ -591,3 +591,100 @@ GO for Linux integration review. Cross-platform production readiness is NOT clai
 7. Updater/signing decision (deferred).
 
 No push. Architecture report ready for Tech Lead review.
+
+---
+
+## 17. AG-04: Embedded Backend Proxy Security
+
+### 17.1 Architecture (after AG-04)
+
+The desktop app embeds a loopback HTTP server (`frontend/src-tauri/src/server.rs`) built on `tiny_http`. It:
+
+- Binds only to `127.0.0.1:0` (ephemeral port, loopback interface verified at bind time).
+- Serves the built frontend (`frontend/dist`) as static files with SPA fallback.
+- Proxies requests whose path starts with `/api` or `/v1` to the configured backend URL.
+- Forwards method, path, query string, headers, and body; returns status, headers, and body unchanged.
+
+Upstream forwarding now uses **ureq 3.5 with rustls** (pure-Rust TLS, Mozilla/webpki root store) instead of raw `TcpStream`. This adds HTTPS support with certificate and hostname verification.
+
+### 17.2 Backend URL policy (`validate_backend_url`)
+
+`AGENTGATE_BACKEND_URL` (default `http://127.0.0.1:8000`) is validated before use:
+
+- Scheme must be `http` or `https`.
+- `http` is permitted **only** for loopback hosts (`127.0.0.1`, `localhost`, `[::1]`).
+- `https` is permitted for any non-unsafe host (hosted backend).
+- Embedded credentials (userinfo) are rejected.
+- Fragments and query strings are rejected.
+- Path must be empty or `/`.
+- Unsafe IP destinations are rejected: unspecified (`0.0.0.0`, `::`), broadcast, multicast, link-local.
+- Wildcard (`*`) and unspecified addresses are rejected.
+- Malformed URLs are rejected.
+- **No silent fallback**: an invalid configured value yields a 502 Bad Gateway; it never falls back to localhost.
+
+The validated value is canonicalised to `scheme://host[:port]`.
+
+### 17.3 TLS and certificate verification
+
+- TLS is provided by rustls 0.23 with the webpki root store (Mozilla CA bundle, maintained).
+- Certificate and hostname verification are **always enabled**. There is no development bypass.
+- `http_status_as_error` is disabled so backend status codes (including 4xx/5xx) are forwarded verbatim.
+- Redirects are disabled (`max_redirects = 0`) to prevent redirect-based SSRF.
+
+### 17.4 Request and response limits
+
+- Request body: 10 MiB cap (`MAX_BODY_BYTES`), enforced while reading.
+- Response body: 10 MiB cap, enforced after read.
+- Connection/read/write timeouts: 30 seconds (global, per-read, per-write).
+- Allowed methods: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS.
+
+### 17.5 Header handling
+
+- Hop-by-hop headers are stripped in both directions: `connection`, `keep-alive`, `proxy-authenticate`, `proxy-authorization`, `te`, `trailers`, `transfer-encoding`, `upgrade`, `host`, `content-length`, `content-encoding`, `expect`.
+- `Cookie`, `Authorization`, `X-CSRFToken`, and other application headers are forwarded.
+- Response `Content-Length` is set to the actual (possibly decompressed) body length.
+- No request/response body or sensitive headers are logged.
+
+### 17.6 Loopback-only listener
+
+- The server binds to `127.0.0.1:0`. The bind address is verified to be loopback at startup; non-loopback binds are rejected.
+- The Host header of every request is validated against the ephemeral port's loopback forms (`127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`), case-insensitively. Requests with a missing or foreign Host are rejected with 400.
+- Path traversal, null bytes, and absolute URLs are rejected (`is_proxy_path`, `safe_join_dist`).
+- The proxy is not an open proxy: the upstream destination is fixed by `AGENTGATE_BACKEND_URL`, not by the request.
+
+### 17.7 Threat mitigations
+
+- SSRF via backend URL: mitigated by strict URL validation and no silent fallback.
+- SSRF via redirect: mitigated by disabling redirects.
+- Host-header injection: mitigated by strict Host validation.
+- Path traversal: mitigated by `safe_join_dist` (canonicalization + prefix check).
+- Slow-body / resource exhaustion: mitigated by 10 MiB caps and 30 s timeouts.
+- Secret leakage in logs: no logging of cookies, authorization, or tokens; errors return generic "Bad Gateway".
+- XSS: CSP remains strict (`script-src 'self'`); `freezePrototype` enabled.
+
+### 17.8 Remaining limitations
+
+- The embedded proxy still cannot be used with a self-signed backend certificate (rustls verifies against the Mozilla root store). For internal testing with self-signed certs, a separate approach is needed — not implemented, and not recommended for production.
+- DNS rebinding protection: IMPLEMENTED (AG-04.1). `ValidatingResolver` delegates to ureq's `DefaultResolver`, then validates every resolved IP with `is_unsafe_ip` and (for HTTP) requires all IPs to be loopback. If any resolved address is unsafe, the entire resolution is rejected and no connection is made. The validated addresses are the ones ureq's `TcpConnector` connects to; TLS SNI and certificate hostname verification use the original hostname from the URI, so pinning does not weaken TLS.
+- No updater or code signing (unchanged).
+- Windows runtime verification still required (proxy behaviour, TLS, cookies).
+
+### 17.10 DNS resolution and connection pinning (AG-04.1)
+
+- Strategy: custom `ValidatingResolver` implementing ureq's `Resolver` trait. It delegates name resolution to `DefaultResolver` (which uses `std::net::ToSocketAddrs` with timeout support), then validates every returned `SocketAddr`:
+  - All resolved IPs must pass `is_unsafe_ip` (no unspecified, broadcast, multicast, link-local).
+  - For `http` schemes, every resolved IP must be loopback (closes DNS rebinding of "localhost" to a public IP, and HTTP to a public host).
+  - If any address fails, resolution returns `Error::HostNotFound` and no connection is attempted.
+- Connection pinning: ureq's `TcpConnector` connects to the addresses returned by the resolver (`ConnectionDetails.addrs`); it does not re-resolve. So the socket connects to a validated IP.
+- TLS preserved: `RustlsConnector` uses the URI host for SNI and certificate hostname verification, independent of the resolved IP. Trusted Mozilla root store (webpki) is used; verification is never disabled.
+- Redirects remain disabled (`max_redirects = 0`).
+- No public DNS or real services are used in tests; resolution tests use `localhost` and a non-existent `.invalid` hostname.
+
+### 17.9 Tests added (AG-04)
+
+26 unit tests in `server.rs::tests`, including:
+- `validate_backend_url_*` (loopback HTTP, hosted HTTPS, rejection of hosted HTTP, bad schemes, credentials, fragments/queries, paths, unsafe IPs, malformed input, wildcard host, canonicalisation, env invalid no-fallback).
+- `server_binds_loopback_only`, `is_hop_by_hop_filter`.
+- Pre-existing: host validation, proxy path, safe join, lifecycle, etc.
+
+All pass (`cargo test --lib`: 26 passed). `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --check`, and `cargo check` all pass.

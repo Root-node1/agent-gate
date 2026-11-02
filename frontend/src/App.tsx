@@ -9,7 +9,6 @@ function page(load: () => Promise<{ default: ComponentType }>) {
   return async () => ({ Component: (await load()).default })
 }
 
-// A data router (not BrowserRouter) so pages can use useBlocker to guard unsaved edits.
 const router = createBrowserRouter(
   createRoutesFromElements(
     <Route hydrateFallbackElement={<p className="visually-hidden">Loading…</p>}>
@@ -32,6 +31,8 @@ const router = createBrowserRouter(
         <Route path="live/requests/:id" lazy={page(() => import('./pages/live/RequestDetailPage'))} />
         <Route path="*" lazy={page(() => import('./pages/NotFoundPage'))} />
       </Route>
+      <Route path="forgot-password" lazy={page(() => import('./pages/auth/ForgotPasswordPage'))} />
+      <Route path="reset-password/:key" lazy={page(() => import('./pages/auth/ResetPasswordPage'))} />
       <Route path="*" element={<AppLayout />}>
         <Route path="*" lazy={page(() => import('./pages/NotFoundPage'))} />
       </Route>

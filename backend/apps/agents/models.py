@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models, transaction
+from django.utils import timezone
 
 from apps.accounts.models import Organization
 
@@ -38,6 +39,31 @@ class Agent(models.Model):
         _, raw_key = ApiKey.create_key(agent)
         return agent, raw_key
 
+    @property
+    def current_key(self):
+        """The most recent non-revoked key, or None."""
+        return self.api_keys.filter(revoked_at__isnull=True).first()
+
+    @transaction.atomic
+    def rotate_key(self):
+        """Revoke the current non-revoked key and create a new one.
+
+        Returns (new_api_key, raw_key). The raw key is returned only to the caller.
+        """
+        current = self.current_key
+        if current is not None:
+            current.revoke()
+        return ApiKey.create_key(self)
+
+    @transaction.atomic
+    def revoke_current_key(self):
+        """Revoke the current non-revoked key. Returns the revoked key or None."""
+        current = self.current_key
+        if current is None:
+            return None
+        current.revoke()
+        return current
+
 
 class ApiKey(models.Model):
     """A rotatable agent credential. Only a prefix and a hash of the secret are stored."""
@@ -56,6 +82,11 @@ class ApiKey(models.Model):
 
     def __str__(self) -> str:
         return f"{self.prefix} for {self.agent}"
+
+    def revoke(self):
+        """Soft-delete this key by setting revoked_at. Never purges from the database."""
+        self.revoked_at = timezone.now()
+        self.save(update_fields=["revoked_at", "updated_at"])
 
     @classmethod
     def create_key(cls, agent: Agent):

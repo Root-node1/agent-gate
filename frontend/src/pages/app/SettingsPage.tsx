@@ -4,10 +4,12 @@ import { useDemoState } from '../../demo/store'
 import PageHeader from '../../ui/PageHeader'
 import { useSimulatedLoad } from '../../ui/hooks'
 import ApiKeysSection from './settings/ApiKeysSection'
+import AppearanceSection from './settings/AppearanceSection'
 import DevelopersSection from './settings/DevelopersSection'
 import PaypalSection from './settings/PaypalSection'
 import TeamSection from './settings/TeamSection'
 import WorkspaceSection from './settings/WorkspaceSection'
+import PasswordChangeForm from '../auth/PasswordChangeForm'
 import { SETTINGS_TABS, defaultWorkspace, isSettingsTab, type SettingsTab } from './settings/settingsData'
 import './SettingsPage.css'
 
@@ -46,7 +48,7 @@ export default function SettingsPage() {
     <div className="stack-lg">
       <PageHeader
         title="Settings"
-        description="Workspace defaults, the PayPal connection, API keys, your team and developer resources."
+        description="Workspace defaults, the PayPal connection, API keys, your team, developer resources and display options."
       />
 
       <div className="st-tabs-scroll">
@@ -85,6 +87,8 @@ export default function SettingsPage() {
         {active === 'keys' && <ApiKeysSection state={state} loading={loading} />}
         {active === 'team' && <TeamSection state={state} loading={loading} />}
         {active === 'developers' && <DevelopersSection />}
+        {active === 'password' && <PasswordChangeForm />}
+        {active === 'appearance' && <AppearanceSection />}
       </section>
     </div>
   )

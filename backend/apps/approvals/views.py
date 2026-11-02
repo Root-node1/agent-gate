@@ -1,12 +1,12 @@
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.authentication import SessionAuthentication
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import OrgMembership
 from apps.accounts.permissions import IsApprover
+from apps.agents.authentication import DashboardSessionAuthentication
 from apps.common.pagination import DashboardPagination
 
 from . import services
@@ -25,7 +25,7 @@ def approval_queryset(user):
 
 
 class ApprovalListView(APIView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsApprover]
 
     @extend_schema(responses={200: ApprovalSerializer(many=True)}, summary="List approvals")
@@ -45,7 +45,7 @@ class ApprovalListView(APIView):
 
 
 class ApprovalDetailView(APIView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsApprover]
 
     @extend_schema(responses={200: ApprovalSerializer}, summary="Get an approval")
@@ -81,7 +81,7 @@ class DecisionMixin:
 
 
 class ApprovalApproveView(DecisionMixin, APIView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsApprover]
 
     @extend_schema(
@@ -94,7 +94,7 @@ class ApprovalApproveView(DecisionMixin, APIView):
 
 
 class ApprovalDenyView(DecisionMixin, APIView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsApprover]
 
     @extend_schema(

@@ -11,3 +11,8 @@ db.sqlite3
 backend/docs/
 *.pem
 *.key
+
+# Production environment files (secrets)
+.env.production
+.env.production.*
+!.env.production.example

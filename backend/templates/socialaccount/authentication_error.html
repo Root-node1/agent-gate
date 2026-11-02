@@ -1,0 +1,15 @@
+{% load i18n %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{% trans "Authentication error" %}</title>
+</head>
+<body>
+    <h1>{% trans "Authentication error" %}</h1>
+    <p>{% trans "An error occurred during authentication." %}</p>
+    {% if auth_error.code %}
+    <p>{% trans "Error code:" %} {{ auth_error.code }}</p>
+    {% endif %}
+</body>
+</html>

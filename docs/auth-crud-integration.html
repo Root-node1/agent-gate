@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentGate — Auth + CRUD Integration</title>
+  <meta name="description" content="INT-01: Integration of authentication foundation (AUTH-01) and backend CRUD (CRUD-03B.3).">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>AgentGate Documentation</h1>
+    <p class="subtitle">Spending firewall between AI agents and PayPal. <em>Status: work in progress for the PayPal AI hackathon.</em></p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Documentation Home</a>
+      <a href="project-current-state.html">Project Current State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gap Analysis</a>
+      <a href="authentication-architecture.html">Authentication Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot Integration</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+      <a href="auth-crud-integration.html">Auth + CRUD Integration</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="overview">INT-01: Auth Foundation + Backend CRUD Integration</h2>
+
+    <div class="callout note">
+      <h4>Checkpoint status: PASSED</h4>
+      <p>
+        The authentication foundation (AUTH-01, <code>c35287d</code>) and the backend
+        CRUD implementation (CRUD-03B.3, <code>00a82d5</code>) have been merged into a
+        dedicated <code>integration/auth-crud</code> worktree with zero unresolved
+        conflicts. All 339 tests pass against PostgreSQL, Ruff is clean, Django system
+        checks pass, and migration consistency is verified.
+      </p>
+    </div>
+
+    <!-- ===== Integrated commit history ===== -->
+
+    <h3>1. Integrated commit history</h3>
+
+    <p>
+      The integration worktree is based on the merge-base
+      <code>bc6987e</code> (Merge PR #6 from audit/agentgate-predeployment-readiness).
+      <code>feat/auth-foundation</code> was used as the integration base;
+      <code>feat/backend-crud</code> was merged into it, preserving full commit history
+      via a fast-forward + merge.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Commit</th><th>Branch</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>c35287d</code></td><td>feat/auth-foundation</td><td>Establish session authentication foundation (allauth, CSRF, accounts app)</td></tr>
+        <tr><td><code>3b9c71d</code></td><td>feat/backend-crud</td><td>Add backend CRUD contract documentation</td></tr>
+        <tr><td><code>4a0096e</code></td><td>feat/backend-crud</td><td>Implement agent management API (CRUD-02)</td></tr>
+        <tr><td><code>d19ab71</code></td><td>feat/backend-crud</td><td>Agent mutation audit completeness</td></tr>
+        <tr><td><code>f49f6b9</code></td><td>feat/backend-crud</td><td>Finalize policy CRUD contract and versioning docs</td></tr>
+        <tr><td><code>83faeb4</code></td><td>feat/backend-crud</td><td>Immutable policy retrieval and updates</td></tr>
+        <tr><td><code>2ee3b19</code></td><td>feat/backend-crud</td><td>Immutable versioned policy creation</td></tr>
+        <tr><td><code>00a82d5</code></td><td>feat/backend-crud</td><td>Add immutable merchant-rule mutations (CRUD-03B.3)</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Merge commit:</strong> <code>(merge commit created by <code>git merge feat/backend-crud</code>)</code></p>
+
+    <!-- ===== Merge conflicts ===== -->
+
+    <h3>2. Merge conflicts and resolutions</h3>
+
+    <p>
+      The merge produced <strong>zero textual conflicts</strong>. The 3-way merge
+      resolved automatically for all files. The only overlapping file —
+      <code>backend/config/urls.py</code> — was auto-merged by combining both
+      branches' URL patterns.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>File</th><th>Branch A (auth-foundation)</th><th>Branch B (backend-crud)</th><th>Resolution</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>config/urls.py</code></td>
+          <td>allauth headless routes (<code>/api/auth/headless/</code>), account URLs (<code>/api/auth/</code>)</td>
+          <td>agent CRUD routes (<code>/v1/agents/</code>)</td>
+          <td>Auto-merged: both URL include blocks preserved in <code>urlpatterns</code></td>
+        </tr>
+        <tr>
+          <td><code>config/settings/base.py</code></td>
+          <td>Allauth config, <code>INSTALLED_APPS</code>, <code>AUTHENTICATION_BACKENDS</code>, CSRF/session settings</td>
+          <td>Not modified</td>
+          <td>No conflict; auth-foundation version used as-is</td>
+        </tr>
+        <tr>
+          <td><code>requirements.txt</code></td>
+          <td>Added <code>django-allauth==65.21.0</code></td>
+          <td>Not modified</td>
+          <td>No conflict</td>
+        </tr>
+        <tr>
+          <td><code>apps/agents/*</code></td>
+          <td>Not modified</td>
+          <td>Views, serializers, URLs (new API layer)</td>
+          <td>New files, no conflict</td>
+        </tr>
+        <tr>
+          <td><code>apps/policies/*</code></td>
+          <td>Not modified</td>
+          <td>Views, serializers, services, URLs (immutable versioning)</td>
+          <td>New/modified files, no conflict</td>
+        </tr>
+        <tr>
+          <td><code>apps/audit/models.py</code></td>
+          <td>Not modified</td>
+          <td>Event-type expansion, trigger consistency</td>
+          <td>New migration <code>0005_alter_auditevent_event_type</code> added, no conflict</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      <strong>Ruff lint fixes</strong> were applied to 5 pre-existing import-sorting
+      issues in auth-foundation files (<code>adapters.py</code>,
+      <code>permissions.py</code>, <code>serializers.py</code>, <code>views.py</code>,
+      <code>urls.py</code>, <code>tests/test_auth_signup_login.py</code>). One unused
+      variable was renamed. These do not alter runtime behaviour.
+    </p>
+
+    <!-- ===== Authentication compatibility ===== -->
+
+    <h3>3. Authentication and CRUD compatibility</h3>
+
+    <p>
+      The auth-foundation branch provides <code>SessionAuthentication</code>-based
+      dashboard authentication via django-allauth Headless, while the backend-crud
+      branch provides <code>DashboardSessionAuthentication</code> (a
+      <code>SessionAuthentication</code> subclass that returns 401 instead of 403
+      for unauthenticated requests). Both are compatible because:
+    </p>
+
+    <ul>
+      <li><strong>Shared models:</strong> <code>apps.accounts.models.Organization</code> and <code>OrgMembership</code> exist at the merge-base; <code>IsOrganizationAdmin</code> and <code>IsDashboardUser</code> permissions (auth-foundation) are imported by backend-crud views.</li>
+      <li><strong>AgentKeyAuthentication:</strong> Already in <code>base.py</code> at the merge-base; the agent CRUD views use <code>DashboardSessionAuthentication</code> for dashboard access and <code>AgentKeyAuthentication</code> for API access via the default auth classes.</li>
+      <li><strong>Email verification:</strong> <code>ACCOUNT_EMAIL_VERIFICATION = "mandatory"</code> blocks unverified users from dashboard endpoints.</li>
+      <li><strong>CSRF:</strong> <code>CSRF_COOKIE_HTTPONLY = False</code> allows the frontend to read the CSRF token; <code>CSRF_TRUSTED_ORIGINS</code> is configured in dev/test settings.</li>
+    </ul>
+
+    <table>
+      <thead>
+        <tr><th>Requirement</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>django-allauth Headless signup/login works</td><td class="complete">PASS</td></tr>
+        <tr><td>Mandatory email verification blocks unverified dashboard access</td><td class="complete">PASS</td></tr>
+        <tr><td>Verified users can establish authenticated Django sessions</td><td class="complete">PASS</td></tr>
+        <tr><td>CSRF required for state-changing dashboard operations</td><td class="complete">PASS</td></tr>
+        <tr><td>Agent API keys cannot access dashboard endpoints</td><td class="complete">PASS</td></tr>
+        <tr><td>Users without organization membership cannot access protected resources</td><td class="complete">PASS</td></tr>
+        <tr><td>Organization admins can create agents and policies</td><td class="complete">PASS</td></tr>
+        <tr><td>Non-admin organization members cannot mutate agents or policies</td><td class="complete">PASS</td></tr>
+        <tr><td>Foreign-organization resources return 404</td><td class="complete">PASS</td></tr>
+        <tr><td>Logout invalidates the session</td><td class="complete">PASS</td></tr>
+      </tbody>
+    </table>
+
+    <!-- ===== URL routing verification ===== -->
+
+    <h3>4. URL routing verification</h3>
+
+    <table>
+      <thead>
+        <tr><th>Route</th><th>Method(s)</th><th>URL Name</th><th>Auth Required</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>/api/auth/headless/browser/v1/config</code></td><td>GET</td><td><code>config</code></td><td>No (sets CSRF cookie)</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/api/auth/headless/browser/v1/auth/signup</code></td><td>POST</td><td><code>signup</code></td><td>No</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/api/auth/headless/browser/v1/auth/login</code></td><td>POST</td><td><code>login</code></td><td>No</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/api/auth/headless/browser/v1/auth/session</code></td><td>GET/DELETE</td><td><code>current_session</code></td><td>No</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/api/auth/headless/browser/v1/auth/email/verify</code></td><td>POST</td><td><code>verify_email</code></td><td>No</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/api/auth/user/</code></td><td>GET</td><td><code>auth-user</code></td><td>Session</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/api/auth/logout/</code></td><td>POST</td><td><code>auth-logout</code></td><td>Session + CSRF</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/v1/agents/</code></td><td>GET, POST</td><td><code>agent-list</code></td><td>Session + CSRF (POST)</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/v1/agents/{pk}/</code></td><td>GET, PATCH</td><td><code>agent-detail</code></td><td>Session + CSRF (PATCH)</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/v1/agents/{pk}/rotate-key/</code></td><td>POST</td><td><code>agent-rotate-key</code></td><td>Session + CSRF</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/v1/agents/{pk}/revoke-key/</code></td><td>POST</td><td><code>agent-revoke-key</code></td><td>Session + CSRF</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/v1/policies/</code></td><td>GET, POST</td><td><code>policy-list</code></td><td>Session + CSRF (POST)</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/v1/policies/{id}/</code></td><td>GET, PATCH</td><td><code>policy-detail</code></td><td>Session + CSRF (PATCH)</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/v1/policies/{id}/merchant-rules/</code></td><td>POST</td><td><code>merchant-rule-create</code></td><td>Session + CSRF</td><td class="complete">Verified</td></tr>
+        <tr><td><code>/v1/policies/{id}/merchant-rules/{rule_id}/</code></td><td>DELETE</td><td><code>merchant-rule-delete</code></td><td>Session + CSRF</td><td class="complete">Verified</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Contract details verified</h4>
+    <ul>
+      <li><strong><code>expected_version</code></strong> required in PATCH/POST JSON bodies for optimistic concurrency (missing → 400, stale → 409).</li>
+      <li><strong><code>If-Match</code> header</strong> required for merchant-rule DELETE (missing/invalid → 400, stale → 409).</li>
+      <li><strong>Immutable policy snapshots:</strong> each mutation creates a new policy version with a new UUID; original rows are never updated or deleted.</li>
+      <li><strong>Major-unit request / minor-unit response:</strong> money fields in request bodies use decimal strings (e.g. <code>"100.00"</code>); responses use integer minor units (e.g. <code>10000</code>).</li>
+      <li><strong>401/403/404 responses:</strong> anonymous → 401, authenticated non-member → 403, foreign organization → 404 (to prevent resource enumeration).</li>
+      <li><strong>Audit events:</strong> every mutation records a <code>POLICY_CHANGED</code> or <code>AGENT_CREATED</code> event with actor type, actor ID, and action-specific payload fields.</li>
+    </ul>
+
+    <!-- ===== PostgreSQL test results ===== -->
+
+    <h3>5. PostgreSQL test results</h3>
+
+    <p>
+      Tests were run against a local PostgreSQL 18 instance (user <code>agentgate</code>,
+      database <code>agentgate</code>, port 5433, trust authentication). The
+      <code>TEST_DATABASE_URL</code> environment variable was set to
+      <code>postgresql://agentgate@localhost:5433/agentgate</code>.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Check</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>python manage.py check</code></td><td class="complete">No issues (0 silenced)</td></tr>
+        <tr><td><code>python manage.py makemigrations --check --dry-run</code></td><td class="complete">No missing migrations</td></tr>
+        <tr><td>Full test suite (<code>python manage.py test</code>)</td><td class="complete">339 passed, 2 skipped, 0 failures, 0 errors (43.9s)</td></tr>
+        <tr><td>Authentication tests</td><td class="complete">All pass</td></tr>
+        <tr><td>Agent CRUD tests</td><td class="complete">All pass</td></tr>
+        <tr><td>Policy creation tests</td><td class="complete">All pass</td></tr>
+        <tr><td>Policy PATCH tests</td><td class="complete">All pass</td></tr>
+        <tr><td>Merchant-rule mutation tests</td><td class="complete">All pass</td></tr>
+        <tr><td>PostgreSQL concurrency tests</td><td class="complete">All pass (row-locking prevents duplicate versions)</td></tr>
+        <tr><td>Audit-chain verification tests</td><td class="complete"> All pass (<code>verify_audit</code> command confirms chain integrity)</td></tr>
+        <tr><td>Cross-module integration tests (new)</td><td class="complete">6/6 pass</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Skipped tests (2):</strong> <code>test_verify_reports_tampering</code> and
+      <code>test_verifier_detects_a_modified_payload</code> — skipped because the PostgreSQL
+      append-only trigger prevents tampering that these SQLite-only tests simulate.</p>
+
+    <!-- ===== Security checks ===== -->
+
+    <h3>6. Security checks</h3>
+
+    <table>
+      <thead>
+        <tr><th>Control</th><th>Status</th><th>Evidence</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>CSRF on state-changing ops</td><td class="complete">PASS</td><td><code>test_create_agent_without_csrf_returns_403</code></td></tr>
+        <tr><td>Agent keys blocked from dashboard</td><td class="complete">PASS</td><td><code>test_agent_api_key_cannot_access_crud_or_dashboard</code></td></tr>
+        <tr><td>Non-admin blocked from mutations</td><td class="complete">PASS</td><td><code>test_non_admin_viewer_cannot_create_agent</code></td></tr>
+        <tr><td>Foreign-org resource enumeration</td><td class="complete">PASS</td><td>404 (not 403) for cross-org access</td></tr>
+        <tr><td>Email verification mandatory</td><td class="complete">PASS</td><td><code>test_unverified_user_cannot_log_in</code></td></tr>
+        <tr><td>API key hash not stored in plaintext</td><td class="complete">PASS</td><td><code>test_create_stores_only_hash</code></td></tr>
+        <tr><td>Audit excludes sensitive data</td><td class="complete">PASS</td><td><code>test_audit_entry_contains_no_sensitive_data</code></td></tr>
+        <tr><td>Optimistic concurrency (version checks)</td><td class="complete">PASS</td><td>409 on stale <code>expected_version</code>/<code>If-Match</code></td></tr>
+        <tr><td>Audit rollback on failure</td><td class="complete">PASS</td><td>500 → no partial rows</td></tr>
+        <tr><td>PostgreSQL row-lock concurrency</td><td class="complete">PASS</td><td>No duplicate <code>(agent, version)</code> pairs</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      Ruff lint: <strong>0 errors</strong> (5 pre-existing import-sorting issues in
+      auth-foundation files were auto-fixed).
+      <code>git diff --check</code>: <strong>clean</strong>.
+    </p>
+
+    <!-- ===== Remaining blockers ===== -->
+
+    <h3>7. Remaining blockers</h3>
+
+    <div class="callout warning">
+      <h4>No blockers for INT-01</h4>
+      <p>
+        The authentication and CRUD layers are fully compatible and all tests pass.
+        No security-sensitive contracts were weakened. The following are <em>out of
+        scope</em> for INT-01 and scheduled for future checkpoints:
+      </p>
+    </div>
+    <ul>
+      <li>GitHub OAuth and TOTP 2FA — not yet implemented (auth-foundation provides email/password only).</li>
+      <li>Account recovery (password reset via email) — not yet implemented.</li>
+      <li>PayPal integration — not yet implemented (spend-request engine is in place).</li>
+      <li>Frontend dashboard integration — the frontend demo store is currently in-memory and not wired to the real API.</li>
+    </ul>
+
+    <!-- ===== Frontend readiness ===== -->
+
+    <h3>8. Readiness for frontend integration</h3>
+
+    <div class="callout note">
+      <h4>Ready for frontend integration</h4>
+      <p>
+        The backend is ready for the React dashboard (frontend-audit checkpoint) to
+        connect. All routes resolve, CSRF tokens are available from
+        <code>/api/auth/headless/browser/v1/config</code>, and session cookies are
+        set automatically after headless login. The Postman collection has been
+        updated with all CRUD and auth routes.
+      </p>
+    </div>
+
+    <hr>
+
+    <p style="font-size: 0.8rem; color: var(--color-text-muted);">
+      Document created: 2026-10-27 &nbsp;|&nbsp;
+      Worktree: <code>.kilo/worktrees/integration-auth-crud</code> &nbsp;|&nbsp;
+      Branch: <code>integration/auth-crud</code>
+    </p>
+
+  </main>
+</body>
+</html>

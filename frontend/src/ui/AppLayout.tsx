@@ -15,6 +15,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
+import DisplayButton from '../a11y/DisplayButton'
 import Logo from '../components/Logo'
 import { resetDemo, useDemoState } from '../demo/store'
 import { pendingApprovals } from '../demo/selectors'
@@ -121,6 +122,7 @@ export default function AppLayout() {
             <span className="demo-dot" aria-hidden="true" />
             Demo workspace <span className="demo-pill-detail">· sample data, no real money</span>
           </div>
+          <DisplayButton />
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmReset(true)}>
             <RotateCcw size={16} aria-hidden="true" />
             Reset demo

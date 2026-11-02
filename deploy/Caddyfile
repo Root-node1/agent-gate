@@ -1,0 +1,25 @@
+# Caddy reverse proxy for AgentGate.
+# DOMAIN is supplied via environment (e.g. app.example.com).
+# Caddy provisions and renews HTTPS certificates automatically.
+
+{$DOMAIN:localhost} {
+    # Serve collected static files directly.
+    handle_path /static/* {
+        root * /srv/static
+        file_server
+    }
+
+    reverse_proxy web:8000 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {remote_host}
+    }
+
+    encode gzip zstd
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+    }
+}

@@ -82,6 +82,69 @@ MIT. See [LICENSE](LICENSE).
 
 Design, API plan, workflow, and status live in [Doc.md](Doc.md).
 
+### Markdown documentation
+
+- [Deployment guide](docs/deployment/CONTABO_DEPLOYMENT.md) — Contabo VPS deployment, Docker Compose, Caddy, secrets, migrations, health checks.
+- [Database backup and recovery](docs/deployment/DATABASE_BACKUP_AND_RECOVERY.md) — backup strategy, restore procedure, RPO/RTO, disaster recovery.
+- [Desktop distribution plan](docs/desktop/DISTRIBUTION_PLAN.md) — Tauri desktop packaging, build outputs, system requirements.
+- [System requirements](docs/desktop/SYSTEM_REQUIREMENTS.md) — desktop prerequisites.
+- [Tauri security architecture](docs/desktop/TAURI_SECURITY_ARCHITECTURE.md) — desktop security, CSP, proxy, TLS, DNS rebinding.
+- [Integration readiness audit](docs/research/AGENTGATE_INTEGRATION_READINESS.md) — worktree/branch inventory, merge recommendations.
+- [Core backend deployment readiness](docs/research/CORE_BACKEND_DEPLOYMENT_READINESS.md) — backend deployment audit, PayPal isolation, blockers.
+- [Desktop packaging readiness](docs/research/DESKTOP_PACKAGING_READINESS.md) — Windows installer GO/NO-GO, test plan.
+- [Backend operations](backend/OPERATIONS.md) — environment files, audit reset, Procrastinate worker, migration safety.
+
+### HTML documentation
+
+The `docs/` directory contains static HTML reference documents (architecture, audit, contract, and integration reports). Open them directly in a browser:
+
+- `docs/index.html` — documentation index
+- `docs/authentication-architecture.html`
+- `docs/backend-audit.html`
+- `docs/backend-crud-contract.html`
+- `docs/deployment-readiness.html`
+- `docs/developer-setup.html`
+- `docs/frontend-audit.html`
+- `docs/github-oauth-contract.html`
+- `docs/implementation-plan.html`
+- `docs/integration-dependency-plan.html`
+- `docs/integration-gap-analysis.html`
+- `docs/project-current-state.html`
+- `docs/security-audit.html`
+- `docs/totp-2fa-contract.html`
+- `docs/account-recovery-contract.html`
+- `docs/api-integration.html`
+- `docs/auth-crud-integration.html`
+- `docs/gemini-chatbot-integration.html`
+
+#### Viewing HTML files locally
+
+Direct browser opening is sufficient for these static HTML files (they reference only a relative CSS file).
+
+Linux / WSL:
+
+```bash
+xdg-open docs/index.html
+```
+
+Windows PowerShell:
+
+```powershell
+Start-Process .\docs\index.html
+```
+
+Optional local HTTP server (run from the repository root):
+
+```bash
+python -m http.server 8000
+```
+
+Then open `http://localhost:8000/docs/index.html` in your browser. Stop the server with Ctrl+C.
+
+### Note on documentation status
+
+Documentation reflects the current implementation. Planned or unverified features (for example, Contabo deployment, Docker runtime verification, database backup automation, and PayPal integration) must not be mistaken for shipped functionality. See the detailed documents for verification status and outstanding work.
+
 ## Configuration
 
 `./run.sh` creates `backend/.env` from `backend/.env.example` on first run and fills in a fresh `DJANGO_SECRET_KEY`. To do it by hand:

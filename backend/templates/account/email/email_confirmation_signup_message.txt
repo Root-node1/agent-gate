@@ -1,0 +1,5 @@
+Please confirm your email address by entering the following code:
+
+{{ code }}
+
+This code will expire in {{ timeout_minutes }} minutes.

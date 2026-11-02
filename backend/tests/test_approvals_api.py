@@ -13,6 +13,7 @@ from apps.payees.models import Payee, fingerprint
 from apps.policies.models import Policy
 from apps.spend import services
 from apps.spend.models import SpendRequest
+from tests.base import force_mfa
 
 
 class ApprovalApiBase(APITestCase):
@@ -27,6 +28,8 @@ class ApprovalApiBase(APITestCase):
     def user(self, name, role):
         user = User.objects.create_user(name)
         OrgMembership.objects.create(user=user, organization=self.organization, role=role)
+        if role in (OrgMembership.Role.ADMIN, OrgMembership.Role.APPROVER):
+            force_mfa(user)
         return user
 
     def authenticate(self, user):

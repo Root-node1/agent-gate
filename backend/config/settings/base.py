@@ -1,10 +1,15 @@
 """Settings shared by every environment."""
 
+import copy
+import json
+import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
 
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.log import DEFAULT_LOGGING
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -24,10 +29,17 @@ INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
+    "django.contrib.sites",
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
     "drf_spectacular",
+    "procrastinate.contrib.django",
+    "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.github",
+    "allauth.headless",
+    "allauth.mfa",
     "apps.accounts",
     "apps.agents",
     "apps.policies",
@@ -36,10 +48,18 @@ INSTALLED_APPS = [
     "apps.approvals",
     "apps.payments",
     "apps.audit",
+    "apps.background",
     "gate",
 ]
 
 AUTH_USER_MODEL = "accounts.User"
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
+]
+
+SITE_ID = 1
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -48,6 +68,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "allauth.account.middleware.AccountMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
@@ -56,7 +77,7 @@ ROOT_URLCONF = "config.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -172,3 +193,173 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Spending firewall between AI agents and PayPal.",
     "VERSION": "0.1.0",
 }
+
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+# The SPA reads the csrftoken cookie to send the X-CSRFToken header back.
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = "Lax"
+
+ACCOUNT_ALLOWED_SIGNUP_DOMAINS = [
+    domain.strip().lower()
+    for domain in os.environ.get("ACCOUNT_ALLOWED_SIGNUP_DOMAINS", "").split(",")
+    if domain.strip()
+]
+ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = False
+ACCOUNT_LOGIN_METHODS = ["email"]
+ACCOUNT_LOGOUT_ON_GET = False
+ACCOUNT_LOGOUT_REDIRECT_URL = "/"
+ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
+ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
+# Send "your password was reset/changed" notification emails so a compromised
+# account alerts its owner. Defaults to False in allauth.
+ACCOUNT_EMAIL_NOTIFICATIONS = True
+ACCOUNT_ADAPTER = "apps.accounts.adapters.CustomAccountAdapter"
+ACCOUNT_EMAIL_ALLOWLIST = ACCOUNT_ALLOWED_SIGNUP_DOMAINS
+
+SOCIALACCOUNT_ADAPTER = "apps.accounts.adapters.CustomSocialAccountAdapter"
+# Q3 (Tech Lead-approved): do NOT persist GitHub OAuth access tokens to the
+# database. Tokens are used ephemerally during the callback and discarded.
+SOCIALACCOUNT_STORE_TOKENS = False
+
+_github_provider = {
+    "APP": {
+        "client_id": os.environ.get("GITHUB_OAUTH_CLIENT_ID", ""),
+        "secret": os.environ.get("GITHUB_OAUTH_SECRET", ""),
+    },
+}
+_github_url = os.environ.get("GITHUB_OAUTH_URL", "").strip()
+if _github_url:
+    _github_provider["GITHUB_URL"] = _github_url
+SOCIALACCOUNT_PROVIDERS = {"github": _github_provider}
+LOGIN_REDIRECT_URL = os.environ.get("LOGIN_REDIRECT_URL", "/app/")
+LOGOUT_REDIRECT_URL = os.environ.get("LOGOUT_REDIRECT_URL", "/login/")
+
+# AUTH-03 acceptance criterion: max 3 requests per hour per email for password
+# reset requests. Retains the IP-level cap (20/m/ip) for DoS resistance.
+ACCOUNT_RATE_LIMITS = {
+    "reset_password": "3/h/key,20/m/ip",
+}
+
+# Django (not allauth) governs reset-link expiry. Unset means tokens never
+# expire, so a 1-hour lifetime is mandatory for the recovery flow.
+PASSWORD_RESET_TIMEOUT = 3600
+
+# SPA origins for allauth Headless user-facing links (reset/confirm-signup).
+# Read once from the environment; dev/test fall back to localhost:5173.
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").rstrip("/")
+HEADLESS_FRONTEND_URLS = {
+    "account_reset_password": f"{FRONTEND_ORIGIN}/forgot-password",
+    "account_reset_password_from_key": f"{FRONTEND_ORIGIN}/reset-password/{{key}}",
+    "account_signup": f"{FRONTEND_ORIGIN}/signup",
+    "socialaccount_login_error": f"{FRONTEND_ORIGIN}/login?error=social",
+}
+
+# Sender for all allauth/transactional email.
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL", "AgentGate <no-reply@example.com>"
+)
+
+# AUTH-05B.1 MFA configuration (django-allauth 65.21.0 built-in MFA module).
+# Setting names verified against allauth/mfa/app_settings.py (AppSettings("MFA_")).
+# There is no MFA_ENABLED toggle: allauth enables MFA purely by the presence of
+# "allauth.mfa" in INSTALLED_APPS (allauth/app_settings.py:37 MFA_ENABLED property).
+#
+# MFA_ADAPTER points at the temporary CustomMFAAdapter in apps.accounts.adapters.
+# That adapter blocks TOTP enrollment and recovery-code generation until
+# AUTH-05B.2 implements Fernet at-rest encryption of TOTP secrets and
+# recovery-code seeds. Do NOT remove MFA_ADAPTER here without replacing the
+# adapter with an encrypting one first.
+MFA_ADAPTER = "apps.accounts.adapters.CustomMFAAdapter"
+MFA_TRUST_ENABLED = False
+MFA_TOTP_TOLERANCE = 0
+MFA_RECOVERY_CODES_SHOW_ONCE = True
+MFA_TOTP_ISSUER = "AgentGate"
+MFA_SUPPORTED_TYPES = ["totp", "recovery_codes"]
+
+# AUTH-05B.2: Fernet at-rest encryption for MFA secrets (TOTP keys and
+# recovery-code seeds).  Independent of DJANGO_SECRET_KEY &mdash; rotating the
+# Django secret (run.sh rotates it on every deploy) invalidates sessions but
+# must NOT invalidate MFA enrollment.  See docs/totp-2fa-contract.html §5.5.
+# MFA_ENCRYPTION_KEY: primary urlsafe-base64 Fernet key (e.g.
+#   Fernet.generate_key().decode()).  New ciphertext is always produced under
+#   this key.
+# MFA_ENCRYPTION_PREVIOUS_KEYS: comma-separated list of older keys authorized
+#   for decryption-only rotation via MultiFernet.
+# Never derived from DJANGO_SECRET_KEY, never logged (see apps/accounts/mfa_crypto.py).
+MFA_ENCRYPTION_KEY = os.environ.get("MFA_ENCRYPTION_KEY", "")
+MFA_ENCRYPTION_PREVIOUS_KEYS = [
+    k.strip()
+    for k in os.environ.get("MFA_ENCRYPTION_PREVIOUS_KEYS", "").split(",")
+    if k.strip()
+]
+
+# ---------------------------------------------------------------------------
+# AUTH-05B.9C.1: Account-security audit logger
+# ---------------------------------------------------------------------------
+# A narrowly scoped, privacy-safe logger for account-security events.
+# The configuration below *extends* Django's DEFAULT_LOGGING (imported above)
+# so that all existing application logging is fully preserved.
+#
+# Requirements:
+#   - INFO minimum level, StreamHandler writing to stderr
+#   - Structured single-line JSON, one record per line, UTC timestamp
+#   - No automatic request-body / header / cookie / exception serialization
+#   - propagate = False  (no duplicate emission via root logger)
+
+
+class _SecurityJsonFormatter(logging.Formatter):
+    """Render a log record as a single-line JSON object with a UTC timestamp.
+
+    Unlike the default ``logging.Formatter``, :meth:`format` does **not**
+    delegate to ``super().format``, so exception tracebacks and any
+    ``extra`` payload are never automatically serialized into the output.
+    Only a fixed, privacy-safe set of fields is produced.
+    """
+
+    def format(self, record):
+        payload = {
+            "timestamp": datetime.fromtimestamp(
+                record.created, tz=timezone.utc
+            ).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        return json.dumps(payload, default=str)
+
+
+_LOGGING = copy.deepcopy(DEFAULT_LOGGING)
+
+_LOGGING["formatters"]["security_json"] = {
+    "()": "config.settings.base._SecurityJsonFormatter",
+}
+
+_LOGGING["handlers"]["security"] = {
+    "level": "INFO",
+    "class": "logging.StreamHandler",
+    "formatter": "security_json",
+}
+
+_LOGGING["loggers"]["agentgate.security"] = {
+    "handlers": ["security"],
+    "level": "INFO",
+    "propagate": False,
+}
+
+LOGGING = _LOGGING
+
+# ---------------------------------------------------------------------------
+# Procrastinate background-job configuration
+# ---------------------------------------------------------------------------
+# Procrastinate uses the same PostgreSQL database as Django. The Django
+# integration reads DATABASES["default"] automatically; no separate
+# connection string is needed. In production, the worker must connect via the
+# *direct* Neon URL (not the transaction pooler), because LISTEN/NOTIFY does
+# not work through a pooler. See backend/OPERATIONS.md for details.
+#
+# The smoke-test task lives in apps.background.tasks. No periodic tasks are
+# registered at this stage; approval-expiration and payment-execution tasks
+# will be added after Procrastinate is verified end-to-end.
+PROCRASTINATE_DATABASE_ALIAS = os.environ.get("PROCRASTINATE_DATABASE_ALIAS", "default")

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { ArrowRight, Menu, X } from 'lucide-react'
+import DisplayButton from '../../a11y/DisplayButton'
 import Logo from '../../components/Logo'
 import GitHubMark from './GitHubMark'
 import { LINKS } from './content'
@@ -41,6 +42,7 @@ export default function LandingHeader() {
         </nav>
 
         <div className="lp-header-actions">
+          <DisplayButton className="icon-button lp-display-btn" />
           <Link to={LINKS.demo} className="btn btn-primary lp-header-cta">
             Explore demo
             <ArrowRight size={16} aria-hidden="true" />

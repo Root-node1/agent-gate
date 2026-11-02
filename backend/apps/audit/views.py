@@ -2,12 +2,12 @@ from uuid import UUID
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
-from rest_framework.authentication import SessionAuthentication
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import Organization, OrgMembership
 from apps.accounts.permissions import IsDashboardUser, IsOrganizationAdmin
+from apps.agents.authentication import DashboardSessionAuthentication
 from apps.common.errors import ApiError, ErrorCode
 from apps.common.pagination import DashboardPagination
 from apps.common.schema import error_responses
@@ -24,7 +24,7 @@ def audit_queryset(user):
 
 
 class AuditListView(APIView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsDashboardUser]
 
     @extend_schema(
@@ -81,7 +81,7 @@ class AuditListView(APIView):
 
 
 class AuditVerifyView(APIView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsOrganizationAdmin]
 
     @extend_schema(

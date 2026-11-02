@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Frontend Audit &mdash; AgentGate</title>
+  <meta name="description" content="Frontend audit of the AgentGate React dashboard.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Frontend Audit</h1>
+    <p class="subtitle">AgentGate React + TypeScript dashboard &middot; Audit date: 2026-10-27</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="metadata">Audit metadata</h2>
+    <dl>
+      <dt>Repository</dt><dd><code>agent-gate</code></dd>
+      <dt>Branch</dt><dd><code>audit/agentgate-predeployment-readiness</code></dd>
+      <dt>Date</dt><dd>2026-10-27</dd>
+      <dt>Auditor</dt><dd>Kilo (Senior Software Architect)</dd>
+      <dt>Framework</dt><dd>React 19 + TypeScript + Vite</dd>
+      <dt>Router</dt><dd>react-router v7 (data router)</dd>
+      <dt>Original document</dt><dd>Migrated from archived audit Markdown</dd>
+    </dl>
+
+    <h2 id="executive-summary">Executive summary</h2>
+
+    <p>
+      The frontend is a <strong>React 19 + TypeScript + Vite</strong> single-page application with a
+      <strong>data router</strong> (react-router v7). It implements a complete dashboard for managing AI agent
+      spending policies, approvals, transactions, audit logs, and agent settings.
+    </p>
+
+    <div class="callout danger">
+      <h4>Key finding</h4>
+      <p>
+        The frontend uses an <strong>in-memory demo store</strong>
+        (<code>frontend/src/demo/store.ts</code>) that replicates the backend rule engine in TypeScript.
+        All dashboard screens consume this mock data instead of calling the actual backend API.
+        The real API client (<code>frontend/src/api/spendRequests.ts</code>) exists but is only used
+        by the Simulator page for agent-key-authenticated spend requests.
+      </p>
+    </div>
+
+    <h2 id="route-inventory">Route and screen inventory</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Route</th><th>Component</th><th>Purpose</th><th>Data Source</th><th>Classification</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>/</code></td><td><code>LandingPage</code></td><td>Marketing/landing page</td><td>Static content</td><td><span class="badge badge-complete">COMPLETE</span></td></tr>
+        <tr><td><code>/app</code> (redirects to <code>/app/overview</code>)</td><td><code>AppLayout</code></td><td>Dashboard shell</td><td>&mdash;</td><td><span class="badge badge-complete">COMPLETE</span></td></tr>
+        <tr><td><code>/app/overview</code></td><td><code>OverviewPage</code></td><td>Dashboard summary: stats, budget, recent requests, live feed</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/approvals</code></td><td><code>ApprovalsPage</code></td><td>Approval queue with tabs (pending/approved/denied/expired)</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/approvals/:id</code></td><td><code>ApprovalDetailPage</code></td><td>Detail view with decision panel, rules, risk, timeline</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/transactions</code></td><td><code>TransactionsPage</code></td><td>Filterable, paginated table of all spend requests</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/transactions/:id</code></td><td><code>TransactionDetailPage</code></td><td>Single request detail with payment status</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/agents</code></td><td><code>AgentsPage</code></td><td>List agents, register new, search, status, spend stats</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/agents/:id</code></td><td><code>AgentDetailPage</code></td><td>Agent detail with key management</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/policies</code></td><td><code>PoliciesPage</code></td><td>List policies with budget usage bars</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/policies/:id</code></td><td><code>PolicyEditPage</code></td><td>Edit policy limits, merchant rules</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/audit</code></td><td><code>AuditLogPage</code></td><td>Filterable, paginated audit log with CSV export</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/settings</code></td><td><code>SettingsPage</code></td><td>Workspace, team, API keys, PayPal sections</td><td>Demo store</td><td><span class="badge badge-mocked">MOCKED</span></td></tr>
+        <tr><td><code>/app/simulate</code></td><td><code>SimulatePage</code></td><td><strong>Only screen using real API</strong> &mdash; submits spend requests with agent key</td><td><strong>Real API</strong> (<code>POST /v1/spend-requests/</code>)</td><td><span class="badge badge-warning">PARTIAL</span></td></tr>
+        <tr><td><code>/live</code></td><td><code>TesterPage</code></td><td>Live testing UI (agent key input, request builder)</td><td>Mixed</td><td><span class="badge badge-missing">DISCONNECTED</span></td></tr>
+        <tr><td><code>/live/requests</code></td><td><code>RequestsPage</code></td><td>Live request history</td><td>Demo store</td><td><span class="badge badge-missing">DISCONNECTED</span></td></tr>
+        <tr><td><code>/live/requests/:id</code></td><td><code>RequestDetailPage</code></td><td>Live request detail</td><td>Demo store</td><td><span class="badge badge-missing">DISCONNECTED</span></td></tr>
+        <tr><td><code>*</code></td><td><code>NotFoundPage</code></td><td>404 page</td><td>Static</td><td><span class="badge badge-complete">COMPLETE</span></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="screen-analysis">Screen-by-screen analysis</h2>
+
+    <h3 id="screen-1-landing">1. Landing Page (<code>/</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/LandingPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-complete">COMPLETE</span></li>
+      <li><strong>Implementation</strong>: Static marketing page with hero, feature cards, decision explanations, code sample, CTA to simulator.</li>
+      <li><strong>Data</strong>: Hardcoded scenarios (<code>SCENARIOS</code> from <code>landing/content.ts</code>) and rule info (<code>RULE_INFO</code> from <code>demo/rules.ts</code>).</li>
+      <li><strong>Backend integration</strong>: None required.</li>
+      <li><strong>Accessibility</strong>: Skip link, semantic HTML, ARIA labels on icon-only elements.</li>
+    </ul>
+
+    <h3 id="screen-2-dashboard-shell">2. Dashboard Shell (<code>/app/*</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/ui/AppLayout.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-complete">COMPLETE</span></li>
+      <li><strong>Implementation</strong>: Sidebar navigation, responsive drawer, user avatar, logout (demo-only), theme tokens.</li>
+      <li><strong>Auth</strong>: Uses <code>SessionProvider</code> (<code>frontend/src/session/SessionProvider.tsx</code>) which reads a hardcoded demo user from <code>localStorage</code> or defaults to <code>admin@agentgate.dev</code>. No real session auth against backend.</li>
+    </ul>
+
+    <h3 id="screen-3-overview">3. Overview Page (<code>/app/overview</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/OverviewPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Data Source</strong>: <code>useDemoState()</code> &rarr; <code>frontend/src/demo/store.ts</code> &rarr; <code>buildSeed()</code> generates 4 agents, 2 weeks of requests, approvals, audit events.</li>
+      <li><strong>Features</strong>:
+        <ul>
+          <li>Stat cards: total/allowed/denied/pending counts</li>
+          <li>Decisions chart (Recharts-like custom SVG)</li>
+          <li>Recent requests list</li>
+          <li>Budget card (today/month progress bars)</li>
+          <li>Live activity feed (animates new events)</li>
+        </ul>
+      </li>
+      <li><strong>Missing</strong>: Real API integration, WebSocket/SSE for live updates, date range picker.</li>
+    </ul>
+
+    <h3 id="screen-4-approvals">4. Approvals Page (<code>/app/approvals</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/ApprovalsPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Data Source</strong>: Demo store <code>state.approvals</code> filtered by tab (pending/approved/denied/expired).</li>
+      <li><strong>Features</strong>:
+        <ul>
+          <li>Tabs with counts</li>
+          <li>Oldest-first pending queue</li>
+          <li>Risk badges (high/medium) from <code>riskIndicators()</code></li>
+          <li>Expiry countdown with urgency styling</li>
+          <li>Links to detail page</li>
+        </ul>
+      </li>
+      <li><strong>Missing</strong>: Real API (<code>GET /v1/approvals/</code>), pagination, server-side filtering, role-based access (approver/admin only).</li>
+    </ul>
+
+    <h3 id="screen-5-approval-detail">5. Approval Detail Page (<code>/app/approvals/:id</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/ApprovalDetailPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Data Source</strong>: Demo store lookup by ID.</li>
+      <li><strong>Features</strong>:
+        <ul>
+          <li>Why-it-needs-approval explanations (<code>whySentences()</code>)</li>
+          <li>Risk signals (<code>riskIndicators()</code>)</li>
+          <li>Rules that fired (<code>ReasonList</code>)</li>
+          <li>Timeline (<code>Timeline</code> component)</li>
+          <li>Agent/policy context with budget meters</li>
+          <li><strong>DecisionPanel</strong>: Modal confirm for Approve/Deny &rarr; calls <code>decideApproval()</code> in demo store</li>
+          <li><strong>OutcomePanel</strong>: Shows decision, approver, note, payment status, PayPal reference</li>
+        </ul>
+      </li>
+      <li><strong>Missing</strong>: Real API (<code>GET/POST /v1/approvals/{id}/approve|deny</code>), recheck failure handling (409 with rules), loading/error states.</li>
+    </ul>
+
+    <h3 id="screen-6-transactions">6. Transactions Page (<code>/app/transactions</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/TransactionsPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Data Source</strong>: Demo store <code>state.requests</code> with client-side filters (<code>filters.ts</code>).</li>
+      <li><strong>Features</strong>:
+        <ul>
+          <li>Search (merchant/ID), agent filter, decision filter, payment status filter, date range tabs</li>
+          <li>Paginated table (load more)</li>
+          <li>Decision + Payment status badges</li>
+          <li>Links to detail page</li>
+        </ul>
+      </li>
+      <li><strong>Missing</strong>: Real API (<code>GET /v1/spend-requests/</code> with query params), server-side pagination, cursor-based pagination.</li>
+    </ul>
+
+    <h3 id="screen-7-transaction-detail">7. Transaction Detail Page (<code>/app/transactions/:id</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/TransactionDetailPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Features</strong>: Full request details, decision reasons, payment status, PayPal reference, timeline.</li>
+      <li><strong>Missing</strong>: Real API integration.</li>
+    </ul>
+
+    <h3 id="screen-8-agents">8. Agents Page (<code>/app/agents</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/AgentsPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Data Source</strong>: Demo store <code>state.agents</code> with computed activity stats.</li>
+      <li><strong>Features</strong>:
+        <ul>
+          <li>Search by name/description</li>
+          <li>Status badges (active/suspended)</li>
+          <li>Policy link</li>
+          <li>API key prefix display (revoked state)</li>
+          <li>Last request time, today/month spend + request counts</li>
+          <li>Register Agent modal &rarr; <code>createAgent()</code> in demo store</li>
+        </ul>
+      </li>
+      <li><strong>Missing</strong>: Real API (<code>GET/POST /v1/agents/</code> &mdash; <strong>backend endpoint does not exist</strong>), key rotation/revocation API, agent suspension API.</li>
+    </ul>
+
+    <h3 id="screen-9-agent-detail">9. Agent Detail Page (<code>/app/agents/:id</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/AgentDetailPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Features</strong>: Agent info, key reveal modal (shows full key once), revoke/rotate buttons &rarr; demo store actions.</li>
+      <li><strong>Missing</strong>: Real API endpoints for key management.</li>
+    </ul>
+
+    <h3 id="screen-10-policies">10. Policies Page (<code>/app/policies</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/PoliciesPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Data Source</strong>: Demo store <code>state.policies</code> with <code>budgetUsage()</code> selector.</li>
+      <li><strong>Features</strong>: Table with per-payment limits, daily/monthly budget usage bars, merchant allow/block counts, links to edit.</li>
+      <li><strong>Missing</strong>: Real API (<code>GET /v1/policies/</code> exists but returns different shape &mdash; backend includes <code>merchant_rules</code> array, frontend expects <code>allowed_merchants</code>/<code>blocked_merchants</code> arrays).</li>
+    </ul>
+
+    <h3 id="screen-11-policy-edit">11. Policy Edit Page (<code>/app/policies/:id</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/PolicyEditPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Features</strong>: Form with validation (<code>validatePolicy()</code>), merchant list editors (allow/block), save &rarr; <code>updatePolicy()</code> in demo store.</li>
+      <li><strong>Missing</strong>: Real API (<code>PATCH /v1/policies/{id}/</code> &mdash; <strong>backend endpoint does not exist</strong>).</li>
+    </ul>
+
+    <h3 id="screen-12-audit">12. Audit Log Page (<code>/app/audit</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/AuditLogPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Data Source</strong>: Demo store <code>state.events</code> transformed by <code>buildRows()</code> (<code>auditData.ts</code>).</li>
+      <li><strong>Features</strong>:
+        <ul>
+          <li>Filters: search, event type (grouped), agent, actor, date range</li>
+          <li>Server-side pagination simulation (client-side)</li>
+          <li>CSV export (<code>downloadCsv()</code>)</li>
+          <li>Event drawer with full payload</li>
+          <li>Actor labels, decision badges, request links</li>
+        </ul>
+      </li>
+      <li><strong>Missing</strong>: Real API (<code>GET /v1/audit/</code> exists with different params), <code>GET /v1/audit/verify/</code> (admin only).</li>
+    </ul>
+
+    <h3 id="screen-13-settings">13. Settings Page (<code>/app/settings</code>)</h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/SettingsPage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-mocked">MOCKED</span></li>
+      <li><strong>Sections</strong> (from <code>settingsData.ts</code>):
+        <ul>
+          <li>Workspace: name, timezone, demo reset button</li>
+          <li>Team: member list with roles (admin/approver/viewer)</li>
+          <li>Developers: API keys (placeholder), webhooks (placeholder)</li>
+          <li>PayPal: sandbox credentials form (placeholder)</li>
+        </ul>
+      </li>
+      <li><strong>Missing</strong>: All real API integrations. Backend has no workspace/team/settings endpoints.</li>
+    </ul>
+
+    <h3 id="screen-14-simulate">14. Simulate Page (<code>/app/simulate</code>) &mdash; <strong>Only Real API Consumer</strong></h3>
+    <ul>
+      <li><strong>Component</strong>: <code>frontend/src/pages/app/SimulatePage.tsx</code></li>
+      <li><strong>State</strong>: <span class="badge badge-warning">PARTIAL</span></li>
+      <li><strong>Data Source</strong>: <strong>Real backend API</strong> via <code>submitSpendRequest()</code> from <code>frontend/src/api/spendRequests.ts</code></li>
+      <li><strong>Features</strong>:
+        <ul>
+          <li>Agent key input (stored in <code>localStorage</code>)</li>
+          <li>Scenario presets (Allowed, Needs Approval, Denied)</li>
+          <li>Custom request form with validation</li>
+          <li>Shows raw JSON response</li>
+          <li>Error handling for 400/401/409</li>
+        </ul>
+      </li>
+      <li><strong>Backend Integration</strong>: <code>POST /v1/spend-requests/</code> with <code>Authorization: Bearer &lt;key&gt;</code> and <code>Idempotency-Key</code>.</li>
+      <li><strong>Gaps</strong>:
+        <ul>
+          <li>No idempotency key management (generates random each submit)</li>
+          <li>No polling for approval&rarr;payment status</li>
+          <li>No webhook simulation</li>
+          <li>Hardcoded to <code>http://localhost:8000</code> (via Vite proxy)</li>
+        </ul>
+      </li>
+    </ul>
+
+    <h3 id="screen-15-live">15. Live Pages (<code>/live/*</code>)</h3>
+    <ul>
+      <li><strong>Components</strong>: <code>TesterPage</code>, <code>RequestsPage</code>, <code>RequestDetailPage</code></li>
+      <li><strong>State</strong>: <span class="badge badge-missing">MOCKED / DISCONNECTED</span></li>
+      <li><strong>Purpose</strong>: Alternative testing UI with agent key authentication.</li>
+      <li><strong>Data</strong>: Mix of demo store and local state.</li>
+      <li><strong>Missing</strong>: Real backend integration for live request history.</li>
+    </ul>
+
+    <h2 id="data-flow">Data flow architecture</h2>
+
+    <pre><code>
+┌─────────────────────────────────────────────────────────────────┐
+│                      FRONTEND ARCHITECTURE                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────┐     ┌──────────────────┐                     │
+│  │  React App   │────▶│  SessionProvider │  (hardcoded demo    │
+│  │  (Router)    │     │  + Demo Store    │   user + in-memory  │
+│  └──────────────┘     │  (useSyncExternal│   state)            │
+│        │              │   Store)         │                     │
+│        │              └────────┬─────────┘                     │
+│        │                       │                                │
+│        ▼                       ▼                                │
+│  ┌──────────────────────────────────────┐                      │
+│  │         Dashboard Screens             │                      │
+│  │  (Overview, Approvals, Transactions,  │                      │
+│  │   Agents, Policies, Audit, Settings)  │                      │
+│  │         ◀── Demo Store Data ──        │                      │
+│  └──────────────────────────────────────┘                      │
+│        │                                                        │
+│        ▼                                                        │
+│  ┌──────────────────────┐    ┌────────────────────────────┐   │
+│  │   Simulate Page      │    │   Live Tester Page         │   │
+│  │   (uses real API)    │    │   (mixed demo + local)     │   │
+│  │                      │    │                            │   │
+│  │  submitSpendRequest()│    │  submitSpendRequest()      │   │
+│  │  ──────────────────▶ │    │  ──────────────────▶       │   │
+│  └──────────────────────┘    └────────────────────────────┘   │
+│        │                                                        │
+│        ▼                                                        │
+│  ┌──────────────────────────────────────┐                      │
+│  │         BACKEND API (Django)          │                      │
+│  │  POST /v1/spend-requests/             │                      │
+│  │  GET  /v1/spend-requests/{id}/        │                      │
+│  │  GET  /v1/approvals/                  │                      │
+│  │  POST /v1/approvals/{id}/approve|deny │                      │
+│  │  GET  /v1/policies/                   │                      │
+│  │  GET  /v1/audit/                      │                      │
+│  │  GET  /v1/audit/verify/               │                      │
+│  └──────────────────────────────────────┘                      │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+    </code></pre>
+
+    <h2 id="api-client">API client layer</h2>
+
+    <p><strong>File</strong>: <code>frontend/src/api/spendRequests.ts</code></p>
+
+    <table>
+      <thead>
+        <tr><th>Function</th><th>Backend Endpoint</th><th>Auth</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>submitSpendRequest()</code></td><td><code>POST /v1/spend-requests/</code></td><td>Agent Key (Bearer)</td><td><span class="badge badge-complete">Implemented</span></td></tr>
+        <tr><td><code>getSpendRequest()</code></td><td><code>GET /v1/spend-requests/{id}/</code></td><td>Agent Key (Bearer)</td><td><span class="badge badge-complete">Implemented</span></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <strong>Missing API clients</strong>:
+      <ul>
+        <li>Dashboard auth (session-based): <code>GET /v1/approvals/</code>, <code>GET /v1/approvals/{id}/</code>, <code>POST /v1/approvals/{id}/approve|deny/</code></li>
+        <li>Policies: <code>GET /v1/policies/</code></li>
+        <li>Audit: <code>GET /v1/audit/</code>, <code>GET /v1/audit/verify/</code></li>
+        <li>Agents: <code>GET/POST /v1/agents/</code> (backend missing), <code>POST /v1/agents/{id}/rotate-key</code> (backend missing)</li>
+        <li>Settings: No backend endpoints exist</li>
+      </ul>
+    </div>
+
+    <h3 id="auth-mismatch">Authentication mismatch</h3>
+    <table>
+      <thead><tr><th>Context</th><th>Frontend expects</th><th>Backend provides</th><th>Gap</th></tr></thead>
+      <tbody>
+        <tr><td>Agent API</td><td><code>Authorization: Bearer agk_...</code></td><td><code>AgentKeyAuthentication</code></td><td><span class="badge badge-complete">Matches (Simulator works)</span></td></tr>
+        <tr><td>Dashboard API</td><td>Session cookie (Django <code>SessionAuthentication</code>)</td><td>DRF <code>SessionAuthentication</code> + <code>/api-auth/login/</code></td><td><span class="badge badge-mocked">Frontend uses fake <code>SessionProvider</code> with hardcoded user</span></td></tr>
+        <tr><td>Dashboard API calls</td><td>Session cookie</td><td>Requires authenticated session</td><td><span class="badge badge-missing">No login flow, no CSRF handling</span></td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Current Frontend Auth</strong>: <code>SessionProvider</code> reads
+      <code>localStorage.getItem('demo_user')</code> or defaults to <code>admin@agentgate.dev</code>.
+      No network requests.
+    </p>
+
+    <h2 id="demo-parity">Demo store vs. backend parity</h2>
+
+    <p>The demo store (<code>frontend/src/demo/store.ts</code>) <strong>replicates the backend rule engine</strong>
+      in TypeScript (<code>frontend/src/demo/rules.ts</code>). Key differences:</p>
+
+    <table>
+      <thead><tr><th>Aspect</th><th>Backend (Python)</th><th>Frontend Demo (TypeScript)</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Rule codes</td>
+          <td>
+            <code>R01_AGENT_ACTIVE</code>, <code>R02_CURRENCY</code>, <code>R03_MERCHANT_BLOCK</code>,
+            <code>R04_MERCHANT_ALLOW</code>, <code>R05_PER_TX_CAP</code>, <code>R06_DAILY_BUDGET</code>,
+            <code>R07_MONTHLY_BUDGET</code>, <code>R08_VELOCITY</code>, <code>R09_MERCHANT_WINDOW</code>,
+            <code>R10_APPROVAL_THRESHOLD</code>, <code>R13_UNTRUSTED_SOURCE</code>,
+            <code>R14_INJECTION_PATTERN</code>, <code>R16_WEEKLY_BUDGET</code>
+          </td>
+          <td>
+            <code>INVALID_AMOUNT</code>, <code>CURRENCY_MISMATCH</code>, <code>MERCHANT_BLOCKED</code>,
+            <code>MERCHANT_NOT_ALLOWED</code>, <code>OVER_TRANSACTION_CAP</code>, <code>OVER_DAILY_BUDGET</code>,
+            <code>OVER_MONTHLY_BUDGET</code>, <code>UNTRUSTED_SOURCE</code>, <code>UNKNOWN_SOURCE</code>,
+            <code>OVER_APPROVAL_THRESHOLD</code>
+          </td>
+          <td><span class="badge badge-missing">MISMATCH</span> &mdash; different codes, missing weekly budget, velocity, merchant window, injection pattern</td>
+        </tr>
+        <tr><td>Injection screening</td><td>NFKC normalization, confusable mapping, zero-width stripping, regex patterns</td><td>None (demo rules don't check injection)</td><td><span class="badge badge-missing">MISSING</span></td></tr>
+        <tr><td>Weekly budget</td><td><code>R16_WEEKLY_BUDGET</code></td><td>Not implemented</td><td><span class="badge badge-missing">MISSING</span></td></tr>
+        <tr><td>Velocity window</td><td><code>R08_VELOCITY</code> (configurable window)</td><td>Not implemented</td><td><span class="badge badge-missing">MISSING</span></td></tr>
+        <tr><td>Merchant window</td><td><code>R09_MERCHANT_WINDOW</code></td><td>Not implemented</td><td><span class="badge badge-missing">MISSING</span></td></tr>
+        <tr><td>Untrusted source action</td><td>Configurable: <code>needs_approval</code> or <code>deny</code></td><td>Always <code>needs_approval</code></td><td><span class="badge badge-warning">INCOMPLETE</span></td></tr>
+        <tr><td>Currency handling</td><td>ISO-4217, minor units, zero-decimal support</td><td>Simple numbers, no minor units</td><td><span class="badge badge-warning">SIMPLIFIED</span></td></tr>
+        <tr><td>Idempotency</td><td>Full: key + body hash, 409 on conflict</td><td>None (demo)</td><td><span class="badge badge-missing">MISSING</span></td></tr>
+        <tr><td>Payee fingerprinting</td><td>SHA-256 of normalized destination</td><td>Not implemented</td><td><span class="badge badge-missing">MISSING</span></td></tr>
+        <tr><td>Approval expiry</td><td>Configurable TTL, <code>expire_approvals</code> command</td><td>Fixed 24h, auto-expire in seed</td><td><span class="badge badge-warning">SIMPLIFIED</span></td></tr>
+        <tr><td>Audit hash chain</td><td>Append-only, hash-chained, DB trigger</td><td>In-memory array, no integrity</td><td><span class="badge badge-missing">MISSING</span></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="validation">Form validation</h2>
+
+    <table>
+      <thead><tr><th>Screen</th><th>Validation</th><th>Implementation</th></tr></thead>
+      <tbody>
+        <tr><td>Simulate</td><td>Amount &gt; 0, currency 3-letter, merchant required, source enum</td><td><code>SpendRequestCreateSerializer</code> (backend) + client-side required fields</td></tr>
+        <tr><td>Policy Edit</td><td>Money fields &gt; 0, threshold &le; cap &le; daily &le; monthly, currency 3-letter, no merchant overlap</td><td><code>validatePolicy()</code> in <code>store.ts</code> (client-only)</td></tr>
+        <tr><td>Register Agent</td><td>Name: 2-50 lowercase alphanumeric + dash, unique</td><td><code>createAgent()</code> in <code>store.ts</code> (client-only)</td></tr>
+        <tr><td>Settings (PayPal)</td><td>None (placeholder)</td><td>N/A</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="responsive">Responsive behavior</h2>
+    <ul>
+      <li><strong>Breakpoints</strong>: CSS Grid/Flex with <code>grid-4</code> (4-col), <code>split</code> (2-col), <code>stack-lg</code> utilities.</li>
+      <li><strong>Mobile</strong>: Sidebar becomes drawer (hamburger menu), tables get horizontal scroll, stat cards stack.</li>
+      <li><strong>Testing</strong>: No automated responsive tests. Manual verification needed.</li>
+    </ul>
+
+    <h2 id="accessibility">Accessibility issues</h2>
+
+    <table>
+      <thead><tr><th>Issue</th><th>Location</th><th>Severity</th></tr></thead>
+      <tbody>
+        <tr><td>Icon-only buttons without accessible names</td><td><code>AppLayout</code> sidebar toggle, various icon buttons</td><td>Medium</td></tr>
+        <tr><td><code>visually-hidden</code> used correctly in most places</td><td>Good coverage</td><td>&mdash;</td></tr>
+        <tr><td>Color-only status indication</td><td>Status badges use color + icon + text</td><td>Low</td></tr>
+        <tr><td>Live region for activity feed</td><td><code>aria-live="polite"</code> on <code>ActivityFeed</code></td><td>Good</td></tr>
+        <tr><td>Focus management on modal open/close</td><td><code>Modal</code> component uses focus trap? Need to verify</td><td>Unknown</td></tr>
+        <tr><td>Form labels associated</td><td>Most inputs have <code>&lt;label htmlFor&gt;</code></td><td>Good</td></tr>
+        <tr><td>Skip link</td><td>Present on LandingPage only</td><td>Low</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="missing-functionality">Missing functionality (frontend)</h2>
+
+    <ol>
+      <li><strong>Real dashboard authentication flow</strong> — Session login, protected routes, role-based redirects.</li>
+      <li><strong>API client layer for all dashboard endpoints</strong> — Approvals, policies, audit, agents, settings.</li>
+      <li><strong>Error boundaries</strong> — No React error boundaries for graceful degradation.</li>
+      <li><strong>Loading states</strong> — Only simulated via <code>useSimulatedLoad()</code> (artificial delay).</li>
+      <li><strong>Empty states</strong> — Implemented via <code>EmptyState</code> component (good).</li>
+      <li><strong>Real-time updates</strong> — No WebSocket/SSE for live feed, approval queue updates.</li>
+      <li><strong>Pagination</strong> — Client-side only; backend uses <code>limit/offset</code> (<code>DashboardPagination</code>).</li>
+      <li><strong>Keyboard navigation</strong> — Tables use <code>row-link</code> but not all interactive elements are keyboard-accessible.</li>
+      <li><strong>Internationalization</strong> — Hardcoded English only.</li>
+    </ol>
+
+    <h2 id="backend-dependencies">Backend integration dependencies</h2>
+
+    <table>
+      <thead><tr><th>Frontend feature</th><th>Required backend endpoint</th><th>Backend status</th></tr></thead>
+      <tbody>
+        <tr><td>Dashboard login</td><td><code>POST /api-auth/login/</code> (DRF built-in)</td><td><span class="badge badge-complete">&check;</span> Exists</td></tr>
+        <tr><td>Dashboard user/me</td><td><code>GET /api/auth/user/</code></td><td><span class="badge badge-missing">&times;</span> Missing</td></tr>
+        <tr><td>Approval queue</td><td><code>GET /v1/approvals/</code></td><td><span class="badge badge-complete">&check;</span> Exists</td></tr>
+        <tr><td>Approve/Deny</td><td><code>POST /v1/approvals/{id}/approve|deny/</code></td><td><span class="badge badge-complete">&check;</span> Exists</td></tr>
+        <tr><td>Transaction list</td><td><code>GET /v1/spend-requests/</code></td><td><span class="badge badge-missing">&times;</span> Missing (only agent-scoped <code>GET /v1/spend-requests/{id}/</code> exists)</td></tr>
+        <tr><td>Transaction detail</td><td><code>GET /v1/spend-requests/{id}/</code></td><td><span class="badge badge-warning">Exists (agent-scoped only)</span></td></tr>
+        <tr><td>Agent list/create</td><td><code>GET/POST /v1/agents/</code></td><td><span class="badge badge-missing">&times;</span> Missing</td></tr>
+        <tr><td>Agent key rotate/revoke</td><td><code>POST /v1/agents/{id}/rotate-key</code>, <code>POST /v1/agents/{id}/revoke-key</code></td><td><span class="badge badge-missing">&times;</span> Missing</td></tr>
+        <tr><td>Policy list</td><td><code>GET /v1/policies/</code></td><td><span class="badge badge-warning">Exists (shape mismatch)</span></td></tr>
+        <tr><td>Policy update</td><td><code>PATCH /v1/policies/{id}/</code></td><td><span class="badge badge-missing">&times;</span> Missing</td></tr>
+        <tr><td>Audit log</td><td><code>GET /v1/audit/</code></td><td><span class="badge badge-warning">Exists (param mismatch)</span></td></tr>
+        <tr><td>Audit verify</td><td><code>GET /v1/audit/verify/</code></td><td><span class="badge badge-warning">Exists (admin only)</span></td></tr>
+        <tr><td>Workspace settings</td><td><code>GET/PATCH /v1/settings/workspace/</code></td><td><span class="badge badge-missing">&times;</span> Missing</td></tr>
+        <tr><td>Team management</td><td><code>GET/POST/PATCH /v1/team/</code></td><td><span class="badge badge-missing">&times;</span> Missing</td></tr>
+        <tr><td>PayPal settings</td><td><code>GET/PATCH /v1/settings/paypal/</code></td><td><span class="badge badge-missing">&times;</span> Missing</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="classification-summary">Classification summary</h2>
+
+    <table>
+      <thead><tr><th>Classification</th><th>Count</th><th>Screens</th></tr></thead>
+      <tbody>
+        <tr><td>COMPLETE</td><td>2</td><td>LandingPage, NotFoundPage</td></tr>
+        <tr><td>PARTIAL</td><td>1</td><td>SimulatePage</td></tr>
+        <tr><td>MOCKED</td><td>11</td><td>Overview, Approvals, ApprovalDetail, Transactions, TransactionDetail, Agents, AgentDetail, Policies, PolicyEdit, AuditLog, Settings</td></tr>
+        <tr><td>DISCONNECTED</td><td>3</td><td>TesterPage, RequestsPage, RequestDetailPage</td></tr>
+        <tr><td>MISSING</td><td>0</td><td>&mdash;</td></tr>
+        <tr><td>UNVERIFIED</td><td>0</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Total screens</strong>: 17</p>
+
+    <h2 id="recommendations">Recommendations</h2>
+
+    <h3 id="pre-deploy">Before backend deployment (critical)</h3>
+    <ol>
+      <li><strong>Implement dashboard authentication flow</strong> — Session login, protected routes, role-based redirects.</li>
+      <li><strong>Build API client layer</strong> for all dashboard endpoints (approvals, policies, audit, transactions).</li>
+      <li><strong>Align rule codes</strong> between frontend demo (<code>demo/rules.ts</code>) and backend (<code>engine/rules.py</code>).</li>
+      <li><strong>Implement missing backend endpoints</strong>: Agent CRUD, Policy update, Transaction list (dashboard-scoped), Settings.</li>
+    </ol>
+
+    <h3 id="post-staging">After staging deployment</h3>
+    <ol>
+      <li><strong>Real-time updates</strong> — WebSocket/SSE for approval queue, activity feed.</li>
+      <li><strong>Idempotency key management</strong> in Simulate/Live pages.</li>
+      <li><strong>Payment status polling</strong> after approval.</li>
+      <li><strong>CSV export</strong> streaming for large audit logs.</li>
+    </ol>
+
+    <h3 id="mvp-optional">Optional for MVP</h3>
+    <ol>
+      <li><strong>Internationalization</strong> framework.</li>
+      <li><strong>Advanced filtering</strong> (saved filters, column visibility).</li>
+      <li><strong>Keyboard shortcuts</strong> for power users.</li>
+      <li><strong>Dark mode</strong> (CSS variables exist in <code>tokens.css</code>).</li>
+    </ol>
+
+    <h2 id="evidence">Evidence references</h2>
+
+    <dl>
+      <dt>Routes</dt><dd><code>frontend/src/App.tsx</code> (lines 13-40)</dd>
+      <dt>Demo store</dt><dd><code>frontend/src/demo/store.ts</code> (lines 1-485)</dd>
+      <dt>Demo rules</dt><dd><code>frontend/src/demo/rules.ts</code> (lines 1-124)</dd>
+      <dt>API client</dt><dd><code>frontend/src/api/spendRequests.ts</code> (lines 1-119)</dd>
+      <dt>Session</dt><dd><code>frontend/src/session/SessionProvider.tsx</code>, <code>frontend/src/session/context.ts</code></dd>
+      <dt>Backend endpoints</dt><dd><code>backend/config/urls.py</code>, <code>backend/apps/*/urls.py</code></dd>
+      <dt>Backend rule engine</dt><dd><code>backend/engine/rules.py</code> (lines 31-104)</dd>
+    </dl>
+
+  </main>
+</body>
+</html>

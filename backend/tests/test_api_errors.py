@@ -141,7 +141,7 @@ class ApiErrorTests(APITestCase):
         self.assertEqual(response.json()["error"]["code"], "unsupported_media_type")
 
     def test_wrong_method_uses_the_envelope(self):
-        response = self.client.get(URL)
+        response = self.client.delete(URL)
         self.assertEqual(response.status_code, 405)
         self.assertEqual(response.json()["error"]["code"], "method_not_allowed")
 

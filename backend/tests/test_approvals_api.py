@@ -11,8 +11,9 @@ from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
 from apps.payees.models import Payee, fingerprint
 from apps.policies.models import Policy
-from apps.spend import services
+from apps.spend import pipeline
 from apps.spend.models import SpendRequest
+from tests.base import force_mfa
 
 
 class ApprovalApiBase(APITestCase):
@@ -27,13 +28,15 @@ class ApprovalApiBase(APITestCase):
     def user(self, name, role):
         user = User.objects.create_user(name)
         OrgMembership.objects.create(user=user, organization=self.organization, role=role)
+        if role in (OrgMembership.Role.ADMIN, OrgMembership.Role.APPROVER):
+            force_mfa(user)
         return user
 
     def authenticate(self, user):
         self.client.force_authenticate(user=user)
 
     def pending(self, amount="75.00", **kwargs):
-        spend_request, _ = services.submit_spend_request(
+        spend_request, _ = pipeline.submit_spend_request(
             self.agent,
             amount=Decimal(amount),
             currency="USD",
@@ -92,7 +95,7 @@ class ApprovalListTests(ApprovalApiBase):
         other_org = Organization.objects.create(name="other")
         other_agent, _ = Agent.create_with_key("other", other_org)
         Policy.objects.create(agent=other_agent)
-        other, _ = services.submit_spend_request(
+        other, _ = pipeline.submit_spend_request(
             other_agent,
             amount=Decimal("75.00"),
             currency="USD",
@@ -183,7 +186,7 @@ class ApprovalDecisionTests(ApprovalApiBase):
         spend_request = self.pending(
             destination_type="paypal_email", destination_value="old@example.com"
         )
-        services.submit_spend_request(
+        pipeline.submit_spend_request(
             self.agent,
             amount=Decimal("10.00"),
             currency="USD",

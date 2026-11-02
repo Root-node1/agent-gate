@@ -41,11 +41,36 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 
+prod_email_host = os.environ.get("EMAIL_HOST", "").strip()
+if prod_email_host:
+    EMAIL_HOST = prod_email_host
+    EMAIL_PORT = env_int("EMAIL_PORT", 587)
+    EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+    EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+    EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    if "DEFAULT_FROM_EMAIL" in os.environ:
+        DEFAULT_FROM_EMAIL = os.environ["DEFAULT_FROM_EMAIL"]
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
+
+# Redis cache configuration for production.
+# Socket timeouts are set via OPTIONS only — this preserves any existing
+# query parameters in REDIS_URL and avoids conflicting timeout values
+# between the URL and OPTIONS.
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+if not REDIS_URL:
+    raise ImproperlyConfigured("REDIS_URL must be set in production.")
 
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
-        "LOCATION": "agentgate_cache",
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+        "OPTIONS": {
+            "socket_timeout": 5,
+            "socket_connect_timeout": 3,
+        },
     }
 }

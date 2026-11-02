@@ -1,0 +1,4 @@
+An account with this email address already exists.
+
+If you forgot your password, you can reset it here:
+{{ password_reset_url }}

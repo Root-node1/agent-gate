@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API Integration &mdash; AgentGate</title>
+  <meta name="description" content="AgentGate API reference: endpoints, request/response formats, Postman collection, auth contracts.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>API Integration</h1>
+    <p class="subtitle">AgentGate REST API reference and integration contracts</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="overview">Overview</h2>
+
+    <p>
+      The AgentGate API is a Django REST Framework (DRF) application with two authentication
+      schemes:
+    </p>
+    <ul>
+      <li><strong>Agent API Key</strong> (<code>Authorization: Bearer agk_...</code>) for programmatic spend request submission.</li>
+      <li><strong>Django Session</strong> (cookie-based) for dashboard user operations.</li>
+    </ul>
+
+    <p>
+      Interactive documentation is available at <code>/api/docs/</code> (Swagger UI) and the
+      OpenAPI schema at <code>/api/schema/</code>. A Postman collection is available at
+      <code>docs/postman/AgentGate.postman_collection.json</code>.
+    </p>
+
+    <table of contents="">
+      <nav class="toc" aria-label="Table of contents">
+        <h3>Contents</h3>
+        <ul>
+          <li><a href="#endpoints">Endpoints</a></li>
+          <li><a href="#auth">Authentication and authorization</a></li>
+          <li><a href="#agent-api">Agent API</a></li>
+          <li><a href="#dashboard-api">Dashboard API</a></li>
+          <li><a href="#errors">Error responses</a></li>
+          <li><a href="#pagination">Pagination</a></li>
+          <li><a href="#postman">Postman collection</a></li>
+          <li><a href="#rate-limits">Rate limits</a></li>
+          <li><a href="#missing">Missing endpoints</a></li>
+        </ul>
+      </nav>
+    </table>
+
+    <h2 id="endpoints">Endpoints</h2>
+
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Permission</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>GET</td><td><code>/healthz</code></td><td>&mdash;</td><td>&mdash;</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/readyz</code></td><td>&mdash;</td><td>&mdash;</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/api/health/</code></td><td>&mdash;</td><td>&mdash;</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/api/schema/</code></td><td>&mdash;</td><td>&mdash;</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/api/docs/</code></td><td>&mdash;</td><td>&mdash;</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>POST</td><td><code>/api-auth/login/</code></td><td>None (sets session)</td><td>&mdash;</td><td><span class="badge badge-complete">Live</span> (HTML form)</td></tr>
+        <tr><td>POST</td><td><code>/api-auth/logout/</code></td><td>Session</td><td>Authenticated</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/api/auth/user/</code></td><td>Session</td><td>Authenticated</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>POST</td><td><code>/accounts/signup/</code></td><td>None</td><td>&mdash;</td><td><span class="badge badge-missing">Planned (allauth)</span></td></tr>
+        <tr><td>POST</td><td><code>/accounts/login/</code></td><td>None</td><td>&mdash;</td><td><span class="badge badge-missing">Planned (allauth)</span></td></tr>
+        <tr><td>POST</td><td><code>/accounts/logout/</code></td><td>Session</td><td>Authenticated</td><td><span class="badge badge-missing">Planned (allauth)</span></td></tr>
+        <tr><td>GET</td><td><code>/accounts/github/login/</code></td><td>None</td><td>&mdash;</td><td><span class="badge badge-missing">Planned (allauth)</span></td></tr>
+        <tr><td>GET</td><td><code>/accounts/github/login/callback/</code></td><td>None</td><td>&mdash;</td><td><span class="badge badge-missing">Planned (allauth)</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/spend-requests/</code></td><td>Agent key</td><td>&mdash;</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/v1/spend-requests/{id}/</code></td><td>Agent key</td><td>&mdash;</td><td><span class="badge badge-complete">Live</span> (agent-scoped)</td></tr>
+        <tr><td>GET</td><td><code>/v1/spend-requests/</code> (dashboard)</td><td>Session</td><td>IsDashboardUser</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>GET</td><td><code>/v1/approvals/</code></td><td>Session</td><td>IsApprover</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/v1/approvals/{id}/</code></td><td>Session</td><td>IsApprover</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/approvals/{id}/approve/</code></td><td>Session</td><td>IsApprover</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/approvals/{id}/deny/</code></td><td>Session</td><td>IsApprover</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/v1/policies/</code></td><td>Session</td><td>IsDashboardUser</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/policies/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>PATCH</td><td><code>/v1/policies/{id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/policies/{id}/merchant-rules/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>DELETE</td><td><code>/v1/policies/{id}/merchant-rules/{rule_id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>GET</td><td><code>/v1/agents/</code></td><td>Session</td><td>IsDashboardUser</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/agents/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>GET</td><td><code>/v1/agents/{id}/</code></td><td>Session</td><td>IsDashboardUser</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>PATCH</td><td><code>/v1/agents/{id}/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/agents/{id}/rotate-key</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/agents/{id}/revoke-key</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-missing">Planned</span></td></tr>
+        <tr><td>GET</td><td><code>/v1/audit/</code></td><td>Session</td><td>IsDashboardUser</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>GET</td><td><code>/v1/audit/verify/</code></td><td>Session</td><td>IsOrganizationAdmin</td><td><span class="badge badge-complete">Live</span></td></tr>
+        <tr><td>POST</td><td><td><code>/v1/chat/</code></td><td>Session</td><td>IsDashboardUser</td><td><span class="badge badge-missing">Planned (Gemini)</span></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="auth">Authentication and authorization</h2>
+
+    <h3 id="two-schemes">Two authentication schemes</h3>
+
+    <dl>
+      <dt>Agent API Key</dt>
+      <dd>
+        <ul>
+          <li>Header: <code>Authorization: Bearer agk_...</code></li>
+          <li>Only the prefix (12 chars) is stored in the database; the full key is SHA-256 hashed.</li>
+          <li>Comparison uses <code>hmac.compare_digest</code> (constant-time).</li>
+          <li>Suspended agents and revoked keys are rejected.</li>
+          <li>Rate-limited at 60/min per key (configurable via <code>THROTTLE_AGENT</code>).</li>
+        </ul>
+      </dd>
+      <dt>Dashboard Session</dt>
+      <dd>
+        <ul>
+          <li>Uses Django's built-in <code>SessionAuthentication</code>.</li>
+          <li>Requires an authenticated session (login via <code>/api-auth/login/</code> or <code>/accounts/login/</code>).</li>
+          <li>State-changing requests require a valid <code>X-CSRFToken</code> header.</li>
+          <li>All dashboard endpoints are class-based views (<code>APIView</code>) with explicit
+              <code>authentication_classes = [SessionAuthentication]</code> and a permission class.</li>
+        </ul>
+      </dd>
+    </dl>
+
+    <h3 id="permission-classes">Permission classes</h3>
+
+    <p>Defined in <code>backend/apps/accounts/permissions.py</code>:</p>
+
+    <table>
+      <thead><tr><th>Class</th><th>Allows</th><th>Used by</th></tr></thead>
+      <tbody>
+        <tr><td><code>IsDashboardUser</code></td><td>Any authenticated user with at least one <code>OrgMembership</code></td><td>Policy list, audit list, chatbot</td></tr>
+        <tr><td><code>IsApprover</code></td><td>Any user with admin or approver role in at least one org</td><td>Approval list/detail/approve/deny</td></tr>
+        <tr><td><code>IsOrganizationAdmin</code></td><td>Any user with admin role in at least one org</td><td>Audit verify, settings, agent CRUD (planned)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="agent-api">Agent API</h2>
+
+    <h3 id="submit-request">Submit spend request</h3>
+
+    <p><code>POST /v1/spend-requests/</code> &mdash; Agent API Key authentication.</p>
+
+    <h4 id="request">Request</h4>
+
+    <p>Headers:</p>
+    <pre><code>Authorization: Bearer agk_YOUR_AGENT_KEY
+Idempotency-Key: 7f2c9d1e-4a3b-4c5d-8e9f-0a1b2c3d4e5f
+Content-Type: application/json</code></pre>
+
+    <p>Body:</p>
+<pre><code class="language-json">{
+  "amount": "10.00",            // decimal string, major units, min 0.01
+  "currency": "USD",            // ISO-4217 code
+  "merchant": "acme.com",       // will be normalized
+  "purpose": "API credits",     // optional, max 2000 chars
+  "source": "trusted",          // trusted | untrusted | web_page | email | invoice | tool_output
+  "source_ref": "",             // optional context
+  "evidence_excerpt": "",       // optional, max 4096 chars
+  "destination_type": "paypal_email", // paypal_email | paypal_id | phone | url
+  "destination_value": "seller@example.com"
+}</code></pre>
+
+    <h4 id="response">Response (HTTP 201 for every decision)</h4>
+
+    <p><strong>Important</strong>: The status code is always 201. Read the <code>decision</code> field:</p>
+<pre><code class="language-json">{
+  "id": "uuid",
+  "amount": "10.00",
+  "currency": "USD",
+  "merchant": "acme.com",
+  "purpose": "API credits",
+  "source": "trusted",
+  "risk_score": 0,
+  "decision": "allow",          // allow | deny | needs_approval
+  "status": "approved",         // forward-only lifecycle
+  "reasons": [{"code": "R01_AGENT_ACTIVE", "message": "..."}],
+  "matched_rules": ["R03_MERCHANT_BLOCK"],
+  "paypal_reference": null,
+  "created_at": "2026-10-27T12:00:00Z",
+  "approval": null              // outcome string or null
+}</code></pre>
+
+    <h4 id="status-codes">Status code summary</h4>
+
+    <table>
+      <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><strong>201</strong></td><td>Request processed &mdash; read <code>decision</code> in body</td></tr>
+        <tr><td><strong>400</strong></td><td>Missing/invalid <code>Idempotency-Key</code> or validation error</td></tr>
+        <tr><td><strong>401</strong></td><td>Invalid agent key</td></tr>
+        <tr><td><strong>409</strong></td><td>Agent has no policy, or key reused with different body</td></tr>
+        <tr><td><strong>429</strong></td><td>Rate limited</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="get-request">Get spend request</h3>
+
+    <p><code>GET /v1/spend-requests/{id}/</code> &mdash; returns one of the calling agent's own requests.
+      Returns 404 if the ID does not belong to this agent.</p>
+
+    <h2 id="dashboard-api">Dashboard API</h2>
+
+    <p>All dashboard endpoints require <code>SessionAuthentication</code> and a valid CSRF token
+      on state-changing requests.</p>
+
+    <h3 id="approvals">Approvals</h3>
+
+    <dl>
+      <dt><code>GET /v1/approvals/</code></dt>
+      <dd>Query params: <code>outcome</code> (pending|approved|denied|expired|all, default: pending), <code>limit</code> (max 200, default 50), <code>offset</code>. Returns paginated list scoped to the caller's organizations.</dd>
+      <dt><code>GET /v1/approvals/{id}/</code></dt>
+      <dd>Returns approval detail with nested spend request.</dd>
+      <dt><code>POST /v1/approvals/{id}/approve/</code></dt>
+      <dd>Approves a pending request. Re-runs the current policy and budget as a recheck.
+          Returns 409 if a hard rule now denies, or the payee destination fingerprint changed.
+          Body: <code>{"note": "Approved after review"}</code></dd>
+      <dt><code>POST /v1/approvals/{id}/deny/</code></dt>
+      <dd>Denies a pending request. Body: <code>{"note": "Denied by human review"}</code>. Idempotent.</dd>
+    </dl>
+
+    <h3 id="policies-endpoints">Policies</h3>
+
+    <dl>
+      <dt><code>GET /v1/policies/</code></dt>
+      <dd>Query params: <code>agent</code> (UUID), <code>limit</code>, <code>offset</code>. Returns policy versions with nested <code>merchant_rules</code> array. <em>Note: shape mismatch with frontend <code>demo/types.ts</code>.</em></dd>
+      <dt><code>POST /v1/policies/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; create new policy version.</dd>
+      <dt><code>PATCH /v1/policies/{id}/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; update policy (creates new version).</dd>
+      <dt><code>POST /v1/policies/{id}/merchant-rules/</code></td>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; add merchant rule.</dd>
+      <dt><code>DELETE /v1/policies/{id}/merchant-rules/{rule_id}/</code></td>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; remove merchant rule.</dd>
+    </dl>
+
+    <h3 id="audit-endpoints">Audit log</h3>
+
+    <dl>
+      <dt><code>GET /v1/audit/</code></dt>
+      <dd>Query params: <code>event_type</code> (single), <code>agent</code> (UUID), <code>spend_request</code> (UUID), <code>after</code> (integer cursor), <code>limit</code>, <code>offset</code>.
+          <em>Missing in backend</em>: actor filter, date-range filter.
+          <em>Frontend uses</em>: page/offset, not cursor.</dd>
+      <dt><code>GET /v1/audit/verify/</code></dt>
+      <dd>Admin-only. Verifies audit hash chains for all organizations where the caller is admin.
+          Returns 409 if any chain is broken (tamper-evident). Returns 200 with <code>checked</code> and <code>organizations</code> counts on success.</dd>
+    </dl>
+
+    <h3 id="agents-endpoints">Agents (planned)</h3>
+
+    <dl>
+      <dt><code>GET /v1/agents/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; list agents (org-scoped, session auth).</dd>
+      <dt><code>POST /v1/agents/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; create agent (admin only).</dd>
+      <dt><code>GET /v1/agents/{id}/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; agent detail.</dd>
+      <dt><code>PATCH /v1/agents/{id}/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; suspend/reactivate (admin only).</dd>
+      <dt><code>POST /v1/agents/{id}/rotate-key</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; rotate API key (admin only, returns raw key once).</dd>
+      <dt><code>POST /v1/agents/{id}/revoke-key</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; revoke API key (admin only).</dd>
+    </dl>
+
+    <h3 id="settings-endpoints">Settings (planned)</h3>
+
+    <dl>
+      <dt><code>GET/PATCH /v1/settings/workspace/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; workspace name, timezone.</dd>
+      <dt><code>GET/POST/PATCH /v1/team/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; team member management.</dd>
+      <dt><code>GET/PATCH /v1/settings/paypal/</code></td>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; PayPal sandbox credentials.</dd>
+    </dl>
+
+    <h3 id="chatbot-endpoint">Chatbot (planned)</h3>
+
+    <dl>
+      <dt><code>POST /v1/chat/</code></dt>
+      <dd><span class="badge badge-missing">Planned</span> &mdash; authenticated via session cookie. Body: <code>{"message": "string", "conversation_id": "optional-uuid"}</code>.
+          Returns: <code>{"message": "string", "conversation_id": "uuid", "usage": {"input_tokens": N, "output_tokens": N}}</code>.
+          See <a href="gemini-chatbot-integration.html">Gemini Chatbot Integration</a> for full spec.</dd>
+    </dl>
+
+    <h2 id="errors">Error responses</h2>
+
+    <p>All errors use DRF's consistent format:</p>
+<pre><code class="language-json">// Field-level validation error
+{
+  "amount": ["Ensure this value is greater than 0."]
+}
+
+// Detail-level error
+{
+  "detail": "Authentication credentials were not provided."
+}
+
+// Conflict (idempotency, recheck failure)
+{
+  "detail": "This approval has expired.",
+  "rules": ["R03_MERCHANT_BLOCK"]  // only on 409 recheck failure
+}</code></pre>
+
+    <h2 id="pagination">Pagination</h2>
+
+    <p>All list endpoints use <code>DashboardPagination</code> (<code>backend/apps/common/pagination.py</code>):
+      <code>limit</code>/<code>offset</code> style with a maximum page size of 200.</p>
+
+    <pre><code class="language-json">{
+  "count": 1250,
+  "next": "http://localhost:8000/v1/approvals/?limit=50&offset=50",
+  "previous": null,
+  "results": [
+    {
+      "id": "uuid",
+      "amount": "10.00",
+      "currency": "USD",
+      "decision": "needs_approval"
+    }
+  ]
+}</code></pre>
+
+    <h2 id="rate-limits">Rate limits</h2>
+
+    <table>
+      <thead><tr><th>Scope</th><th>Rate</th><th>Scope field</th></tr></thead>
+      <tbody>
+        <tr><td>Agent API</td><td>60/min</td><td>Per API key (<code>THROTTLE_AGENT</code>)</td></tr>
+        <tr><td>Dashboard API</td><td>3600/hour</td><td>Per user IP+session (<code>THROTTLE_USER</code>)</td></tr>
+        <tr><td>Anon auth</td><td>10/min</td><td>Per IP for login attempts (<code>THROTTLE_ANON</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="postman">Postman collection</h2>
+
+    <p>A Postman collection is provided at <code>docs/postman/AgentGate.postman_collection.json</code> for
+      testing the live API. Import it into Postman or run via Newman:</p>
+
+    <pre><code>npx newman run docs/postman/AgentGate.postman_collection.json \
+  --environment backend/.env.example \
+  --folder "Spend Requests"</code></pre>
+
+    <h2 id="missing">Missing endpoints</h2>
+
+    <p>The following endpoints are referenced by the frontend dashboard but not yet implemented
+      on the backend:</p>
+
+    <ul>
+      <li><code>GET /v1/dashboard/spend-requests/</code> &mdash; dashboard spend request list (needs org-scope filtering)</li>
+      <li><code>GET /v1/dashboard/spend-requests/{id}/</code> &mdash; dashboard spend request detail</li>
+      <li><code>GET /v1/dashboard/stats/</code> &mdash; spending summary for dashboard charts</li>
+      <li><code>GET /v1/dashboard/merchants/</code> &mdash; merchant list for allow/block management</li>
+    </ul>
+
+    <div class="callout">
+      <h4>Navigation</h4>
+      <p>
+        Related documentation:
+        <a href="index.html">Documentation Home</a> &bull;
+        <a href="integration-gap-analysis.html">Integration Gaps</a> &bull;
+        <a href="implementation-plan.html">Implementation Plan</a> &bull;
+        <a href="developer-setup.html">Developer Setup</a>
+      </p>
+    </div>
+
+  </main>
+</body>
+</html>

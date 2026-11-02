@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authentication Architecture &mdash; AgentGate</title>
+  <meta name="description" content="Recommended authentication architecture for AgentGate: email/password, GitHub OAuth, sessions, CSRF, RBAC.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Authentication Architecture</h1>
+    <p class="subtitle">AgentGate &mdash; email/password, GitHub OAuth, sessions, CSRF, and RBAC</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="purpose">Purpose and scope</h2>
+
+    <p>
+      This document specifies the <strong>recommended authentication architecture</strong> for AgentGate.
+      It covers email/password signup and login, GitHub OAuth login, email verification, secure logout,
+      password reset with expiring single-use links, password change, TOTP-based two-factor authentication
+      (2FA) with recovery codes, 2FA enforcement for administrators and payment approvers, second-factor
+      verification after both password and GitHub login, Django-managed sessions, CSRF protection,
+      organization-scoped RBAC, and authentication rate limiting.
+    </p>
+
+    <div class="callout note">
+      <strong>Ownership boundary</strong>: A dedicated <strong>auth developer</strong> owns this work.
+      The auth developer must <strong>not</strong> modify the policy engine
+      (<code>backend/engine/</code>), the spend service (<code>backend/apps/spend/services.py</code>),
+      or the approval service (<code>backend/apps/approvals/services.py</code>). Changes are
+      limited to <code>backend/apps/accounts/</code>, <code>backend/config/urls.py</code>,
+      <code>backend/config/settings/*.py</code>, <code>backend/requirements.txt</code>, and the
+      frontend session/auth layer (<code>frontend/src/session/</code>, <code>frontend/src/App.tsx</code>).
+    </div>
+
+    <h2 id="current-state">Current state</h2>
+
+    <h3 id="existing-models">Existing data model</h3>
+
+    <p>The following models already exist and are complete (<code>backend/apps/accounts/models.py</code>):</p>
+
+    <table>
+      <thead><tr><th>Model</th><th>Key fields</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>User</code></td>
+          <td>UUID PK, extends <code>AbstractUser</code> (username, email, password, <code>is_active</code>, <code>is_staff</code>, <code>is_superuser</code>)</td>
+          <td><span class="badge badge-complete">Exists</span></td>
+        </tr>
+        <tr>
+          <td><code>Organization</code></td>
+          <td>UUID PK, <code>name</code> (unique), timestamps</td>
+          <td><span class="badge badge-complete">Exists</span></td>
+        </tr>
+        <tr>
+          <td><code>OrgMembership</code></td>
+          <td>UUID PK, <code>user</code> FK, <code>organization</code> FK, <code>role</code> (admin/approver/viewer), unique per user+org</td>
+          <td><span class="badge badge-complete">Exists</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 id="existing-auth">Existing authentication machinery</h3>
+
+    <table>
+      <thead><tr><th>Mechanism</th><th>Where</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Agent API key auth</td>
+          <td><code>backend/apps/agents/authentication.py</code> &mdash; <code>AgentKeyAuthentication</code></td>
+          <td><span class="badge badge-complete">Complete</span> (used by <code>POST /v1/spend-requests/</code>)</td>
+        </tr>
+        <tr>
+          <td>Dashboard session auth</td>
+          <td>DRF <code>SessionAuthentication</code> on all dashboard views (<code>config/settings/base.py:149</code>)</td>
+          <td><span class="badge badge-complete">Wired in views</span></td>
+        </tr>
+        <tr>
+          <td>CSRF view middleware</td>
+          <td><code>django.middleware.csrf.CsrfViewMiddleware</code> in <code>config/settings/base.py:48</code></td>
+          <td><span class="badge badge-complete">Enabled</span></td>
+        </tr>
+        <tr>
+          <td>CSRF trusted origins</td>
+          <td><code>CSRF_TRUSTED_ORIGINS</code> from env (prod only)</td>
+          <td><span class="badge badge-warning">Partial &mdash; only in <code>prod.py</code></span></td>
+        </tr>
+        <tr>
+          <td>Session cookie flags</td>
+          <td><code>SESSION_COOKIE_SECURE</code>, <code>CSRF_COOKIE_SECURE</code> (prod only)</td>
+          <td><span class="badge badge-warning">Partial &mdash; only in <code>prod.py</code></span></td>
+        </tr>
+        <tr>
+          <td>DRF login/logout views</td>
+          <td><code>/api-auth/login/</code> and <code>/api-auth/logout/</code> via <code>rest_framework.urls</code></td>
+          <td><span class="badge badge-complete">Exists</span> (HTML form-based, not JSON API)</td>
+        </tr>
+        <tr>
+          <td><code>GET /api/auth/user/</code></td>
+          <td>&mdash;</td>
+          <td><span class="badge badge-missing">Missing</span> &mdash; must be created</td>
+        </tr>
+        <tr>
+          <td>Email verification</td>
+          <td>&mdash;</td>
+          <td><span class="badge badge-missing">Not implemented</span></td>
+        </tr>
+        <tr>
+          <td>Password reset</td>
+          <td>&mdash;</td>
+          <td><span class="badge badge-missing">Not implemented</span></td>
+        </tr>
+        <tr>
+          <td>GitHub OAuth</td>
+          <td>&mdash;</td>
+          <td><span class="badge badge-missing">Not implemented</span></td>
+        </tr>
+        <tr>
+          <td><code>django-allauth</code></td>
+          <td>&mdash; not in <code>requirements.txt</code></td>
+          <td><span class="badge badge-missing">Not installed</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 id="frontend-session">Existing frontend session layer</h3>
+
+    <p>
+      The current <code>SessionProvider</code> (<code>frontend/src/session/SessionProvider.tsx</code>) stores an
+      <strong>agent API key in memory only</strong> (for the simulator) and provides a <code>recent</code> array
+      of spend requests. It does <strong>not</strong> perform any dashboard-user authentication.
+      The <code>context.ts</code> type (<code>frontend/src/session/context.ts</code>) mirrors this: it holds
+      <code>agentKey</code>, <code>setAgentKey</code>, <code>recent</code>, and <code>remember</code>.
+      There is no concept of a dashboard user, roles, or organizations on the frontend.
+    </p>
+
+    <h2 id="recommended-architecture">Recommended architecture</h2>
+
+    <h3 id="tech-stack">Recommended technology stack</h3>
+
+    <table>
+      <thead><tr><th>Concern</th><th>Recommended library / tool</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td>Email/password signup + login</td><td><code>django-allauth</code> (account app)</td><td>Handles email verification, password reset, session management. Replaces raw DRF login form.</td></tr>
+        <tr><td>GitHub OAuth</td><td><code>django-allauth</code> (socialaccount app)</td><td>Built on <code>social-auth-core</code>; integrates with Django sessions; provides signup-from-OAuth flow.</td></tr>
+        <tr><td>Session storage</td><td>Django <code>SessionMiddleware</code> + DB-backed sessions (default)</td><td>Already configured in <code>config/settings/base.py</code>.</td></tr>
+        <tr><td>CSRF</td><td><code>DjangoCsrfViewMiddleware</code> + <code>SameSite=Lax</code> cookies</td><td>Already enabled; needs <code>CSRF_TRUSTED_ORIGINS</code> in dev too.</td></tr>
+        <tr><td>Frontend auth state</td><td>React context + <code>GET /api/auth/user/</code></td><td>Replace <code>SessionProvider</code> agent-key-only model with dashboard user + roles.</td></tr>
+        <tr><td>Frontend HTTP client</td><td><code>fetch</code> with <code>credentials: "include"</code></td><td>Built-in; sufficient for cookie-based session auth.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="why-not-jwt">Why not JWT</h3>
+
+    <div class="callout note">
+      <p>
+        The recommended approach uses <strong>Django session cookies</strong>, not JWT. Rationale:
+      </p>
+      <ul>
+        <li>The dashboard is a server-rendered-style SPA behind the same origin; cookies work seamlessly with <code>SameSite</code> and <code>Secure</code> flags.</li>
+        <li><code>django-allauth</code> is built around Django sessions; JWT would require a separate token store, refresh logic, and CSRF-equivalent thinking anyway.</li>
+        <li>Session revocation is immediate (delete the session row); JWT revocation requires a blocklist.</li>
+        <li>The agent API continues to use Bearer keys separately; adding JWT would create a third auth scheme for no benefit.</li>
+      </ul>
+      <p>
+        A second auth system or JWT is <strong>not approved</strong> for this project unless a specific,
+        approved architectural reason requires it (e.g., a third-party B2B integration needing token exchange).
+      </p>
+    </div>
+
+    <h2 id="frontend-backend-contract">Frontend/backend authentication contract</h2>
+
+    <h3 id="flow-diagram">Authentication flow</h3>
+
+    <pre><code>
+  Frontend (SPA, http://localhost:5173)          Backend (Django, http://localhost:8000)
+
+  1. User clicks "Sign in with GitHub"
+       |
+       |--- GET /accounts/github/login/ ----------------------&gt;|
+       |
+       |&lt;--- 302 redirect to GitHub OAuth consent page ---------|
+       |
+       |&lt;  [user consents on GitHub]                          |
+       |
+       |--- GET /accounts/github/login/callback/ --------------&gt;|
+       |       (code exchanged for GitHub token)
+       |
+       |--- 302 redirect back to frontend (session set) ------&gt;|
+       |         Set-Cookie: sessionid=...; csrftoken=...
+       |
+       |--- GET /api/auth/user/ (with cookies) ----------------&gt;|
+       |
+       |&lt;--- 200 { user, memberships, roles } -------------------|
+       |
+       |  [frontend stores user in context, enables dashboard]
+    </code></pre>
+
+    <h3 id="session-contract">Session contract</h3>
+
+    <dl>
+      <dt>Cookies</dt>
+      <dd>
+        <ul>
+          <li><code>sessionid</code> &mdash; Django session cookie. <code>Secure</code>, <code>HttpOnly</code>, <code>SameSite=Lax</code> (configurable to <code>Strict</code> if same-origin).</li>
+          <li><code>csrftoken</code> &mdash; Django CSRF cookie. <code>Secure</code>, <code>HttpOnly</code> (or readable by JS for header injection), <code>SameSite=Lax</code>.</li>
+        </ul>
+      </dd>
+      <dt>Frontend cookie handling</dt>
+      <dd>
+        All <code>fetch()</code> calls to the dashboard API must include
+        <code>credentials: "include"</code> so the browser sends session and CSRF cookies.
+        For state-changing requests (<code>POST</code>, <code>PATCH</code>, <code>DELETE</code>),
+        the frontend must include the <code>X-CSRFToken</code> header with the value from the
+        <code>csrftoken</code> cookie.
+      </dd>
+      <dt>CSRF exemption</dt>
+      <dd>
+        The agent API (<code>POST /v1/spend-requests/</code>) uses <code>AgentKeyAuthentication</code>
+        and <strong>must</strong> remain CSRF-exempt (it does not use <code>SessionAuthentication</code>).
+        All dashboard endpoints using <code>SessionAuthentication</code> must enforce CSRF.
+      </dd>
+    </dl>
+
+    <h3 id="api-endpoints-auth">Authentication API endpoints</h3>
+
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th><th>Owner</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>GET</td>
+          <td><code>/api/auth/user/</code></td>
+          <td>Session cookie</td>
+          <td>Returns the current user's UUID, email, and all org memberships with roles. Returns 401 if not authenticated.</td>
+          <td>Auth developer (new)</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <td><code>/api-auth/login/</code></td>
+          <td>None (sets session)</td>
+          <td>DRF built-in session login. Currently HTML form; consider JSON variant for SPA. Sets <code>sessionid</code> and <code>csrftoken</code> cookies.</td>
+          <td>Auth developer (existing)</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <td><code>/api-auth/logout/</code></td>
+          <td>Session cookie + CSRF</td>
+          <td>Destroys the current session. Clears <code>sessionid</code> cookie.</td>
+          <td>Auth developer (existing)</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <td><code>/accounts/signup/</code></td>
+          <td>None</td>
+          <td>Allauth email/password signup. Sends verification email.</td>
+          <td>Auth developer (new &mdash; allauth)</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <td><code>/accounts/login/</code></td>
+          <td>None</td>
+          <td>Allauth login (email + password). Sets session.</td>
+          <td>Auth developer (new &mdash; allauth)</td>
+        </tr>
+        <tr>
+          <td>POST</td>
+          <td><code>/accounts/logout/</code></td>
+          <td>Session cookie + CSRF</td>
+          <td>Allauth logout. Clears session.</td>
+          <td>Auth developer (new &mdash; allauth)</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <td><code>/accounts/password/reset/</code></td>
+          <td>None</td>
+          <td>Allauth password reset request form.</td>
+          <td>Auth developer (new &mdash; allauth)</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <td><code>/accounts/password/reset/confirm/</code></td>
+          <td>None</td>
+          <td>Allauth password reset confirmation (UID + token).</td>
+          <td>Auth developer (new &mdash; allauth)</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <td><code>/accounts/github/login/</code></td>
+          <td>None</td>
+          <td>Allauth social login entry point. Redirects to GitHub OAuth consent.</td>
+          <td>Auth developer (new &mdash; allauth)</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <td><code>/accounts/github/login/callback/</code></td>
+          <td>None</td>
+          <td>Allauth GitHub OAuth callback. Exchanges code for token, creates/retrieves <code>SocialAccount</code>, sets Django session.</td>
+          <td>Auth developer (new &mdash; allauth)</td>
+        </tr>
+        <tr>
+          <td>GET</td>
+          <td><code>/accounts/profile/</code></td>
+          <td>Session cookie</td>
+          <td>Allauth default profile redirect. Should redirect to <code>/app/overview</code> or a frontend route.</td>
+          <td>Auth developer (configure)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 id="user-response">Current-user response format</h3>
+
+    <p><code>GET /api/auth/user/</code> &mdash; 200 (authenticated) or 401 (unauthenticated):</p>
+<pre><code class="language-json">{
+  "id": "uuid",
+  "email": "user@example.com",
+  "username": "user@example.com",
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "date_joined": "2026-10-27T12:00:00Z",
+  "is_email_verified": true,
+  "memberships": [
+    {
+      "organization_id": "uuid",
+      "organization_name": "Acme Corp",
+      "role": "admin",
+      "joined_at": "2026-10-27T12:00:00Z"
+    }
+  ]
+}</code></pre>
+
+    <h2 id="role-model-section">Organization membership and authorization rules</h2>
+
+    <h3 id="roles">Roles</h3>
+
+    <table>
+      <thead><tr><th>Role</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>admin</code></td><td>Full access to all organization resources. Can approve/deny, create agents, edit policies, manage team, audit verify.</td></tr>
+        <tr><td><code>approver</code></td><td>Can approve/deny spend requests. Can view transactions, policies, agents, audit. Cannot manage team or audit verify.</td></tr>
+        <tr><td><code>viewer</code></td><td>Read-only access. Can view spend requests, policies, agents, audit. Cannot approve/deny or make changes.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="authorization-matrix">Frontend authorization matrix</h3>
+
+    <table>
+      <thead><tr><th>Frontend route</th><th>Required role</th><th>Frontend action</th></tr></thead>
+      <tbody>
+        <tr><td><code>/app/overview</code></td><td>Any member</td><td>Redirect to <code>/login</code> if no membership.</td></tr>
+        <tr><td><code>/app/approvals</code></td><td>approver or admin</td><td>Redirect to <code>/app/overview</code> with toast if viewer.</td></tr>
+        <tr><td><code>/app/approvals/:id</code></td><td>approver or admin</td><td>Same.</td></tr>
+        <tr><td><code>/app/transactions</code></td><td>Any member</td><td>Read-only for viewers.</td></tr>
+        <tr><td><code>/app/agents</code></td><td>admin</td><td>Create/register disabled for non-admin.</td></tr>
+        <tr><td><code>/app/policies</code></td><td>Any member</td><td>Edit links disabled for viewer/approver; PATCH requires admin.</td></tr>
+        <tr><td><code>/app/audit</code></td><td>Any member</td><td>Verify button visible only to admin.</td></tr>
+        <tr><td><code>/app/settings</code></td><td>admin</td><td>Redirect to <code>/app/overview</code> if not admin.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="backend-permission-check">Backend permission enforcement</h3>
+
+    <p>
+      The backend already enforces role-based access via permission classes in
+      <code>backend/apps/accounts/permissions.py</code>. The auth developer must ensure that
+      <code>django-allauth</code> integration does <strong>not</strong> bypass these checks.
+      Specifically, after a user authenticates via allauth, a <code>post_authenticate</code> or
+      <code>user_logged_in</code> signal handler should ensure the user has at least one
+      <code>OrgMembership</code>. If not, the user should be blocked from accessing dashboard endpoints
+      (403) until an admin assigns them to an organization.
+    </p>
+
+    <h3 id="org-assignment">Organization assignment for new users</h3>
+
+    <p>
+      When a user signs up via email/password or GitHub OAuth, they must be assigned to an
+      organization with a role. The recommended approach:
+    </p>
+    <ol>
+      <li><strong>Single-tenant demo</strong>: New users are auto-assigned to the organization named in
+        <code>DEMO_ORG_NAME</code> (default: <code>demo</code>) with the <code>viewer</code> role.
+        An admin later promotes them.</li>
+      <li><strong>Multi-tenant with invite codes</strong> (planned for post-MVP): User enters an invite code during signup;
+        the backend looks up the organization and assigns the role specified by the invite.</li>
+    </ol>
+
+    <h2 id="github-oauth-flow">GitHub OAuth callback flow</h2>
+
+    <p>The <code>django-allauth</code> socialaccount app handles the OAuth 2.1 flow as follows:</p>
+
+    <ol>
+      <li><strong>User clicks "Sign in with GitHub"</strong> on the frontend. The button links to <code>/accounts/github/login/</code>.</li>
+      <li><strong>Backend redirects to GitHub</strong>: Allauth stores a <code>state</code> nonce in the session, then redirects to
+        <code>https://github.com/login/oauth/authorize</code> with <code>client_id</code>, <code>redirect_uri</code>,
+        <code>scope</code>, and <code>state</code>.</li>
+      <li><strong>User consents on GitHub</strong>: GitHub prompts for authorization.</li>
+      <li><strong>GitHub redirects back</strong> to <code>/accounts/github/login/callback/</code> with <code>code</code> and <code>state</code>.</li>
+      <li><strong>Allauth verifies <code>state</code></strong>: Compares the nonce against the session. If mismatch, returns 403.</li>
+      <li><strong>Allauth exchanges the code</strong>: Server-side POST to
+        <code>https://github.com/login/oauth/access_token</code> with <code>client_id</code>,
+        <code>client_secret</code>, and <code>code</code>. The secret never reaches the browser.</li>
+      <li><strong>Allauth fetches user info</strong>: Server-side GET to <code>https://api.github.com/user</code>
+        using the access token. Optionally fetches the user's email from <code>/user/emails</code>.</li>
+      <li><strong>Allauth creates/updates <code>SocialAccount</code></strong>: If the GitHub user has not logged in before, a new
+        <code>User</code> and <code>SocialAccount</code> are created. The user is then auto-assigned to the demo organization as a <code>viewer</code>.</li>
+      <li><strong>Allauth sets the Django session</strong>: <code>django.contrib.auth.login()</code> is called, which sets the <code>sessionid</code> cookie.</li>
+      <li><strong>Redirect to frontend</strong>: Allauth redirects to <code>SOCIAL_AUTH_LOGIN_REDIRECT_URL</code>
+        (default: <code>/accounts/profile/</code>), which the auth developer should configure to redirect to a frontend route (e.g., <code>https://app.agentgate.dev/dashboard</code>).</li>
+      <li><strong>Frontend calls <code>/api/auth/user/</code></strong>: Using the session cookie, the frontend verifies the user and loads their memberships and roles.</li>
+    </ol>
+
+    <div class="callout warning">
+      <strong>Important</strong>: The <code>client_secret</code> is used only server-side. It must never appear in
+      Vite environment variables or be bundled into the frontend. All OAuth code exchange happens in the Django backend.
+    </div>
+
+    <h3 id="signup-from-oauth">GitHub OAuth signup flow</h3>
+
+    <p>
+      Unlike some providers, GitHub always returns a user profile for any authenticated session.
+      Allauth treats the first login as a "signup": if no <code>SocialAccount</code> exists for the
+      GitHub UID, allauth creates a new <code>User</code>. If email verification is enabled, the user
+      receives a verification email before the account is fully active. The <code>ENABLE_SIGNUP_FORM</code>
+      setting controls whether allauth shows a signup form to collect additional fields (e.g., team name).
+    </p>
+
+    <h2 id="env-vars">Environment variable requirements</h2>
+
+    <table>
+      <thead><tr><th>Variable</th><th>Required</th><th>Environment</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>DJANGO_SECRET_KEY</code></td><td>Yes</td><td>All</td><td>Random Django secret. Generated by <code>run.sh</code> on first run.</td></tr>
+        <tr><td><code>DJANGO_ALLOWED_HOSTS</code></td><td>Yes (prod)</td><td>Prod</td><td>Comma-separated allowed hostnames.</td></tr>
+        <tr><td><code>CSRF_TRUSTED_ORIGINS</code></td><td>Yes (prod, and dev for SPA)</td><td>Prod + Dev</td><td>Origins that may send CSRF-protected POST/PUT/DELETE. Include <code>https://app.agentgate.dev</code> and <code>http://localhost:5173</code> for dev.</td></tr>
+        <tr><td><code>SESSION_COOKIE_SECURE</code></td><td>Implicit (prod)</td><td>Prod</td><td>Set to <code>True</code> in <code>prod.py</code> (already done).</td></tr>
+        <tr><td><code>CSRF_COOKIE_SECURE</code></td><td>Implicit (prod)</td><td>Prod</td><td>Set to <code>True</code> in <code>prod.py</code> (already done).</td></tr>
+        <tr><td><code>ACCOUNT_EMAIL_VERIFICATION</code></td><td>Yes</td><td>All</td><td>Set to <code>mandatory</code> for production; <code>optional</code> or <code>none</code> for dev.</td></tr>
+        <tr><td><code>SOCIALACCOUNT_EMAIL_VERIFICATION</code></td><td>Yes</td><td>All</td><td>Set to <code>mandatory</code> to require email verification after OAuth signup.</td></tr>
+        <tr><td><code>DJANGO_GITHUB_CLIENT_ID</code></td><td>Yes</td><td>All</td><td>GitHub OAuth app client ID (from <code>github.com/settings/developers</code>).</td></tr>
+        <tr><td><code>DJANGO_GITHUB_CLIENT_SECRET</code></td><td>Yes (prod)</td><td>Prod</td><td>GitHub OAuth app client secret. Never committed.</td></tr>
+        <tr><td><code>LOGIN_REDIRECT_URL</code></td><td>Yes</td><td>All</td><td>Frontend URL after login, e.g., <code>http://localhost:5173/app/overview</code>.</td></tr>
+        <tr><td><code>LOGOUT_REDIRECT_URL</code></td><td>Yes</td><td>All</td><td>Frontend URL after logout, e.g., <code>http://localhost:5173/</code>.</td></tr>
+        <tr><td><code>EMAIL_HOST</code></td><td>Yes (for email verification)</td><td>All</td><td>SMTP server host for sending verification + reset emails.</td></tr>
+        <tr><td><code>EMAIL_PORT</code></td><td>Yes</td><td>All</td><td>SMTP port.</td></tr>
+        <tr><td><code>EMAIL_HOST_USER</code></td><td>Yes</td><td>All</td><td>SMTP username.</td></tr>
+        <tr><td><code>EMAIL_HOST_PASSWORD</code></td><td>Yes</td><td>All</td><td>SMTP password.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-example">Updated .env.example additions</h3>
+
+    <p>The following entries should be added to <code>backend/.env.example</code> by the auth developer:</p>
+<pre><code># Authentication (django-allauth)
+ACCOUNT_EMAIL_VERIFICATION=mandatory
+SOCIALACCOUNT_EMAIL_VERIFICATION=mandatory
+LOGIN_REDIRECT_URL=http://localhost:5173/app/overview
+LOGOUT_REDIRECT_URL=http://localhost:5173/
+
+# GitHub OAuth
+DJANGO_GITHUB_CLIENT_ID=your-github-app-client-id
+DJANGO_GITHUB_CLIENT_SECRET=your-github-app-client-secret
+
+# Email (for verification + password reset)
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=
+EMAIL_HOST_PASSWORD=</code></pre>
+
+    <h2 id="frontend-integration">Frontend authentication integration</h2>
+
+    <p>The auth developer (or frontend team in coordination) must update the following:</p>
+
+    <h3 id="session-provider-update">SessionProvider update</h3>
+
+    <p>
+      The <code>SessionProvider</code> (<code>frontend/src/session/SessionProvider.tsx</code>) must be
+      extended to hold dashboard-user auth state alongside the existing agent key:
+    </p>
+    <ul>
+      <li><code>user</code> &mdash; the current user object from <code>GET /api/auth/user/</code></li>
+      <li><code>userLoaded</code> &mdash; boolean; <code>false</code> until the /user endpoint has been polled</li>
+      <li><code>agentKey</code> &mdash; retained for the simulator (agent-key auth path)</li>
+      <li><code>recent</code> &mdash; retained for the simulator's local request history</li>
+    </ul>
+
+    <h3 id="route-guards">Authenticated route guards</h3>
+
+    <p>
+      In <code>frontend/src/App.tsx</code>, the <code>/app/*</code> routes must be wrapped in an
+      auth guard that:
+    </p>
+    <ul>
+      <li>If <code>userLoaded === false</code>, show a loading spinner (do not render dashboard screens).</li>
+      <li>If <code>userLoaded === true</code> and <code>user === null</code>, redirect to <code>/login</code>.</li>
+      <li>If <code>userLoaded === true</code> and <code>user</code> exists but has no memberships,
+          redirect to a "waiting for admin" page.</li>
+      <li>Role-based sub-guards: if the user lacks approver/admin role, redirect away from <code>/app/approvals</code>
+          and <code>/app/settings</code>.</li>
+    </ul>
+
+    <h3 id="login-page">Login page</h3>
+
+    <p>
+      A new <code>/login</code> route should present email/password login and a "Sign in with GitHub"
+      button (which links to <code>/accounts/github/login/</code>). This page is outside the
+      <code>/app</code> layout so unauthenticated users see it.
+    </p>
+
+    <h3 id="logout">Logout</h3>
+
+    <p>
+      The logout button in <code>AppLayout.tsx</code> must call
+      <code>POST /api-auth/logout/</code> with a CSRF token, then call
+      <code>GET /api/auth/user/</code> to confirm the session is cleared, then redirect to <code>/login</code>.
+    </p>
+
+    <div class="callout warning">
+      <strong>Do not</strong> modify <code>frontend/src/api/spendRequests.ts</code> (the agent API client).
+      The agent key auth path must remain untouched. Only the session/auth layer should change.
+    </div>
+
+    <h2 id="security-criteria">Security acceptance criteria</h2>
+
+    <h3 id="must-pass">Must-pass criteria</h3>
+
+    <table>
+      <thead><tr><th>#</th><th>Criterion</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Unauthenticated requests to <code>/api/auth/user/</code> return 401.</td></tr>
+        <tr><td>2</td><td>Unauthenticated requests to dashboard endpoints (<code>/v1/approvals/</code>, <code>/v1/policies/</code>, <code>/v1/audit/</code>) return 401 or 403.</td></tr>
+        <tr><td>3</td><td>All state-changing dashboard endpoints require a valid <code>X-CSRFToken</code> header matching the <code>csrftoken</code> cookie.</td></tr>
+        <tr><td>4</td><td>GitHub <code>client_secret</code> is never sent to or readable by the frontend.</td></tr>
+        <tr><td>5</td><td>Email verification is required before a user can access dashboard endpoints (<code>ACCOUNT_EMAIL_VERIFICATION=mandatory</code>).</td></tr>
+        <tr><td>6</td><td>A user with only <code>viewer</code> role receives 403 on <code>POST /v1/approvals/{id}/approve/</code> and <code>POST /v1/approvals/{id}/deny/</code>.</td></tr>
+        <tr><td>7</td><td>A user with <code>admin</code> role in organization A cannot access approvals in organization B.</td></tr>
+        <tr><td>8</td><td>Logout destroys the session: a subsequent request to <code>/api/auth/user/</code> returns 401.</td></tr>
+        <tr><td>9</td><td>Session cookie has <code>Secure</code>, <code>HttpOnly</code>, and <code>SameSite=Lax</code> (or <code>Strict</code>) flags in production.</td></tr>
+        <tr><td>10</td><td><code>CSRF_TRUSTED_ORIGINS</code> is set to the production frontend origin in <code>prod.py</code> and to <code>http://localhost:5173</code> in dev.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="testing">Testing acceptance criteria</h3>
+
+    <table>
+      <thead><tr><th>#</th><th>Test scenario</th><th>Expected result</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Submit <code>GET /api/auth/user/</code> with no session</td><td>401 Unauthorized</td></tr>
+        <tr><td>2</td><td>Login with valid email/password</td><td>200 + <code>sessionid</code> cookie set</td></tr>
+        <tr><td>3</td><td>Login with invalid password</td><td>400/401, no session set</td></tr>
+        <tr><td>4</td><td>Follow GitHub OAuth flow end-to-end (sandbox test org)</td><td>User created with <code>viewer</code> role; session set</td></tr>
+        <tr><td>5</td><td>Reject CSRF token on <code>POST /v1/approvals/{id}/approve/</code></td><td>403 Forbidden</td></tr>
+        <tr><td>6</td><td>Submit approval action as <code>viewer</code></td><td>403 Forbidden</td></tr>
+        <tr><td>7</td><td>Logout then call protected endpoint</td><td>401 Unauthorized</td></tr>
+        <tr><td>8</td><td>Expired session after 14 days</td><td><code>/api/auth/user/</code> returns 401</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="auth-tasks">Authentication task breakdown (AUTH-01 through AUTH-06)</h2>
+
+    <div class="callout note">
+      Each task below is an independent, well-scoped unit of work with clear acceptance criteria
+      and a verification command. Tasks must be implemented in dependency order.
+      <strong>Implementation is out of scope for this phase</strong> &mdash; this is the task
+      decomposition for future implementation.
+    </div>
+
+    <h3 id="auth-01">AUTH-01 &mdash; Email/password signup and login</h3>
+    <p><strong>Dependencies</strong>: None</p>
+    <p><strong>Owner</strong>: Backend developer</p>
+
+    <p>Requirements:</p>
+    <ul>
+      <li>Add <code>django-allauth</code> and <code>django-allauth[social]</code> to <code>requirements.txt</code></li>
+      <li>Configure allauth in <code>settings/base.py</code>:
+        <ul>
+          <li>Add <code>allauth.account</code>, <code>allauth.socialaccount</code> to <code>INSTALLED_APPS</code></li>
+          <li>Add <code>AllauthMiddleware</code></li>
+          <li>Configure <code>ACCOUNT_EMAIL_VERIFICATION = "mandatory"</code></li>
+        </ul>
+      </li>
+      <li>Create custom <code>AccountAdapter</code> restricting email domains to allowlisted org domains</li>
+      <li>Implement <code>GET /api/auth/user/</code> endpoint returning user, orgs, roles, and 2FA status</li>
+    </ul>
+
+    <p><strong>Acceptance criteria</strong>:</p>
+    <ul>
+      <li>Users can sign up with email + password via <code>POST /accounts/signup/</code></li>
+      <li>Account is created inactive until email verification</li>
+      <li>Login via <code>POST /accounts/login/</code> works for verified users</li>
+      <li>Unverified users cannot log in</li>
+      <li>Domain restriction blocks non-allowlisted emails</li>
+    </ul>
+
+    <p><strong>Verification command</strong>:</p>
+    <pre><code>pytest tests/test_auth_signup_login.py -v</code></pre>
+
+    <h3 id="auth-02">AUTH-02 &mdash; Email verification and secure logout</h3>
+    <p><strong>Dependencies</strong>: AUTH-01</p>
+    <p><strong>Owner</strong>: Backend developer</p>
+
+    <p>Requirements:</p>
+    <ul>
+      <li>Configure email backend (<code>EMAIL_HOST</code>, <code>EMAIL_HOST_USER</code>, <code>EMAIL_HOST_PASSWORD</code>) in <code>.env.example</code></li>
+      <li>Create email templates: confirmation, password reset, email confirmation</li>
+      <li>Implement <code>POST /accounts/logout/</code> that clears session and CSRF token</li>
+      <li>Configure <code>ACCOUNT_EMAIL_CONFIRMATION_EXPIRE_DAYS = 3</code></li>
+    </ul>
+
+    <p><strong>Acceptance criteria</strong>:</p>
+    <ul>
+      <li>Unverified users are redirected to email confirmation page</li>
+      <li>Logout destroys the session: subsequent <code>/api/auth/user/</code> returns 401</li>
+      <li>Email confirmation links expire after 3 days</li>
+    </ul>
+
+    <p><strong>Verification command</strong>:</p>
+    <pre><code>pytest tests/test_auth_verification_logout.py -v</code></pre>
+
+    <h3 id="auth-03">AUTH-03 &mdash; Password reset and change</h3>
+    <p><strong>Dependencies</strong>: AUTH-02</p>
+    <p><strong>Owner</strong>: Backend developer</p>
+
+    <p>Requirements:</p>
+    <ul>
+      <li>Implement password reset with expiring, single-use links (<code>ACCOUNT_PASSWORD_RESET</code>)</li>
+      <li>Configure <code>ACCOUNT_PASSWORD_RESET_TIMEOUT = 3600</code> (1 hour)</li>
+      <li>Implement password change endpoint requiring current password (<code>POST /accounts/password/change/</code>)</li>
+    </ul>
+
+    <p><strong>Acceptance criteria</strong>:</p>
+    <ul>
+      <li>Password reset links expire after 1 hour</li>
+      <li>Reset links can only be used once</li>
+      <li>Password change requires current password verification</li>
+      <li>Password reset emails are rate-limited (max 3 requests per hour per email)</li>
+    </ul>
+
+    <p><strong>Verification command</strong>:</p>
+    <pre><code>pytest tests/test_auth_password.py -v</code></pre>
+
+    <h3 id="auth-04">AUTH-04 &mdash; GitHub OAuth</h3>
+    <p><strong>Dependencies</strong>: AUTH-01</p>
+    <p><strong>Owner</strong>: Backend developer</p>
+
+    <p>Requirements:</p>
+    <ul>
+      <li>Register GitHub OAuth app with callback URL <code>/accounts/github/login/callback/</code></li>
+      <li>Configure <code>SOCIALACCOUNT_PROVIDERS</code> in settings with GitHub scopes</li>
+      <li>Implement <code>SOCIALACCOUNT_LOGIN_BY_CODE_REQUIRED = True</code> for SPA flow</li>
+      <li>Create custom <code>SocialAccountAdapter</code> restricting to allowlisted org domains</li>
+      <li>Implement second-factor challenge after GitHub login (if 2FA enrolled)</li>
+    </ul>
+
+    <p><strong>Acceptance criteria</strong>:</p>
+    <ul>
+      <li>Users can log in via GitHub OAuth</li>
+      <li>GitHub <code>client_secret</code> never sent to/frotnend</li>
+      <li>Social account auto-linked to existing User (matching email)</li>
+      <li>Domain restriction enforces org allowlist</li>
+      <li>If user has 2FA enrolled, redirect to second-factor verification after GitHub login</li>
+    </ul>
+
+    <p><strong>Verification command</strong>:</p>
+    <pre><code>pytest tests/test_auth_github.py -v</code></pre>
+
+    <h3 id="auth-05">AUTH-05 &mdash; TOTP two-factor authentication</h3>
+    <p><strong>Dependencies</strong>: AUTH-02</p>
+    <p><strong>Owner</strong>: Backend developer</p>
+
+    <p>Requirements:</p>
+    <ul>
+      <li>Add <code>django-two-factor-auth</code> to <code>requirements.txt</code></li>
+      <li>Implement TOTP enrollment: generate secret, QR code, verify 6-digit code</li>
+      <li>Generate 10 single-use recovery codes per user</li>
+      <li>Enforce 2FA for <code>admin</code> and <code>approver</code> roles</li>
+      <li>Second-factor verification required after both password and GitHub login for 2FA-enrolled users</li>
+      <li>Add <code>GET /api/auth/user/</code> response includes <code>two_factor_enabled</code> boolean</li>
+    </ul>
+
+    <p><strong>Acceptance criteria</strong>:</p>
+    <ul>
+      <li>Users can enroll TOTP via QR code scan</li>
+      <li>TOTP verification required for admin/approver login</li>
+      <li>Recovery codes are 10 single-use backup codes (20 characters each)</li>
+      <li>2FA can be disabled only after successful re-authentication</li>
+      <li>Non-admin/approver users are not forced into 2FA (opt-in)</li>
+    </ul>
+
+    <p><strong>Verification command</strong>:</p>
+    <pre><code>pytest tests/test_auth_2fa.py -v</code></pre>
+
+    <h3 id="auth-06">AUTH-06 &mdash; Organization-scoped RBAC and rate limiting</h3>
+    <p><strong>Dependencies</strong>: AUTH-05</p>
+    <p><strong>Owner</strong>: Backend developer</p>
+
+    <p>Requirements:</p>
+    <ul>
+      <li>Implement organization auto-assignment on signup/login via signal handler (matching email domain to org)</li>
+      <li>Implement permission classes:
+        <ul>
+          <li><code>IsDashboardUser</code> &mdash; any authenticated user with at least one <code>OrgMembership</code></li>
+          <li><code>IsApprover</code> &mdash; user with <code>admin</code> or <code>approver</code> role</li>
+          <li><code>IsOrganizationAdmin</code> &mdash; user with <code>admin</code> role</li>
+        </ul>
+      </li>
+      <li>Implement authentication rate limiting:
+        <ul>
+          <li>DRF throttle: 5 failed login attempts per IP per 15 minutes</li>
+          <li>Account lockout after 5 failures for 15 minutes</li>
+          <li>Per-user throttling: 60 requests/minute after auth</li>
+        </ul>
+      </li>
+      <li>Add <code>django-axes</code> or equivalent brute-force protection</li>
+    </ul>
+
+    <p><strong>Acceptance criteria</strong>:</p>
+    <ul>
+      <li>User is auto-assigned to organization based on email domain</li>
+      <li>Admin in org A cannot access approvals in org B</li>
+      <li>Viewer role cannot approve/deny requests</li>
+      <li>Brute-force login attempts are blocked after 5 failures (15-minute lockout)</li>
+    </ul>
+
+    <p><strong>Verification command</strong>:</p>
+    <pre><code>pytest tests/test_auth_rbac.py -v && pytest tests/test_auth_rate_limit.py -v</code></pre>
+
+    <h2 id="auth-dependency-graph">Authentication task dependency graph</h2>
+
+    <figure class="diagram">
+      <pre><code>AUTH-01: Email/password signup/login
+     │
+     ├── AUTH-02: Email verification & logout
+     │    │
+     │    ├── AUTH-03: Password reset & change
+     │    │
+     │    └── AUTH-05: TOTP 2FA (enrollment, enforcement)
+     │         │
+     │         └── AUTH-06: RBAC & rate limiting
+     │
+     └── AUTH-04: GitHub OAuth
+          │
+          └── (connects to AUTH-05 for 2FA after GitHub login)</code></pre>
+      <figcaption>Auth task dependency graph. AUTH-02 and AUTH-04 both depend on AUTH-01. AUTH-05 depends on AUTH-02. AUTH-06 depends on AUTH-05.</figcaption>
+    </figure>
+
+    <h2 id="auth-state-machine">Authentication state machine</h2>
+
+    <p>The user session lifecycle with 2FA enforcement:</p>
+
+    <figure class="diagram">
+      <pre><code>Unauthenticated
+     │  POST /accounts/signup/ or /accounts/login/ or /accounts/github/login/
+     ▼
+Primary Verified
+  (email verified, password OR GitHub OAuth passed)
+     │  if 2FA enrolled:
+     │  GET /2fa/verify?prompt=1
+     ▼
+Second Factor Required
+     │  POST /2fa/verify/
+     ▼
+Second Factor Verified
+  (all auth complete)
+     │  Access dashboard endpoints
+     ▼
+Authenticated Dashboard User
+     │  POST /accounts/logout/
+     ▼
+Unauthenticated</code></pre>
+    </figure>
+
+    <h2 id="auth-rbac-matrix">RBAC matrix (updated with 2FA)</h2>
+
+    <table>
+      <thead><tr><th>Role</th><th>Auth required</th><th>2FA required</th><th>Can approve</th><th>Can manage agents</th><th>Can manage policies</th><th>Can manage org settings</th></tr></thead>
+      <tbody>
+        <tr><td><code>viewer</code></td><td>Email + password or GitHub</td><td>No (opt-in)</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+        <tr><td><code>approver</code></td><td>Email + password or GitHub</td><td><strong>Yes</strong></td><td>Yes</td><td>No</td><td>No</td><td>No</td></tr>
+        <tr><td><code>admin</code></td><td>Email + password or GitHub</td><td><strong>Yes</strong></td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="auth-environment">Auth environment variables</h2>
+
+    <table>
+      <thead><tr><th>Variable</th><th>Required</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>EMAIL_HOST</code></td><td>After AUTH-02</td><td>SMTP server (Mailgun or Postmark)</td></tr>
+        <tr><td><code>EMAIL_HOST_USER</code></td><td>After AUTH-02</td><td>SMTP username</td></tr>
+        <tr><td><code>EMAIL_HOST_PASSWORD</code></td><td>After AUTH-02</td><td>SMTP password or API token</td></tr>
+        <tr><td><code>GITHUB_CLIENT_ID</code></td><td>After AUTH-04</td><td>GitHub OAuth app client ID</td></tr>
+        <tr><td><code>GITHUB_CLIENT_SECRET</code></td><td>After AUTH-04</td><td>GitHub OAuth app client secret (never in frontend)</td></tr>
+        <tr><td><code>TOTP_ENABLED</code></td><td>After AUTH-05</td><td><code>True</code> to enable TOTP 2FA</td></tr>
+        <tr><td><code>ACCOUNT_EMAIL_VERIFICATION</code></td><td>After AUTH-01</td><td>Set to <code>mandatory</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="auth-testing">Testing acceptance criteria (updated)</h2>
+
+    <table>
+      <thead><tr><th>#</th><th>Test scenario</th><th>Expected result</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Submit <code>GET /api/auth/user/</code> with no session</td><td>401 Unauthorized</td></tr>
+        <tr><td>2</td><td>Login with valid email/password (unverified account)</td><td>403 Forbidden + redirect to verification page</td></tr>
+        <tr><td>3</td><td>Login with invalid password</td><td>400/401, no session set</td></tr>
+        <tr><td>4</td><td>Login with valid email/password (verified account, no 2FA)</td><td>200 + <code>sessionid</code> cookie set</td></tr>
+        <tr><td>5</td><td>Login as admin (2FA enrolled, no TOTP provided)</td><td>200 + session set, but dashboard endpoints return 402 (second factor required)</td></tr>
+        <tr><td>6</td><td>Provide valid TOTP code after primary login</td><td>Second factor verified, dashboard access granted</td></tr>
+        <tr><td>7</td><td>Use recovery code instead of TOTP</td><td>Recovery code consumed (single-use), dashboard access granted</td></tr>
+        <tr><td>8</td><td>Follow GitHub OAuth flow end-to-end (sandbox test org)</td><td>User created with <code>viewer</code> role; session set</td></tr>
+        <tr><td>9</td><td>Reject CSRF token on <code>POST /v1/approvals/{id}/approve/</code></td><td>403 Forbidden</td></tr>
+        <tr><td>10</td><td>Submit approval action as <code>viewer</code></td><td>403 Forbidden</td></tr>
+        <tr><td>11</td><td>Logout then call protected endpoint</td><td>401 Unauthorized</td></tr>
+        <tr><td>12</td><td>Expired session after 14 days</td><td><code>/api/auth/user/</code> returns 401</td></tr>
+        <tr><td>13</td><td>Login with wrong TOTP code</td><td>403 Forbidden + retry</td></tr>
+        <tr><td>14</td><td>Brute-force login (6 failed attempts)</td><td>Account locked for 15 minutes</td></tr>
+        <tr><td>15</td><td>Admin tries to access approval in another org</td><td>403 Forbidden (org-scoped)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="integration-dependencies">Integration dependencies for existing dashboard screens</h2>
+
+    <p>Each dashboard screen depends on authentication being complete. The table below lists the
+      minimum auth capability each screen requires:</p>
+
+    <table>
+      <thead><tr><th>Screen</th><th>Auth dependent</th><th>Minimum capability</th></tr></thead>
+      <tbody>
+        <tr><td>OverviewPage</td><td>Yes</td><td>User loaded + at least one membership (any role)</td></tr>
+        <tr><td>ApprovalsPage</td><td>Yes</td><td>User loaded + approver or admin role in at least one org</td></tr>
+        <tr><td>ApprovalDetailPage</td><td>Yes</td><td>Same as ApprovalsPage</td></tr>
+        <tr><td>TransactionsPage</td><td>Yes</td><td>User loaded + at least one membership</td></tr>
+        <tr><td>TransactionDetailPage</td><td>Yes</td><td>User loaded + at least one membership</td></tr>
+        <tr><td>AgentsPage</td><td>Yes</td><td>User loaded + at least one membership; create button requires admin</td></tr>
+        <tr><td>AgentDetailPage</td><td>Yes</td><td>User loaded + at least one membership</td></tr>
+        <tr><td>PoliciesPage</td><td>Yes</td><td>User loaded + at least one membership</td></tr>
+        <tr><td>PolicyEditPage</td><td>Yes</td><td>User loaded + admin role to save edits</td></tr>
+        <tr><td>AuditLogPage</td><td>Yes</td><td>User loaded + at least one membership</td></tr>
+        <tr><td>SettingsPage</td><td>Yes</td><td>User loaded + admin role in at least one org</td></tr>
+        <tr><td>SimulatePage</td><td>No</td><td>Agent key only (no session required)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="unresolved-findings">Unresolved findings</h2>
+
+    <table>
+      <thead><tr><th>#</th><th>Finding</th><th>Impact</th><th>Owner</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>No <code>GET /api/auth/user/</code> endpoint exists. Frontend has no way to learn the user's roles/memberships.</td><td>Blocker &mdash; role-based route guards cannot be built</td><td>Auth developer</td></tr>
+        <tr><td>2</td><td>DRF login form at <code>/api-auth/login/</code> is HTML-based, not JSON. A SPA cannot easily consume it without rendering the form.</td><td>Medium &mdash; need JSON login wrapper or allauth API</td><td>Auth developer</td></tr>
+        <tr><td>3</td><td><code>CSRF_TRUSTED_ORIGINS</code> is only set in <code>prod.py</code>, not in <code>dev.py</code>. The Vite dev server origin is not trusted, so CSRF-protected POSTs from <code>localhost:5173</code> would fail in dev.</td><td>Medium &mdash; dev environment broken for CSRF calls</td><td>Auth developer</td></tr>
+        <tr><td>4</td><td>No org auto-assignment signal for allauth signups. New users with no <code>OrgMembership</code> would be stuck.</td><td>Blocker &mdash; new user onboarding</td><td>Auth developer</td></tr>
+        <tr><td>5</td><td>No email backend configured (<code>EMAIL_HOST</code> etc. not in <code>.env.example</code>). Email verification and password reset cannot work.</td><td>Blocker for email workflows</td><td>Auth developer</td></tr>
+        <tr><td>6</td><td>Frontend <code>SessionProvider</code> and <code>context.ts</code> have no concept of dashboard user or roles.</td><td>Blocker &mdash; frontend must be rewritten for session auth</td><td>Frontend team + Auth developer</td></tr>
+        <tr><td>7</td><td>No TOTP/2FA library configured (<code>django-two-factor-auth</code> not in <code>requirements.txt</code>). No recovery code model exists.</td><td>Blocker for admin/approver 2FA enforcement</td><td>Auth developer</td></tr>
+        <tr><td>8</td><td>No brute-force protection (<code>django-axes</code> or equivalent not configured). Login endpoint has no lockout mechanism.</td><td>High &mdash; vulnerable to credential stuffing</td><td>Auth developer</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <h4>Navigation</h4>
+      <p>
+        Related documentation:
+        <a href="frontend-audit.html">Frontend Audit</a> &bull;
+        <a href="api-integration.html">API Integration</a> &bull;
+        <a href="implementation-plan.html">Implementation Plan</a> &bull;
+        <a href="deployment-readiness.html">Deployment Readiness</a> &bull;
+        <a href="index.html">Documentation Home</a>
+      </p>
+    </div>
+
+  </main>
+</body>
+</html>

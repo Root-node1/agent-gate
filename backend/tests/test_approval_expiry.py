@@ -11,7 +11,7 @@ from apps.agents.models import Agent
 from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
 from apps.policies.models import Policy
-from apps.spend import services
+from apps.spend import pipeline
 from apps.spend.models import SpendRequest
 
 
@@ -20,7 +20,7 @@ class ApprovalExpiryTests(TestCase):
         self.organization = Organization.objects.create(name="acme")
         self.agent, _ = Agent.create_with_key("shopper", self.organization)
         Policy.objects.create(agent=self.agent)
-        self.spend_request, _ = services.submit_spend_request(
+        self.spend_request, _ = pipeline.submit_spend_request(
             self.agent,
             amount=Decimal("75.00"),
             currency="USD",

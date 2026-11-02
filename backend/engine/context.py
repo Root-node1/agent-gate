@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from .screening import ScreeningResult
+
 
 @dataclass(frozen=True)
 class PolicyLimits:
@@ -52,3 +54,4 @@ class EvaluationContext:
     spend: SpendInput
     limits: PolicyLimits
     spent: Spent = field(default_factory=lambda: Spent(Decimal("0"), Decimal("0")))
+    screening: ScreeningResult | None = None

@@ -15,7 +15,7 @@ from .decision import (
     Decision,
     Reason,
 )
-from .screening.patterns import contains_injection
+from .screening import screen_text
 
 
 def normalize_merchant(value: str) -> str:
@@ -38,6 +38,9 @@ def evaluate_context(context: EvaluationContext) -> Decision:
     spend = context.spend
     limits = context.limits
     spent = context.spent
+    screening = context.screening
+    if screening is None:
+        screening = screen_text(spend.purpose, spend.evidence_excerpt)
     reasons: list[Reason] = []
     merchant = normalize_merchant(spend.merchant)
     blocked = {normalize_merchant(value) for value in limits.blocked_merchants}
@@ -84,9 +87,9 @@ def evaluate_context(context: EvaluationContext) -> Decision:
     if spend.amount >= limits.approval_threshold:
         needs_approval("R10_APPROVAL_THRESHOLD", "The amount requires human approval.")
 
-    if contains_injection(spend.purpose, spend.evidence_excerpt):
+    if screening.injection_detected:
         deny("R14_INJECTION_PATTERN", "The request contains instructions that try to override policy.")
-    elif spend.source != SOURCE_TRUSTED:
+    if spend.source != SOURCE_TRUSTED:
         if limits.untrusted_source_action == DENY:
             deny("R13_UNTRUSTED_SOURCE", "The payment instruction did not come from a trusted source.")
         else:

@@ -12,6 +12,7 @@ from .decision import (
     Reason,
 )
 from .rules import evaluate, evaluate_context, normalize_merchant
+from .screening import ScreeningResult, screen_text
 
 __all__ = [
     "ALLOW",
@@ -24,9 +25,11 @@ __all__ = [
     "EvaluationContext",
     "PolicyLimits",
     "Reason",
+    "ScreeningResult",
     "SpendInput",
     "Spent",
     "evaluate",
     "evaluate_context",
     "normalize_merchant",
+    "screen_text",
 ]

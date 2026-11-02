@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backend Audit &mdash; AgentGate</title>
+  <meta name="description" content="Backend audit of the AgentGate Django + DRF application.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Backend Audit</h1>
+    <p class="subtitle">AgentGate Django 6.1 + DRF 3.18 backend &middot; Audit date: 2026-10-27</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="metadata">Audit metadata</h2>
+    <dl>
+      <dt>Repository</dt><dd><code>agent-gate</code></dd>
+      <dt>Branch</dt><dd><code>audit/agentgate-predeployment-readiness</code></dd>
+      <dt>Date</dt><dd>2026-10-27</dd>
+      <dt>Auditor</dt><dd>Kilo (Senior Software Architect)</dd>
+      <dt>Framework</dt><dd>Django 6.1 + DRF 3.18 + drf-spectacular</dd>
+      <dt>Original document</dt><dd>Migrated from archived audit Markdown</dd>
+    </dl>
+
+    <h2 id="executive-summary">Executive summary</h2>
+
+    <p>
+      The backend is a <strong>Django 6.1 + DRF 3.18</strong> application with a clean modular structure
+      (<code>backend/apps/</code>). It implements a <strong>deterministic policy engine</strong>
+      (<code>backend/engine/</code>) as a pure Python package with zero Django dependencies.
+      The backend has <strong>comprehensive models, migrations, and admin registration</strong> for all core
+      domains. However, <strong>critical payment execution and webhook handling are not implemented</strong> —
+      PayPal integration is entirely missing.
+    </p>
+
+    <div class="callout danger">
+      <p>
+        <strong>Critical blocker</strong>: The <code>FakeExecutor</code> stub in
+        <code>backend/apps/payments/executors.py</code> simulates payment outcomes but never calls the PayPal REST API.
+        There is no <code>POST /webhooks/paypal/</code> endpoint and no webhook signature verification.
+      </p>
+    </div>
+
+    <h2 id="module-audit">Module-by-module audit</h2>
+
+    <h3 id="section1-django-config">1. Django / DRF configuration</h3>
+
+    <table>
+      <thead><tr><th>File</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>config/settings/base.py</code></td><td><span class="badge badge-complete">Complete</span></td><td>Split settings (dev/test/prod), env-based, DRF + drf-spectacular, throttle rates, 64&nbsp;KiB body limit</td></tr>
+        <tr><td><code>config/settings/dev.py</code></td><td><span class="badge badge-complete">Complete</span></td><td>DEBUG=True, insecure secret fallback</td></tr>
+        <tr><td><code>config/settings/prod.py</code></td><td><span class="badge badge-complete">Complete</span></td><td>Secure cookies, HSTS, SSL redirect exempt health endpoints, DB cache, trusted proxy</td></tr>
+        <tr><td><code>config/settings/test.py</code></td><td><span class="badge badge-complete">Complete</span></td><td>SQLite default, PostgreSQL via <code>TEST_DATABASE_URL</code></td></tr>
+        <tr><td><code>config/urls.py</code></td><td><span class="badge badge-complete">Complete</span></td><td>Health/ready endpoints, admin, OpenAPI schema/docs, v1 API includes</td></tr>
+        <tr><td><code>manage.py</code></td><td><span class="badge badge-complete">Complete</span></td><td>Django entry point</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <strong>Missing</strong>: <code>collectstatic</code> configuration for production (<code>STATIC_ROOT</code>
+      only in <code>prod.py</code>; see <code>OPERATIONS.md</code>).
+    </div>
+
+    <h3 id="section2-auth">2. Authentication and authorization</h3>
+
+    <h4>Agent API key authentication (<code>apps/agents/authentication.py</code>)</h4>
+    <ul>
+      <li><strong>Status</strong>: <span class="badge badge-complete">Implemented</span></li>
+      <li><strong>Mechanism</strong>: <code>Authorization: Bearer agk_...</code> &rarr; prefix lookup + constant-time SHA-256 hash comparison</li>
+      <li><strong>Features</strong>: Suspended agent rejection, revoked key rejection, <code>last_used_at</code> throttling (1-min interval)</li>
+      <li><strong>OpenAPI</strong>: <code>AgentKeyScheme</code> extension for drf-spectacular</li>
+      <li><strong>Tests</strong>: <code>test_api.py::AuthTests</code> (missing key, wrong key, suspended agent, revoked key)</li>
+    </ul>
+
+    <h4>Dashboard session authentication</h4>
+    <ul>
+      <li><strong>Status</strong>: <span class="badge badge-complete">Implemented</span> (uses DRF <code>SessionAuthentication</code>)</li>
+      <li><strong>Permission Classes</strong>: <code>IsApprover</code> (admin/approver), <code>IsDashboardUser</code> (any role), <code>IsOrganizationAdmin</code> (admin only)</li>
+      <li><strong>Scope</strong>: All dashboard endpoints filtered by <code>OrgMembership</code> roles</li>
+      <li><strong>Tests</strong>: Implicit via approval/audit/policy view tests</li>
+    </ul>
+
+    <h4>CSRF and CORS</h4>
+    <ul>
+      <li><strong>Status</strong>: <span class="badge badge-warning">Partial</span></li>
+      <li><strong>Dev</strong>: Vite proxy (<code>/api</code> and <code>/v1</code> &rarr; <code>localhost:8000</code>) avoids CORS</li>
+      <li><strong>Prod</strong>: <code>CSRF_TRUSTED_ORIGINS</code> from env, <code>SECURE_PROXY_SSL_HEADER</code>, <code>SESSION_COOKIE_SECURE</code>, <code>CSRF_COOKIE_SECURE</code></li>
+      <li><strong>Missing</strong>: Explicit CORS headers for non-browser clients (not needed if only dashboard + agent API)</li>
+    </ul>
+
+    <h3 id="section3-orgs">3. Organizations and role-based permissions (<code>apps/accounts</code>)</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>User</code> (custom)</td><td><span class="badge badge-complete">Complete</span></td><td>UUID PK, extends <code>AbstractUser</code></td></tr>
+        <tr><td><code>Organization</code></td><td><span class="badge badge-complete">Complete</span></td><td>Name unique, timestamps</td></tr>
+        <tr><td><code>OrgMembership</code></td><td><span class="badge badge-complete">Complete</span></td><td>Roles: admin/approver/viewer, unique per user+org</td></tr>
+        <tr><td>Permissions</td><td><span class="badge badge-complete">Complete</span></td><td><code>IsApprover</code>, <code>IsDashboardUser</code>, <code>IsOrganizationAdmin</code> check membership role</td></tr>
+        <tr><td>Admin</td><td><span class="badge badge-complete">Complete</span></td><td>All three models in admin</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Test coverage</strong>: <code>test_models.py</code> covers user/org/membership creation and constraints.</p>
+
+    <h3 id="section4-agents">4. Agent API keys and rotation (<code>apps/agents</code>)</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>Agent</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>UUID PK, org FK, name unique per org, status (active/suspended)</td></tr>
+        <tr><td><code>ApiKey</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>UUID PK, agent FK, prefix (unique), SHA-256 hash, <code>last_used_at</code>, <code>revoked_at</code></td></tr>
+        <tr><td><code>create_with_key()</code></td><td><span class="badge badge-complete">Complete</span></td><td>Atomic creation, returns raw key once</td></tr>
+        <tr><td><code>create_key()</code> / <code>rotate_key</code></td><td><span class="badge badge-complete">Complete</span></td><td>Hash + prefix generation</td></tr>
+        <tr><td>Throttling</td><td><span class="badge badge-complete">Complete</span></td><td><code>AgentKeyRateThrottle</code> (60/min default), per-agent cache key</td></tr>
+        <tr><td>Management Commands</td><td><span class="badge badge-complete">Complete</span></td><td><code>create_agent</code>, <code>seed_demo</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <strong>Missing API endpoints</strong>:
+      <ul>
+        <li><code>GET /v1/agents/</code> &mdash; List agents (dashboard)</li>
+        <li><code>POST /v1/agents/</code> &mdash; Create agent (dashboard)</li>
+        <li><code>GET /v1/agents/{id}/</code> &mdash; Agent detail</li>
+        <li><code>POST /v1/agents/{id}/rotate-key</code> &mdash; Rotate key</li>
+        <li><code>POST /v1/agents/{id}/revoke-key</code> &mdash; Revoke key</li>
+        <li><code>PATCH /v1/agents/{id}/</code> &mdash; Update status (suspend/reactivate)</li>
+      </ul>
+    </div>
+
+    <p><strong>Tests</strong>: <code>test_api.py</code> covers auth; <code>test_commands.py</code> covers <code>create_agent</code> and <code>seed_demo</code>.</p>
+
+    <h3 id="section5-policies">5. Policies and merchant rules (<code>apps/policies</code>)</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>Policy</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>Versioned per agent, currency (ISO-4217), all budgets in minor units, constraints (threshold &le; cap, injection threshold 0-100, velocity window &ge;1)</td></tr>
+        <tr><td><code>MerchantRule</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>Allow/block per policy version, unique merchant per policy</td></tr>
+        <tr><td><code>PolicyListView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>GET /v1/policies/</code> &mdash; scoped to user's orgs, paginated, filter by agent</td></tr>
+        <tr><td>Serializer</td><td><span class="badge badge-complete">Complete</span></td><td>Includes nested merchant rules</td></tr>
+        <tr><td>Admin</td><td><span class="badge badge-complete">Complete</span></td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <strong>Missing API endpoints</strong>:
+      <ul>
+        <li><code>POST /v1/policies/</code> &mdash; Create new policy version</li>
+        <li><code>PATCH /v1/policies/{id}/</code> &mdash; Update policy (creates new version)</li>
+        <li><code>POST /v1/policies/{id}/merchant-rules/</code> &mdash; Add merchant rule</li>
+        <li><code>DELETE /v1/policies/{id}/merchant-rules/{rule_id}/</code> &mdash; Remove merchant rule</li>
+      </ul>
+    </div>
+
+    <p><strong>Tests</strong>: <code>test_policies_api.py</code> covers list view, filtering, pagination.</p>
+
+    <h3 id="section6-engine">6. Deterministic policy engine (<code>backend/engine/</code>)</h3>
+
+    <div class="callout success"><strong>Status</strong>: Complete and well-tested</div>
+
+    <table>
+      <thead><tr><th>File</th><th>Purpose</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>context.py</code></td><td>Immutable dataclasses: <code>PolicyLimits</code>, <code>SpendInput</code>, <code>Spent</code>, <code>EvaluationContext</code></td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td><code>decision.py</code></td><td><code>Decision</code>, <code>Reason</code>, outcome constants (ALLOW/DENY/NEEDS_APPROVAL), source constants</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td><code>rules.py</code></td><td><code>evaluate()</code>, <code>evaluate_context()</code>, <code>normalize_merchant()</code> &mdash; all 13 rules implemented</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td><code>screening/patterns.py</code></td><td>Injection phrase detection with NFKC, confusable mapping, zero-width stripping</td><td><span class="badge badge-complete">Complete</span></td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Rules implemented</strong> (13 total):</p>
+
+    <table>
+      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>R01</td><td>AGENT_ACTIVE</td><td>Deny</td><td>Agent not active</td></tr>
+        <tr><td>R02</td><td>CURRENCY</td><td>Deny</td><td>Currency mismatch</td></tr>
+        <tr><td>R03</td><td>MERCHANT_BLOCK</td><td>Deny</td><td>Merchant on block list</td></tr>
+        <tr><td>R04</td><td>MERCHANT_ALLOW</td><td>Deny</td><td>Allow list exists, merchant not on it</td></tr>
+        <tr><td>R05</td><td>PER_TX_CAP</td><td>Deny</td><td>Amount &le;0 or &gt; cap</td></tr>
+        <tr><td>R06</td><td>DAILY_BUDGET</td><td>Deny</td><td>Would exceed daily budget</td></tr>
+        <tr><td>R07</td><td>MONTHLY_BUDGET</td><td>Deny</td><td>Would exceed monthly budget</td></tr>
+        <tr><td>R16</td><td>WEEKLY_BUDGET</td><td>Deny</td><td>Would exceed weekly budget</td></tr>
+        <tr><td>R08</td><td>VELOCITY</td><td>Approval</td><td>Recent request count &ge; max</td></tr>
+        <tr><td>R09</td><td>MERCHANT_WINDOW</td><td>Approval</td><td>Recent merchant spend &gt; cap</td></tr>
+        <tr><td>R10</td><td>APPROVAL_THRESHOLD</td><td>Approval</td><td>Amount &ge; threshold</td></tr>
+        <tr><td>R13</td><td>UNTRUSTED_SOURCE</td><td>Approval/Deny</td><td>Source &ne; trusted (configurable)</td></tr>
+        <tr><td>R14</td><td>INJECTION_PATTERN</td><td>Deny</td><td>Deterministic phrase match</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Precedence</strong>: Any deny &rarr; deny; else any approval reason &rarr; needs_approval; else allow. All matched rules reported.</p>
+
+    <p><strong>Test coverage</strong>: <code>test_rules.py</code> &mdash; 326 lines, covers every rule, precedence, edge cases (lookalike domains, injection evasions, zero-width chars, homoglyphs, fullwidth chars).</p>
+
+    <p><strong>Import linter</strong>: <code>.importlinter</code> enforces <code>engine</code> has no Django/app imports.</p>
+
+    <h3 id="section7-spend">7. Spend request creation (<code>apps/spend</code>)</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>SpendRequest</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>UUID PK, all fields: idempotency_key, request_hash, amount_minor, currency, merchant, payee FK, destination snapshot, purpose, source, evidence, risk_score, decision, status, reasons, matched_rules, paypal_reference, paypal_status, decided_at, executed_at</td></tr>
+        <tr><td><code>SpendRequestCreateView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>POST /v1/spend-requests/</code> &mdash; AgentKey auth, throttle, idempotency key required</td></tr>
+        <tr><td><code>SpendRequestDetailView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>GET /v1/spend-requests/{id}/</code> &mdash; Agent-scoped</td></tr>
+        <tr><td>Serializers</td><td><span class="badge badge-complete">Complete</span></td><td>Create: strict validation (unknown fields rejected), currency normalization, destination pair validation. Detail: amount as major units, approval outcome</td></tr>
+        <tr><td><code>submit_spend_request()</code> service</td><td><span class="badge badge-complete">Complete</span></td><td>Atomic: lock agent &rarr; lock policy &rarr; evaluate &rarr; create request &rarr; upsert payee &rarr; audit events</td></tr>
+        <tr><td>Idempotency</td><td><span class="badge badge-complete">Complete</span></td><td>request_hash includes normalized destination; replay returns <code>Idempotent-Replayed: true</code>; conflict on different body &rarr; 409</td></tr>
+        <tr><td>Budget counting</td><td><span class="badge badge-complete">Complete</span></td><td>Only <code>APPROVED</code>, <code>EXECUTING</code>, <code>SUCCEEDED</code> statuses count</td></tr>
+        <tr><td>Concurrency control</td><td><span class="badge badge-complete">Complete</span></td><td><code>select_for_update</code> on agent &rarr; policy &rarr; spend_request &rarr; approval &rarr; org (audit). PostgreSQL enforces; SQLite ignores.</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Tests</strong>: <code>test_api.py</code> (31 tests), <code>test_idempotency.py</code> (9 tests),
+      <code>test_concurrency.py</code> (4 PostgreSQL-only tests), <code>test_limits.py</code>, <code>test_services.py</code>.</p>
+
+    <h3 id="section8-approvals">8. Approval and denial workflow (<code>apps/approvals</code>)</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>Approval</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>OneToOne with SpendRequest, outcome (pending/approved/denied/expired), approver, note, requested_at, expires_at, decided_at</td></tr>
+        <tr><td><code>ApprovalListView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>GET /v1/approvals/</code> &mdash; scoped to user's orgs, role-filtered, paginated, <code>?outcome=</code> filter</td></tr>
+        <tr><td><code>ApprovalDetailView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>GET /v1/approvals/{id}/</code></td></tr>
+        <tr><td><code>ApprovalApproveView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>POST /v1/approvals/{id}/approve/</code> &mdash; rechecks current policy + budget + payee fingerprint</td></tr>
+        <tr><td><code>ApprovalDenyView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>POST /v1/approvals/{id}/deny/</code></td></tr>
+        <tr><td><code>decide()</code> service</td><td><span class="badge badge-complete">Complete</span></td><td>Atomic: lock agent &rarr; policy &rarr; spend_request &rarr; approval; recheck on approve; 409 on hard deny or destination change; idempotent same-outcome retries</td></tr>
+        <tr><td><code>expire_approvals</code> command</td><td><span class="badge badge-complete">Complete</span></td><td>Idempotent, locks in same order, marks approval expired + spend_request EXPIRED</td></tr>
+        <tr><td>Serializer</td><td><span class="badge badge-complete">Complete</span></td><td>Nested spend_request with amount, decision, rules, reasons</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Recheck logic</strong>: On approve, re-evaluates with <strong>current</strong> policy version and <strong>current</strong> budgets. Fails with 409 if:</p>
+    <ul>
+      <li>Hard deny rule now triggers (returns rule codes)</li>
+      <li>Payee fingerprint changed since request (<code>destination_changed</code>)</li>
+    </ul>
+
+    <p><strong>Tests</strong>: <code>test_approvals_api.py</code>, <code>test_approval_expiry.py</code>.</p>
+
+    <h3 id="section9-payees">9. Payee validation and fingerprinting (<code>apps/payees</code>)</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>Payee</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>Unique per org+merchant, destination_type (paypal_email, paypal_id, phone, url), normalized value, SHA-256 fingerprint, <code>trusted_at</code>, status (active/archived)</td></tr>
+        <tr><td>Normalization</td><td><span class="badge badge-complete">Complete</span></td><td>Email lowercased, phone digits only, URL host+path (no www, no scheme)</td></tr>
+        <tr><td>Fingerprinting</td><td><span class="badge badge-complete">Complete</span></td><td><code>type:normalized_value</code> &rarr; SHA-256</td></tr>
+        <tr><td>Auto-upsert</td><td><span class="badge badge-complete">Complete</span></td><td>On spend request (non-deny), <code>get_or_create</code> + update on fingerprint change</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <strong>Missing</strong>: New payee cooldown enforcement (<code>new_payee_cooldown_hours</code> policy field exists but not used in engine).
+    </div>
+
+    <h3 id="section10-jobs">10. Background job execution</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>expire_approvals</code> command</td><td><span class="badge badge-complete">Complete</span></td><td>Idempotent, safe for cron (every minute)</td></tr>
+        <tr><td><code>verify_audit</code> command</td><td><span class="badge badge-complete">Complete</span></td><td>Recomputes hash chain per org</td></tr>
+        <tr><td><code>seed_demo</code> command</td><td><span class="badge badge-complete">Complete</span></td><td>Suspends old demo agent, creates new, appends <code>demo.reset</code> event</td></tr>
+        <tr><td>Procrastinate / Celery</td><td><span class="badge badge-missing">Missing</span></td><td>No background task queue configured. <code>OPERATIONS.md</code> mentions Procrastinate worker but no code exists.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <strong>Deployment blocker</strong>: Production requires a task queue for <code>expire_approvals</code> (cron)
+      and future PayPal webhook processing. Currently only management commands exist.
+    </div>
+
+    <h3 id="section11-paypal">11. PayPal sandbox integration (<code>apps/payments</code>)</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>WebhookEvent</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>Deduplication via unique <code>paypal_event_id</code>, signature_verified flag, received/processed timestamps</td></tr>
+        <tr><td><code>PaymentExecutor</code></td><td><span class="badge badge-missing">Missing</span></td><td><code>apps/payments/executors.py</code> exists but is a stub &mdash; <code>FakeExecutor</code> only, no PayPal SDK integration, no payment execution logic</td></tr>
+        <tr><td>Webhook endpoint</td><td><span class="badge badge-missing">Missing</span></td><td>No <code>POST /webhooks/paypal/</code> view</td></tr>
+        <tr><td>Webhook signature verification</td><td><span class="badge badge-missing">Missing</span></td><td>No PayPal webhook signature verification (certificate fetch, verification)</td></tr>
+        <tr><td>Payment execution flow</td><td><span class="badge badge-missing">Missing</span></td><td>No code to call PayPal REST API on approval/allow</td></tr>
+        <tr><td>Sandbox configuration</td><td><span class="badge badge-missing">Missing</span></td><td><code>PAYPAL_CLIENT_ID</code>, <code>PAYPAL_CLIENT_SECRET</code> in <code>.env.example</code> but unused</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <strong>Critical blocker</strong>: <strong>PayPal integration is entirely unimplemented</strong>.
+      This is the core value proposition.
+    </div>
+
+    <h3 id="section12-webhook-dedup">12. Webhook deduplication</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>WebhookEvent.paypal_event_id</code></td><td><span class="badge badge-complete">Complete</span></td><td>Unique constraint provides deduplication at DB level</td></tr>
+        <tr><td>Processing flag</td><td><span class="badge badge-complete">Complete</span></td><td><code>signature_verified</code>, <code>processed_at</code></td></tr>
+        <tr><td>Actual processing logic</td><td><span class="badge badge-missing">Missing</span></td><td>No consumer/handler for webhook events</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="section13-audit">13. Audit event persistence and integrity (<code>apps/audit</code>)</h3>
+
+    <table>
+      <thead><tr><th>Component</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>AuditEvent</code> model</td><td><span class="badge badge-complete">Complete</span></td><td>Append-only: <code>save()</code> on existing &rarr; <code>PermissionError</code>, <code>delete()</code> &rarr; <code>PermissionError</code></td></tr>
+        <tr><td>Hash chain</td><td><span class="badge badge-complete">Complete</span></td><td><code>prev_hash</code> &rarr; <code>hash</code> using canonical payload (no floats, UTC microseconds), per-org lock via <code>select_for_update</code></td></tr>
+        <tr><td><code>record()</code> classmethod</td><td><span class="badge badge-complete">Complete</span></td><td>Creates event in same transaction as state change</td></tr>
+        <tr><td>PostgreSQL trigger</td><td><span class="badge badge-complete">Complete</span></td><td>Migration <code>0002_audit_append_only_trigger.py</code> creates trigger blocking UPDATE/DELETE/TRUNCATE</td></tr>
+        <tr><td><code>verify_audit</code> command</td><td><span class="badge badge-complete">Complete</span></td><td>Walks each org's events, recomputes hashes, exits non-zero on first mismatch</td></tr>
+        <tr><td><code>AuditListView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>GET /v1/audit/</code> &mdash; filtered by event_type, agent, spend_request, after (cursor), paginated</td></tr>
+        <tr><td><code>AuditVerifyView</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>GET /v1/audit/verify/</code> &mdash; admin only, verifies caller's orgs</td></tr>
+        <tr><td>Demo reset event</td><td><span class="badge badge-complete">Complete</span></td><td>Migration <code>0004_demo_reset_event.py</code>, <code>seed_demo</code> appends event</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Security</strong>: Tamper-evident (not tamper-proof without external hash anchoring).</p>
+    <p><strong>Tests</strong>: <code>test_audit_chain.py</code>, <code>test_audit_api.py</code>, <code>test_audit_trigger.py</code>.</p>
+
+    <h3 id="section14-validation">14. API validation and error handling</h3>
+
+    <table>
+      <thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Request validation</td><td><span class="badge badge-complete">Complete</span></td><td>DRF serializers, unknown fields rejected (400), field-level errors</td></tr>
+        <tr><td>Idempotency validation</td><td><span class="badge badge-complete">Complete</span></td><td>Key format (1-255 printable), conflict detection (409)</td></tr>
+        <tr><td>Body size limit</td><td><span class="badge badge-complete">Complete</span></td><td><code>DATA_UPLOAD_MAX_MEMORY_SIZE = 64 KiB</code></td></tr>
+        <tr><td>Error responses</td><td><span class="badge badge-complete">Complete</span></td><td>Consistent <code>{"detail": "..."}</code> or field errors; 401/403/400/409/404/503</td></tr>
+        <tr><td>OpenAPI schema</td><td><span class="badge badge-complete">Complete</span></td><td><code>drf-spectacular</code> at <code>/api/schema/</code>, Swagger UI at <code>/api/docs/</code></td></tr>
+        <tr><td>Health/readiness</td><td><span class="badge badge-complete">Complete</span></td><td><code>/healthz</code> (liveness, no DB), <code>/readyz</code> (readiness, checks DB), <code>/api/health/</code> alias</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="section15-db">15. Database schema and migrations</h3>
+
+    <table>
+      <thead><tr><th>App</th><th>Migrations</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>accounts</td><td>0001_initial</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td>agents</td><td>0001_initial, 0002_alter_apikey_key_hash_alter_apikey_prefix</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td>policies</td><td>0001_initial, 0002_alter_policy_..., 0003_alter_policy_..., 0004_policy_weekly_budget_minor</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td>payees</td><td>0001_initial</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td>spend</td><td>0001_initial, 0002_..., 0003_source_untrusted</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td>approvals</td><td>0001_initial</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td>payments</td><td>0001_initial</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td>audit</td><td>0001_initial, 0002_audit_append_only_trigger, 0003_chain_created_at, 0004_demo_reset_event</td><td><span class="badge badge-complete">Complete</span></td></tr>
+        <tr><td>gate (legacy)</td><td>0001_initial, 0002_migrate_legacy_data, 0003_delete_legacy_models</td><td><span class="badge badge-complete">Complete</span> (cleaned up)</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Migration strategy</strong>: Versioned policies (new row per edit), <code>makemigrations --check</code> in CI.</p>
+
+    <h3 id="section16-openapi">16. OpenAPI generation</h3>
+
+    <table>
+      <thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>drf-spectacular</code></td><td><span class="badge badge-complete">Complete</span></td><td><code>SPECTACULAR_SETTINGS</code> in <code>base.py</code></td></tr>
+        <tr><td>Schema endpoint</td><td><span class="badge badge-complete">Complete</span></td><td><code>/api/schema/</code></td></tr>
+        <tr><td>Swagger UI</td><td><span class="badge badge-complete">Complete</span></td><td><code>/api/docs/</code></td></tr>
+        <tr><td>Coverage</td><td><span class="badge badge-warning">Partial</span></td><td>Only implemented endpoints documented; missing endpoints not in schema</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="section17-logging">17. Logging and secret management</h3>
+
+    <table>
+      <thead><tr><th>Aspect</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Structured logging</td><td><span class="badge badge-missing">Missing</span></td><td>No logging configuration in settings; uses Django default</td></tr>
+        <tr><td>Secret management</td><td><span class="badge badge-complete">Complete</span></td><td><code>.env</code> file (gitignored), <code>.env.example</code> with placeholders, <code>DJANGO_SECRET_KEY</code> generated on first <code>run.sh</code></td></tr>
+        <tr><td>PayPal credentials</td><td><span class="badge badge-warning">Placeholder</span></td><td>In <code>.env.example</code> but unused</td></tr>
+        <tr><td>Production secrets</td><td><span class="badge badge-complete">Complete</span></td><td><code>OPERATIONS.md</code> specifies env file on server, never in repo</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="section18-tests">18. Automated tests</h3>
+
+    <table>
+      <thead><tr><th>Test module</th><th>Coverage</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>test_rules.py</code></td><td>Engine rules</td><td>326 lines, exhaustive</td></tr>
+        <tr><td><code>test_api.py</code></td><td>Spend request API</td><td>31 tests</td></tr>
+        <tr><td><code>test_idempotency.py</code></td><td>Idempotency</td><td>9 tests</td></tr>
+        <tr><td><code>test_concurrency.py</code></td><td>PostgreSQL row locks</td><td>4 tests (<code>skipUnless</code> PostgreSQL)</td></tr>
+        <tr><td><code>test_approvals_api.py</code></td><td>Approval workflow</td><td>Multiple tests</td></tr>
+        <tr><td><code>test_approval_expiry.py</code></td><td>Expiry command</td><td>&mdash;</td></tr>
+        <tr><td><code>test_policies_api.py</code></td><td>Policy list</td><td>&mdash;</td></tr>
+        <tr><td><code>test_limits.py</code></td><td>Budget/velocity/merchant window</td><td>&mdash;</td></tr>
+        <tr><td><code>test_services.py</code></td><td>Spend services</td><td>&mdash;</td></tr>
+        <tr><td><code>test_commands.py</code></td><td>Management commands</td><td>&mdash;</td></tr>
+        <tr><td><code>test_models.py</code></td><td>Model constraints</td><td>&mdash;</td></tr>
+        <tr><td><code>test_migrations.py</code></td><td>Migration integrity</td><td>&mdash;</td></tr>
+        <tr><td><code>test_settings.py</code></td><td>Settings validation</td><td>&mdash;</td></tr>
+        <tr><td><code>test_audit_chain.py</code></td><td>Audit hash chain</td><td>&mdash;</td></tr>
+        <tr><td><code>test_audit_api.py</code></td><td>Audit endpoints</td><td>&mdash;</td></tr>
+        <tr><td><code>test_audit_trigger.py</code></td><td>DB trigger</td><td>&mdash;</td></tr>
+        <tr><td><code>attacks/</code></td><td>Injection attack corpus</td><td>YAML test cases + runner</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>CI</strong>: Runs against PostgreSQL 17 (budget locks exercised), SQLite for fast local tests.</p>
+
+    <h2 id="subsystem-summary">Subsystem summary table</h2>
+
+    <table>
+      <thead><tr><th>Subsystem</th><th>Implementation</th><th>Test coverage</th><th>Deployment blocker</th></tr></thead>
+      <tbody>
+        <tr><td>Django/DRF Config</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td>No</td></tr>
+        <tr><td>Auth (Agent + Dashboard)</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td>No</td></tr>
+        <tr><td>Organizations/Roles</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td>No</td></tr>
+        <tr><td>Agent/API Keys</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-warning">Yes &mdash; Missing dashboard API endpoints</span></td></tr>
+        <tr><td>Policies/Merchant Rules</td><td><span class="badge badge-complete">Complete</span> (read only)</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-warning">Yes &mdash; Missing write endpoints</span></td></tr>
+        <tr><td>Policy Engine</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span> (exhaustive)</td><td>No</td></tr>
+        <tr><td>Spend Requests</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td>No</td></tr>
+        <tr><td>Approvals</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td>No</td></tr>
+        <tr><td>Payees</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-warning">Limited</span></td><td>No</td></tr>
+        <tr><td>Background Jobs</td><td><span class="badge badge-warning">Commands only</span></td><td><span class="badge badge-warning">Limited</span></td><td><span class="badge badge-missing">Yes &mdash; No task queue (Procrastinate)</span></td></tr>
+        <tr><td>PayPal Integration</td><td><span class="badge badge-missing">Missing</span></td><td><span class="badge badge-missing">Missing</span></td><td><span class="badge badge-missing">YES &mdash; CRITICAL</span></td></tr>
+        <tr><td>Webhooks</td><td><span class="badge badge-missing">Missing</span></td><td><span class="badge badge-missing">Missing</span></td><td><span class="badge badge-missing">YES &mdash; CRITICAL</span></td></tr>
+        <tr><td>Audit Log</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td>No</td></tr>
+        <tr><td>API Validation</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td>No</td></tr>
+        <tr><td>Database/Migrations</td><td><span class="badge badge-complete">Complete</span></td><td><span class="badge badge-complete">Complete</span></td><td>No</td></tr>
+        <tr><td>OpenAPI</td><td><span class="badge badge-complete">Complete</span></td><td>N/A</td><td>No</td></tr>
+        <tr><td>Logging</td><td><span class="badge badge-missing">Missing</span></td><td>N/A</td><td><span class="badge badge-warning">Yes &mdash; Production needs structured logging</span></td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="critical-missing">Critical missing backend features (block deployment)</h2>
+
+    <ol>
+      <li><strong>PayPal payment execution</strong> &mdash; No SDK integration, no execution on allow/approve</li>
+      <li><strong>PayPal webhook handler</strong> &mdash; No endpoint, no signature verification, no event processing</li>
+      <li><strong>Dashboard agent API</strong> &mdash; No CRUD for agents, key rotation, suspension</li>
+      <li><strong>Dashboard policy write API</strong> &mdash; No create/update policy version, merchant rule management</li>
+      <li><strong>Dashboard transaction list API</strong> &mdash; Only agent-scoped detail exists</li>
+      <li><strong>Settings/Workspace/Team API</strong> &mdash; No endpoints at all</li>
+      <li><strong>Background task queue</strong> &mdash; Procrastinate/Celery not configured</li>
+      <li><strong>Structured logging</strong> &mdash; No production logging config</li>
+    </ol>
+
+    <h2 id="evidence">Evidence references</h2>
+
+    <dl>
+      <dt>Settings</dt><dd><code>backend/config/settings/*.py</code></dd>
+      <dt>URLs</dt><dd><code>backend/config/urls.py</code>, <code>backend/apps/*/urls.py</code></dd>
+      <dt>Models</dt><dd><code>backend/apps/*/models.py</code></dd>
+      <dt>Views</dt><dd><code>backend/apps/*/views.py</code></dd>
+      <dt>Services</dt><dd><code>backend/apps/spend/services.py</code>, <code>backend/apps/approvals/services.py</code></dd>
+      <dt>Engine</dt><dd><code>backend/engine/rules.py</code>, <code>backend/engine/decision.py</code>, <code>backend/engine/context.py</code>, <code>backend/engine/screening/patterns.py</code></dd>
+      <dt>Tests</dt><dd><code>backend/tests/*.py</code></dd>
+      <dt>Migrations</dt><dd><code>backend/apps/*/migrations/</code></dd>
+      <dt>Commands</dt><dd><code>backend/apps/*/management/commands/</code></dd>
+      <dt>Operations</dt><dd><code>backend/OPERATIONS.md</code></dd>
+    </dl>
+
+  </main>
+</body>
+</html>

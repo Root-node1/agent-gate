@@ -35,6 +35,15 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 7. If allowed or approved, AgentGate executes the payment through PayPal.
 8. Every step is written to the audit log.
 
+### Spend pipeline (built)
+
+`backend/apps/spend/pipeline.py` owns the request path: normalize, idempotency replay, deterministic screening, agent lock, policy lock, context building, engine evaluation, persistence, audit, and approval creation. The view validates the body and calls the pipeline once.
+
+- Normalization and the body hash happen before the transaction. A matching `Idempotency-Key` and body returns the stored request before screening; a different body raises a conflict.
+- Deterministic screening runs before any row lock. The transaction then locks the agent and rechecks idempotency before locking the current policy, so concurrent retries cannot create duplicates.
+- An engine exception is recorded as a deny with an `engine_error` reason, in the same transaction as the request and audit events. The pipeline never turns an engine failure into an allow.
+- Approval-time rechecks use the same state helpers but do not run the submission pipeline.
+
 ### Rule engine (built)
 
 Implemented in `backend/engine/` as pure Python. `evaluate(spend, limits, spent)` accepts normalized values and returns a decision plus every rule that fired. It never touches the database, the network, the clock or Django, so it is deterministic and unit-tested (`backend/tests/test_rules.py`). The import contract in `backend/.importlinter` enforces that boundary.
@@ -61,7 +70,7 @@ Precedence: any deny wins, then any approval reason gives `needs_approval`, othe
 
 Provenance is self-reported. The API cannot prove that `source=trusted` is true; the SDK or MCP wrapper must set it from where the instruction originated. Missing provenance defaults to `untrusted`, and every non-trusted source fails closed.
 
-Deterministic injection screening lives in `engine/screening/patterns.py`. It normalizes NFKC, casefolds, strips zero-width format characters, folds common homoglyphs, and collapses whitespace before matching phrases such as "ignore previous instructions", "override the policy" and "approve this payment". It is a backstop, not a detector: paraphrases can still pass. The classifier remains a later, advisory-only layer: it may escalate and add risk, never deny or lower another rule.
+Deterministic injection screening lives in `engine/screening/patterns.py`. It normalizes NFKC, casefolds, strips zero-width format characters, folds common homoglyphs, and collapses whitespace before matching phrases such as "ignore previous instructions", "override the policy" and "approve this payment". The pipeline runs it before acquiring any row lock and passes the result into the engine; direct engine calls without a result run it themselves. It is a backstop, not a detector: paraphrases can still pass. The classifier remains a later, advisory-only layer: it may escalate and add risk, never deny or lower another rule.
 
 ## 4. Data model (built)
 
@@ -202,6 +211,10 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [x] Approval queue API with recheck, session auth, roles, and expiry command
 - [x] Read APIs for policies and audit, plus admin audit verification
 - [x] Stable API error envelope, request ids, strict spend input, and OpenAPI validation
+- [x] Spend pipeline with pre-lock screening and fail-closed engine errors
+- [x] Dashboard authentication, roles, GitHub OAuth, MFA, and password reset
+- [x] Agent and API-key management, policy CRUD, spend list, and audit read/verify APIs
+- [x] Procrastinate worker and periodic approval expiry
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier
 - [ ] Dashboard screens

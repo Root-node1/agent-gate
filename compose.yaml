@@ -1,0 +1,117 @@
+# AgentGate core backend deployment (Contabo VPS).
+# PayPal is intentionally excluded: this compose file is based on `intergration`,
+# which contains no PayPal routes, services, or configuration.
+
+name: agentgate
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    env_file:
+      - .env.production
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - staticfiles:/srv/static:ro
+    networks:
+      - edge
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agentgate-web:latest
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    command: >
+      sh -c 'exec gunicorn config.wsgi:application
+      --bind 0.0.0.0:8000
+      --workers "$${GUNICORN_WORKERS:-2}"
+      --timeout "$${GUNICORN_TIMEOUT:-60}"
+      --access-logfile -
+      --error-logfile -'
+    volumes:
+      - staticfiles:/app/staticfiles
+    networks:
+      - edge
+      - backend
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    # Application port is NOT published; Caddy reaches it over the internal network.
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agentgate-web:latest
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+      PROCRASTINATE_WORKER_QUEUES: smoke,approvals
+    command: >
+      python manage.py procrastinate worker
+      -q smoke,approvals
+      --listen-notify
+      --delete-jobs=SUCCESSFUL
+    networks:
+      - backend
+    depends_on:
+      redis:
+        condition: service_healthy
+    # No healthcheck: Procrastinate worker does not expose an HTTP endpoint.
+    # Monitor via logs and `procrastinate shell`.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    command: >
+      sh -c 'exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes'
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    # Redis is NOT published to the host.
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  staticfiles:
+
+networks:
+  edge:
+  backend:

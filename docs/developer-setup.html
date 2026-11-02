@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Developer Setup &mdash; AgentGate</title>
+  <meta name="description" content="AgentGate developer setup guide: prerequisites, quick start, conventions.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Developer Setup</h1>
+    <p class="subtitle">AgentGate &mdash; getting started, conventions, and workflow</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="overview">Overview</h2>
+
+    <p>
+      AgentGate is a spending firewall between AI agents and PayPal. The agent asks, AgentGate decides:
+      <strong>allow</strong>, <strong>deny</strong>, or <strong>needs human approval</strong>.
+      Budgets, merchant rules, and approval thresholds are enforced in code, and every decision is
+      written to an append-only, hash-chained audit log.
+    </p>
+
+    <div class="callout note">
+      <p>This page documents the developer setup.</p>
+    </div>
+
+    <h2 id="prerequisites">Prerequisites</h2>
+
+    <table>
+      <thead><tr><th>Requirement</th><th>Version</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Python</td><td>3.13+</td><td>Backend runtime. The dev environment uses Python 3.14.</td></tr>
+        <tr><td>Node.js</td><td>22+</td><td>Frontend build tooling.</td></tr>
+        <tr><td>PostgreSQL</td><td>17+</td><td>For CI and production. SQLite works for local development.</td></tr>
+        <tr><td>Docker</td><td>Any recent</td><td>Optional, for local PostgreSQL during testing.</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="quick-start">Quick start</h2>
+
+    <p>The simplest way to get both servers running locally:</p>
+
+    <pre><code>git clone git@github.com:Root-node1/agent-gate.git
+cd agent-gate
+./run.sh</code></pre>
+
+    <p><code>run.sh</code> creates the Python venv, installs dependencies, generates <code>.env</code>,
+      applies migrations, and starts both servers:</p>
+
+    <div class="callout">
+      <ul>
+        <li>Backend: http://localhost:8000</li>
+        <li>Frontend: http://localhost:5173</li>
+      </ul>
+      <p>Stop both with <kbd>Ctrl</kbd>+<kbd>C</kbd>.</p>
+    </div>
+
+    <h2 id="repo-layout">Repository layout</h2>
+
+    <pre><code>agent-gate/
+  backend/                 # Django + DRF application
+    apps/                  # Django apps (accounts, agents, approvals, etc.)
+      accounts/            # User, Organization, OrgMembership
+      agents/              # Agent model, API keys, authentication, throttling
+      approvals/           # Approval queue, recheck, expiry
+      audit/               # Append-only hash-chained audit log
+      common/              # Shared utilities (money, currency, validation)
+      payees/              # Payee model and fingerprinting
+      payments/            # Webhook event model (PayPal stub)
+      policies/            # Policy and MerchantRule models
+      spend/               # SpendRequest model, services, idempotency
+    config/                # Django settings (dev/test/prod), URLs
+    engine/                # Pure-Python rule engine (no Django imports)
+    tests/                 # Test suite
+    manage.py
+    requirements.txt
+    .env.example
+  frontend/                # React + TypeScript dashboard
+    src/
+      api/                 # API client (agent-authenticated spend requests)
+      demo/                # In-memory demo store (mock data)
+      pages/               # Route components
+      ui/                  # Shared UI components
+      session/             # Session provider (demo-only auth)
+    vite.config.ts         # Vite + React, proxies /api and /v1 to Django
+    package.json
+  docs/                    # Developer documentation (HTML + preserved Markdown)
+    assets/styles.css      # Shared stylesheet for all HTML docs
+    index.html             # Documentation homepage
+    *.html                 # Individual documentation pages
+    postman/               # Postman collection (JSON)
+  .github/workflows/ci.yml  # CI pipeline
+  run.sh
+  Doc.md                   # Design documentation
+  README.md                # Project README</code></pre>
+
+    <h2 id="backend-dev">Backend development</h2>
+
+    <h3 id="settings">Settings</h3>
+
+    <p>Settings are split by environment in <code>backend/config/settings/</code>:</p>
+
+    <table>
+      <thead><tr><th>File</th><th>Use</th><th>Key variables</th></tr></thead>
+      <tbody>
+        <tr><td><code>base.py</code></td><td>Shared by all</td><td><code>DJANGO_SECRET_KEY</code>, <code>DATABASE_URL</code></td></tr>
+        <tr><td><code>dev.py</code></td><td>Local development</td><td><code>DJANGO_DEBUG=True</code></td></tr>
+        <tr><td><code>test.py</code></td><td>CI / local tests</td><td><code>TEST_DATABASE_URL</code> for PostgreSQL</td></tr>
+        <tr><td><code>prod.py</code></td><td>Contabo VPS + Neon</td><td><code>DEBUG=False</code>, secure cookies, HSTS</td></tr>
+      </tbody>
+    </table>
+
+    <p>Select with <code>DJANGO_SETTINGS_MODULE</code>:</p>
+
+    <pre><code># Default (dev)
+cd backend && python manage.py runserver
+
+# Tests
+cd backend && python manage.py test
+
+# Production checks
+DJANGO_SETTINGS_MODULE=config.settings.prod python manage.py check --deploy</code></pre>
+
+    <h3 id="env-vars">Environment variables</h3>
+
+    <p>Copy the example and fill in:</p>
+
+    <pre><code>cp backend/.env.example backend/.env</code></pre>
+
+    <table>
+      <thead><tr><th>Variable</th><th>Required</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>DJANGO_SECRET_KEY</code></td><td>Yes</td><td>Random Django secret</td></tr>
+        <tr><td><code>DJANGO_ALLOWED_HOSTS</code></td><td>Yes (prod)</td><td>Comma-separated allowed hosts</td></tr>
+        <tr><td><code>DJANGO_DEBUG</code></td><td>No</td><td><code>True</code> enables debug mode (dev only)</td></tr>
+        <tr><td><code>DATABASE_URL</code></td><td>No</td><td>PostgreSQL URL; falls back to SQLite</td></tr>
+        <tr><td><code>TEST_DATABASE_URL</code></td><td>No</td><td>PostgreSQL for CI concurrency tests</td></tr>
+        <tr><td><code>TRUSTED_PROXY_COUNT</code></td><td>No</td><td>Reverse proxy count for secure headers</td></tr>
+        <tr><td><code>CSRF_TRUSTED_ORIGINS</code></td><td>No (prod)</td><td>CORS/CSRF trusted origins</td></tr>
+        <tr><td><code>PAYPAL_CLIENT_ID</code></td><td>Planned</td><td>PayPal sandbox client ID</td></tr>
+        <tr><td><code>PAYPAL_CLIENT_SECRET</code></td><td>Planned</td><td>PayPal sandbox client secret</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="management-commands">Management commands</h3>
+
+    <table>
+      <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>create_agent NAME [--org ORG] --allow/-block merchant --cap N --threshold N --daily N --weekly N --monthly N</code></td><td>Create an agent, policy, and key (key printed once)</td></tr>
+        <tr><td><code>seed_demo</code></td><td>Reset demo data: suspend old demo agent, create new one + policy, append <code>demo.reset</code> audit event</td></tr>
+        <tr><td><code>expire_approvals</code></td><td>Mark overdue approvals as expired; safe for cron every minute</td></tr>
+        <tr><td><code>verify_audit</code></td><td>Recompute hash chains per organization; exits non-zero on tamper</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="frontend-dev">Frontend development</h2>
+
+    <pre><code>cd frontend
+npm install          # first time only
+npm run dev          # Vite dev server with /api proxy
+npm run lint         # ESLint
+npm run build        # TypeScript type-check + Vite build</code></pre>
+
+    <p>The dev server proxies <code>/api/*</code> and <code>/v1/*</code> to <code>http://127.0.0.1:8000</code>.
+      See <code>frontend/vite.config.ts</code> for the proxy configuration.</p>
+
+    <div class="callout warning">
+      <strong>Important</strong>: Dashboard screens currently use an in-memory demo store
+      (<code>src/demo/store.ts</code>) instead of the real API. Only the Simulate page calls
+      the real backend. See <a href="integration-gap-analysis.html">Integration Gap Analysis</a>
+      for the integration roadmap.
+    </div>
+
+    <h2 id="api-auth">API authentication</h2>
+
+    <h3 id="agent-api">Agent API (programmatic)</h3>
+
+    <p>Agents authenticate with a Bearer token:</p>
+
+    <pre><code>Authorization: Bearer agk_...</code></pre>
+
+    <ul>
+      <li>Key prefix is <code>agk_</code> followed by 43 URL-safe characters.</li>
+      <li>Only the prefix (12 chars) is stored indexed; the full key is SHA-256 hashed.</li>
+      <li>Comparison is constant-time (<code>hmac.compare_digest</code>).</li>
+      <li>Suspended agents and revoked keys are rejected.</li>
+      <li>Rate limit: 60/min per key (configurable via <code>THROTTLE_AGENT</code>).</li>
+    </ul>
+
+    <h3 id="dashboard-auth">Dashboard auth (session)</h3>
+
+    <p>Dashboard users authenticate via Django sessions:</p>
+
+    <pre><code>POST /api-auth/login/   # sets session cookie
+POST /api-auth/logout/  # clears session cookie</code></pre>
+
+    <p>Role-based permissions (checked against <code>OrgMembership</code>):</p>
+
+    <table>
+      <thead><tr><th>Permission</th><th>Roles</th></tr></thead>
+      <tbody>
+        <tr><td><code>IsDashboardUser</code></td><td>admin, approver, viewer</td></tr>
+        <tr><td><code>IsApprover</code></td><td>admin, approver</td></tr>
+        <tr><td><code>IsOrganizationAdmin</code></td><td>admin only</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <p>Planned: Email/password signup and GitHub OAuth login via <code>django-allauth</code>.
+        See <a href="authentication-architecture.html">Authentication Architecture</a> for details.</p>
+    </div>
+
+    <h2 id="rule-engine">Rule engine</h2>
+
+    <p>The engine (<code>backend/engine/</code>) is a pure Python package with no Django imports
+      (enforced by <code>.importlinter</code>). Call <code>engine.evaluate()</code> with normalized inputs.</p>
+
+    <h3 id="rule-codes">Rule codes</h3>
+
+    <table>
+      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>R01</td><td>AGENT_ACTIVE</td><td>Deny</td><td>Agent is not active</td></tr>
+        <tr><td>R02</td><td>CURRENCY</td><td>Deny</td><td>Currency mismatch</td></tr>
+        <tr><td>R03</td><td>MERCHANT_BLOCK</td><td>Deny</td><td>Merchant on block list</td></tr>
+        <tr><td>R04</td><td>MERCHANT_ALLOW</td><td>Deny</td><td>Allow list exists, merchant not on it</td></tr>
+        <tr><td>R05</td><td>PER_TX_CAP</td><td>Deny</td><td>Amount &le;0 or &gt; cap</td></tr>
+        <tr><td>R06</td><td>DAILY_BUDGET</td><td>Deny</td><td>Exceeds daily budget</td></tr>
+        <tr><td>R07</td><td>MONTHLY_BUDGET</td><td>Deny</td><td>Exceeds monthly budget</td></tr>
+        <tr><td>R08</td><td>VELOCITY</td><td>Approval</td><td>Recent request count &ge; max</td></tr>
+        <tr><td>R09</td><td>MERCHANT_WINDOW</td><td>Approval</td><td>Recent merchant spend &gt; cap</td></tr>
+        <tr><td>R10</td><td>APPROVAL_THRESHOLD</td><td>Approval</td><td>Amount &ge; threshold</td></tr>
+        <tr><td>R13</td><td>UNTRUSTED_SOURCE</td><td>Approval/Deny</td><td>Source &ne; trusted (configurable)</td></tr>
+        <tr><td>R14</td><td>INJECTION_PATTERN</td><td>Deny</td><td>Deterministic phrase match</td></tr>
+        <tr><td>R16</td><td>WEEKLY_BUDGET</td><td>Deny</td><td>Exceeds weekly budget</td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Precedence</strong>: Any deny &rarr; deny; else any approval reason &rarr; needs_approval;
+      else allow. All matched rules are reported.</p>
+
+    <h2 id="money">Money handling</h2>
+
+    <ul>
+      <li>All amounts stored as <strong>integer minor units</strong> (e.g., USD cents).</li>
+      <li>Zero-decimal currencies (JPY, KRW, etc.) use 0 decimal places.</li>
+      <li>Conversion at API/PayPal boundaries via <code>apps/common/money.py</code>:
+        <ul>
+          <li><code>to_minor(amount_decimal, currency) &rarr; int</code></li>
+          <li><code>to_major(amount_int, currency) &rarr; Decimal</code></li>
+        </ul>
+      </li>
+    </ul>
+
+    <h2 id="idempotency">Idempotency</h2>
+
+    <ul>
+      <li>The <code>Idempotency-Key</code> header (1&ndash;255 printable characters) is required on
+        <code>POST /v1/spend-requests/</code>.</li>
+      <li>The request hash includes the normalized destination, so changing the destination with the same key returns 409.</li>
+      <li>Replay with same key + same body: returns stored request with <code>Idempotent-Replayed: true</code> header.</li>
+      <li>Replay with same key + different body: 409 Conflict.</li>
+    </ul>
+
+    <h2 id="audit">Audit log</h2>
+
+    <ul>
+      <li>Append-only per organization with hash chaining (<code>prev_hash</code> &rarr; <code>hash</code>).</li>
+      <li>Model <code>save()</code>/<code>delete()</code> on existing rows raises <code>PermissionError</code>.</li>
+      <li>PostgreSQL trigger blocks UPDATE/DELETE/TRUNCATE at the database level.</li>
+      <li><code>verify_audit</code> management command recomputes hashes; exits non-zero on mismatch.</li>
+      <li>Tamper-evident, not tamper-proof (head hash not anchored externally).</li>
+    </ul>
+
+    <h2 id="lock-order">Lock order</h2>
+
+    <p>Every write path locks rows in this order:</p>
+
+    <ol>
+      <li>Agent (<code>select_for_update</code>)</li>
+      <li>Policy (<code>select_for_update</code>)</li>
+      <li>SpendRequest</li>
+      <li>Approval</li>
+      <li>Organization (for audit)</li>
+    </ol>
+
+    <p>This prevents deadlocks and double-spend races on PostgreSQL.</p>
+
+    <h2 id="testing">Testing</h2>
+
+    <pre><code>cd backend && source venv/bin/activate
+
+# Default (SQLite, fast)
+python manage.py test
+
+# PostgreSQL (exercises row locks, triggers, concurrency)
+docker run -d --name agentgate-pg -e POSTGRES_USER=agentgate -e POSTGRES_PASSWORD=agentgate -e POSTGRES_DB=agentgate -p 5432:5432 postgres:17
+TEST_DATABASE_URL=postgresql://agentgate:agentgate@localhost:5432/agentgate python manage.py test</code></pre>
+
+    <h3 id="test-modules">Test modules</h3>
+
+    <table>
+      <thead><tr><th>Module</th><th>Scope</th></tr></thead>
+      <tbody>
+        <tr><td><code>tests/test_rules.py</code></td><td>Engine rules (13 rules, edge cases)</td></tr>
+        <tr><td><code>tests/test_api.py</code></td><td>Spend request API (31 tests)</td></tr>
+        <tr><td><code>tests/test_idempotency.py</code></td><td>Idempotency (9 tests)</td></tr>
+        <tr><td><code>tests/test_concurrency.py</code></td><td>PostgreSQL row locks (4 tests)</td></tr>
+        <tr><td><code>tests/test_approvals_api.py</code></td><td>Approval workflow</td></tr>
+        <tr><td><code>tests/test_policies_api.py</code></td><td>Policy list/filter/pagination</td></tr>
+        <tr><td><code>tests/test_audit_chain.py</code></td><td>Hash chain integrity</td></tr>
+        <tr><td><code>tests/test_audit_api.py</code></td><td>Audit endpoints</td></tr>
+        <tr><td><code>tests/test_audit_trigger.py</code></td><td>DB trigger enforcement</td></tr>
+        <tr><td><code>tests/test_services.py</code></td><td>Business logic</td></tr>
+        <tr><td><code>tests/test_commands.py</code></td><td>Management commands</td></tr>
+        <tr><td><code>tests/test_models.py</code></td><td>Model constraints</td></tr>
+        <tr><td><code>tests/test_migrations.py</code></td><td>Migration integrity</td></tr>
+        <tr><td><code>tests/test_settings.py</code></td><td>Settings validation</td></tr>
+        <tr><td><code>tests/test_limits.py</code></td><td>Budget/velocity/merchant window limits</td></tr>
+        <tr><td><code>tests/test_approval_expiry.py</code></td><td>Expiry command</td></tr>
+        <tr><td><code>tests/attacks/</code></td><td>Injection attack corpus (YAML cases)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="ci-cd">CI / CD</h2>
+
+    <p>GitHub Actions (<code>.github/workflows/ci.yml</code>) runs on every push and PR:</p>
+
+    <ol>
+      <li><strong>backend</strong>: PostgreSQL service, ruff lint, import-linter contracts, Django checks (including <code>--deploy</code>), migration check, full test suite</li>
+      <li><strong>frontend</strong>: npm ci, ESLint, TypeScript build</li>
+      <li><strong>security-audit</strong>: <code>pip-audit</code> (Python deps) and <code>npm audit</code> (Node deps)</li>
+    </ol>
+
+    <p>Locally, run the same checks:</p>
+
+    <pre><code>cd backend && ruff check . && lint-imports && python manage.py makemigrations --check --dry-run && python manage.py test
+cd frontend && npm run lint && npm run build</code></pre>
+
+    <h2 id="conventions">Code conventions</h2>
+
+    <h3 id="backend-conventions">Backend (Python)</h3>
+
+    <ul>
+      <li><strong>Ruff</strong> for linting: <code>ruff check .</code> (config: <code>backend/ruff.toml</code>)</li>
+      <li><strong>Import linter</strong>: <code>.importlinter</code> enforces <code>engine</code> has no Django/app imports</li>
+      <li><strong>Django 6.1 + DRF 3.18</strong>; <strong>drf-spectacular</strong> for OpenAPI generation</li>
+      <li>Model mutations go through service functions in <code>services.py</code></li>
+      <li>Management commands for idempotent, cron-safe operations</li>
+      <li>Commit messages: <code>type(scope): message</code> (feat, fix, docs, chore, ci, test)</li>
+      <li>One branch per task; small PRs with at least one review</li>
+    </ul>
+
+    <h3 id="frontend-conventions">Frontend (TypeScript/React)</h3>
+
+    <ul>
+      <li><strong>React 19 + TypeScript + Vite + ESLint</strong></li>
+      <li>react-router v7 data router</li>
+      <li>UI components are framework-agnostic (no heavy UI libraries)</li>
+      <li>Dashboard screens use the demo store; Simulator uses the real API</li>
+    </ul>
+
+    <div class="callout">
+      <h4>Navigation</h4>
+      <p>
+        Related documentation:
+        <a href="index.html">Documentation Home</a> &bull;
+        <a href="implementation-plan.html">Implementation Plan</a> &bull;
+        <a href="deployment-readiness.html">Deployment Readiness</a> &bull;
+        <a href="api-integration.html">API Integration</a>
+      </p>
+    </div>
+
+  </main>
+</body>
+</html>

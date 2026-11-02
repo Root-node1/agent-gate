@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gemini Chatbot Integration Plan &mdash; AgentGate</title>
+  <meta name="description" content="Gemini chatbot integration: backend proxy, API key security, read-only guardrails, error handling.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>Gemini Chatbot Integration</h1>
+    <p class="subtitle">AgentGate &mdash; read-only advisory chatbot via backend Gemini proxy</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <h2 id="executive-summary">Executive summary</h2>
+
+    <p>
+      The existing frontend has <strong>no chatbot component</strong>. There is no backend chatbot endpoint,
+      no Gemini SDK usage, and no AI model serving code anywhere in the repository. The only "live" UI
+      elements are the <strong>activity feed</strong> on the Overview page (which animates demo-store events)
+      and the <strong>Simulate page</strong> (which submits real spend requests via the agent API).
+    </p>
+
+    <div class="callout danger">
+      <h4>Critical finding</h4>
+      <p>
+        The Gemini chatbot does not exist yet. It must be built from scratch as a
+        <strong>backend-proxied, read-only advisory</strong> assistant. The Gemini API key must
+        never leave the server.
+      </p>
+    </div>
+
+    <h2 id="existing-frontend">Existing frontend implementation</h2>
+
+    <h3 id="no-chatbot">No chatbot component currently exists</h3>
+
+    <p>A scan of <code>frontend/src/</code> found no chatbot UI, no chat message store, and no Gemini-related code:</p>
+
+    <table>
+      <thead><tr><th>Path searched</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td><code>frontend/src/</code></td><td>No <code>chat</code>, <code>bot</code>, <code>gemini</code>, or <code>assistant</code> directories or files</td></tr>
+        <tr><td><code>frontend/src/demo/store.ts</code></td><td>Demo store has no chatbot state. Activity feed (<code>ActivityFeed.tsx</code>) renders audit events only.</td></tr>
+        <tr><td><code>frontend/src/App.tsx</code></td><td>Routes: <code>/</code>, <code>/app/*</code>, <code>/live/*</code>. No <code>/app/chat</code> route.</td></tr>
+        <tr><td><code>frontend/package.json</code></td><td>Dependencies: React, react-router, lucide-react. No <code>@google/generative-ai</code> or similar.</td></tr>
+        <tr><td><code>frontend/src/ui/</code></td><td>UI components: AppLayout, Badge, Modal, Timeline, ToastProvider. No <code>ChatMessage</code>, <code>ChatInput</code>, or <code>ChatWindow</code>.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="activity-feed">Activity feed (closest existing pattern)</h3>
+
+    <p>
+      The <strong>OverviewPage</strong> (<code>frontend/src/pages/app/OverviewPage.tsx</code>) renders an
+      <strong>ActivityFeed</strong> component (<code>frontend/src/pages/app/overview/ActivityFeed.tsx</code>)
+      that displays audit events from the demo store. The feed uses <code>aria-live="polite"</code> for
+      screen-reader announcements and animates new events as they arrive. This is a
+      <em>display-only</em> component &mdash; there is no user input or chat interface.
+    </p>
+
+    <h3 id="simulator">Simulator page (existing API consumer)</h3>
+
+    <p>
+      The <strong>SimulatePage</strong> (<code>frontend/src/pages/app/SimulatePage.tsx</code>) is the only
+      screen that calls the real backend API via <code>submitSpendRequest()</code>
+      (<code>frontend/src/api/spendRequests.ts</code>). It sends an agent key as a Bearer token and
+      displays the raw JSON response. It has no chat/UI interaction pattern that could be reused for a chatbot.
+    </p>
+
+    <h2 id="existing-backend">Existing backend chatbot routes</h2>
+
+    <div class="callout danger">
+      <h4>No backend chatbot endpoints exist</h4>
+      <p>A scan of <code>backend/config/urls.py</code> and all <code>backend/apps/*/urls.py</code> files confirms there are zero chatbot-related routes. The complete list of existing backend routes is:</p>
+    </div>
+
+    <pre><code>GET  /healthz                              (health)
+GET  /readyz                               (readiness)
+GET  /api/health/                          (health alias)
+GET  /api/schema/                          (OpenAPI schema)
+GET  /api/docs/                            (Swagger UI)
+POST /api-auth/login/                      (DRF session login)
+POST /api-auth/logout/                     (DRF session logout)
+POST /v1/spend-requests/                   (agent: submit)
+GET  /v1/spend-requests/{id}/              (agent: detail)
+GET  /v1/approvals/                        (dashboard)
+GET  /v1/approvals/{id}/                   (dashboard)
+POST /v1/approvals/{id}/approve/           (dashboard)
+POST /v1/approvals/{id}/deny/             (dashboard)
+GET  /v1/policies/                         (dashboard)
+GET  /v1/audit/                            (dashboard)
+GET  /v1/audit/verify/                     (dashboard, admin only)</code></pre>
+
+    <h2 id="missing-work">Missing integration work</h2>
+
+    <p>The chatbot requires work in two layers &mdash; backend proxy and frontend UI.</p>
+
+    <h3 id="backend-missing">Backend (new <code>apps/chatbot/</code>)</h3>
+    <ul>
+      <li>A new Django app <code>apps/chatbot/</code> with:
+        <ul>
+          <li>A view <code>POST /v1/chat/</code> authenticated via <code>SessionAuthentication</code> (dashboard users only)</li>
+          <li>A service layer that constructs a system prompt, appends conversation context, calls the Gemini API, and returns a text response</li>
+          <li>Per-user conversation memory (short window, e.g., last 10 messages) stored in the session or a lightweight in-memory store</li>
+        </ul>
+      </li>
+      <li>Registration in <code>INSTALLED_APPS</code> in <code>config/settings/base.py</code></li>
+      <li>Routing in <code>config/urls.py</code></li>
+      <li>Google Gemini SDK added to <code>requirements.txt</code></li>
+    </ul>
+
+    <h3 id="frontend-missing">Frontend (new chat component)</h3>
+    <ul>
+      <li>A new <code>ChatWindow</code> component (<code>frontend/src/chat/ChatWindow.tsx</code>) with:
+        <ul>
+          <li>Message list (assistant + user bubbles)</li>
+          <li>Input field with send button</li>
+          <li>Typing indicator and error toast</li>
+        </ul>
+      </li>
+      <li>A new API client <code>frontend/src/api/chatbot.ts</code> calling <code>POST /v1/chat/</code></li>
+      <li>A new route <code>/app/chat</code> in <code>frontend/src/App.tsx</code></li>
+      <li>Integration into the <code>AppLayout.tsx</code> sidebar</li>
+    </ul>
+
+    <h2 id="architecture">Required architecture</h2>
+
+    <pre><code>
+React chatbot UI
+     |
+     |--- POST /v1/chat/  (Session cookie + CSRF token)
+     v
+Django authenticated endpoint  (apps/chatbot/)
+     |
+     |--- HTTPS to Google AI Studio (server-to-server)
+     |    Authorization: Bearer &lt;GEMINI_API_KEY&gt;
+     v
+Gemini API  (google-genai Python SDK)</code></pre>
+
+    <div class="callout note">
+      <strong>Key principle</strong>: The Gemini API key is stored in <code>backend/.env</code> as
+      <code>GEMINI_API_KEY</code> and is read by the Django backend at runtime. The frontend never
+      receives the key, never sets it as a Vite environment variable, and never has it in the bundle.
+      The <code>vite.config.ts</code> proxy already routes <code>/v1/*</code> to the Django backend,
+      so no cross-origin exception is needed.
+    </div>
+
+    <h2 id="gemini-sdk">Recommended Gemini SDK and backend service structure</h2>
+
+    <h3 id="sdk-choice">SDK choice</h3>
+
+    <p>
+      Use the official <strong>Google GenAI Python SDK</strong> (<code>google-genai</code>), which is the
+      successor to <code>google-generativeai</code>. It is the SDK recommended by Google AI Studio and
+      provides structured response handling, retry with exponential backoff, and built-in safety filtering.
+    </p>
+
+    <pre><code># requirements.txt (proposed addition)
+google-genai==2.1.0</code></pre>
+
+    <h3 id="service-structure">Service structure (<code>backend/apps/chatbot/</code>)</h3>
+
+    <pre><code>backend/apps/chatbot/
+  __init__.py
+  apps.py                  # AppConfig
+  services.py              # GeminiChatService (calls Google API, handles errors)
+  prompts.py               # System prompt + context formatting
+  views.py                 # ChatView (POST /v1/chat/, SessionAuthentication)
+  serializers.py           # ChatRequestSerializer, ChatResponseSerializer
+  models.py                # Conversation (optional, per-user message history)
+  tests.py                 # Mocked Gemini tests
+  management/
+    __init__.py
+    commands/
+      __init__.py
+      seed_chatbot_context.py  # optional: pre-seed FAQ context</code></pre>
+
+    <h2 id="system-prompt">System prompt and read-only guardrails</h2>
+
+    <p>
+      The system prompt must explicitly instruct the model to act as an <strong>advisory, read-only
+      assistant</strong>. The following guardrails are non-negotiable:
+    </p>
+
+    <div class="callout">
+      <h4>Prohibited actions &mdash; the chatbot must never:</h4>
+      <ul>
+        <li>Execute PayPal transactions (no call to <code>PaymentExecutor</code> or PayPal API)</li>
+        <li>Approve or deny spend requests (no call to <code>apps/approvals/services.decide()</code>)</li>
+        <li>Modify policies (no call to policy CRUD endpoints)</li>
+        <li>Create or revoke API keys (no call to agent key management endpoints)</li>
+        <li>Bypass the deterministic policy engine (<code>backend/engine/rules.py</code>)</li>
+        <li>Expose sensitive audit information or secrets (no raw <code>AuditEvent.payload</code>, no amounts, no payee details unless sanitized)</li>
+      </ul>
+    </div>
+
+    <p>The system prompt should be embedded in <code>prompts.py</code> and include:</p>
+
+    <pre><code>
+You are "AgentGate Assistant", an advisory chatbot for the AgentGate
+spending firewall dashboard. Your role is to help authenticated dashboard
+users understand spending policies, request outcomes, and audit events.
+
+You are strictly read-only. You must NEVER:
+- Approve or deny spend requests.
+- Execute payments through PayPal.
+- Modify policies, budgets, or merchant rules.
+- Create, rotate, or revoke API keys.
+- Bypass or override the deterministic rule engine.
+- Reveal raw audit-chain hashes, internal IDs, or secret material.
+
+When a user asks about a specific spend request, provide a summary of
+the decision, the matched rule codes, and whether it was allowed, denied,
+or needs approval. Never output raw JSON payloads or database IDs.
+
+If a user asks you to perform a prohibited action, respond with:
+"I can only provide information &mdash; I cannot [action]. Please use
+the dashboard controls directly."</code></pre>
+
+    <h2 id="env-vars">Environment variable requirements</h2>
+
+    <table>
+      <thead><tr><th>Variable</th><th>Required</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>GEMINI_API_KEY</code></td><td>Yes (backend only)</td><td>API key from Google AI Studio. Stored in <code>backend/.env</code>. Never exposed to frontend. Read by the Django backend at startup.</td></tr>
+        <tr><td><code>GEMINI_MODEL</code></td><td>No (default: <code>gemini-2.5-flash</code>)</td><td>Model name to use for the chat endpoint.</td></tr>
+        <tr><td><code>GEMINI_MAX_TOKENS</code></td><td>No (default: <code>1024</code>)</td><td>Maximum output tokens per response.</td></tr>
+        <tr><td><code>GEMINI_TEMPERATURE</code></td><td>No (default: <code>0.2</code>)</td><td>Low temperature for deterministic, advisory responses.</td></tr>
+        <tr><td><code>CHATBOT_RATE_LIMIT</code></td><td>No (default: <code>20/min</code>)</td><td>Per-user throttle on <code>POST /v1/chat/</code>.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="env-example">Proposed .env.example additions</h3>
+<pre><code># Gemini chatbot (backend only &mdash; never expose to frontend)
+# GEMINI_API_KEY=your-google-ai-studio-key
+# GEMINI_MODEL=gemini-2.5-flash
+# GEMINI_MAX_TOKENS=1024
+# GEMINI_TEMPERATURE=0.2
+# CHATBOT_RATE_LIMIT=20/min</code></pre>
+
+    <div class="callout danger">
+      <p>
+        <strong>Never</strong> add <code>GEMINI_API_KEY</code> to <code>frontend/.env</code>,
+        <code>vite.config.ts</code>, or any file under <code>frontend/src/</code>. Vite's build
+        system inlines <code>import.meta.env.VITE_*</code> variables into the client bundle &mdash;
+        the key would be visible in browser dev tools. The proxy at <code>vite.config.ts:8-11</code>
+        already routes <code>/v1/*</code> to the Django backend, so the frontend needs only:
+      </p>
+      <pre><code>// frontend/src/api/chatbot.ts
+async function chat(message: string) {
+  const res = await fetch("/v1/chat/", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": getCsrfToken(),
+    },
+    body: JSON.stringify({ message }),
+  });
+  return res.json();
+}</code></pre>
+    </div>
+
+    <h2 id="timeouts-rate-limits">Timeouts, rate limits, and error handling</h2>
+
+    <h3 id="backend-timeouts">Backend timeouts</h3>
+
+    <table>
+      <thead><tr><th>Parameter</th><th>Recommended value</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>Gemini API timeout</td><td>10 seconds</td><td>Request-level timeout on the <code>generate_content</code> call.</td></tr>
+        <tr><td>View timeout</td><td>15 seconds (via DRF <code>timeout</code> or manual)</td><td>Hard ceiling on the entire request, including prompt construction and response formatting.</td></tr>
+        <tr><td>Session history limit</td><td>10 messages per user</td><td>Truncate conversation history to avoid exceeding model context windows.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="rate-limits">Rate limits</h3>
+
+    <table>
+      <thead><tr><th>Limit type</th><th>Scope</th><th>Limit</th><th>Enforced at</th></tr></thead>
+      <tbody>
+        <tr><td>Per-user chat rate</td><td><code>POST /v1/chat/</code></td><td>20/min per authenticated user</td><td>Django DRF throttle (<code>UserRateThrottle</code>)</td></tr>
+        <tr><td>Gemini RPM</td><td>API key</td><td>Limit per Google AI Studio quota (typically 100 RPM for flash, 300 for pro)</td><td>Google API returns 429</td></tr>
+        <tr><td>Gemini daily tokens</td><td>API key</td><td>Limit per Google AI Studio quota (e.g., 1M tokens/day)</td><td>Google API returns 429</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="error-handling">Error handling</h3>
+
+    <p>The backend <code>ChatView</code> must handle the following error cases:</p>
+
+    <table>
+      <thead><tr><th>Error</th><th>HTTP status</th><th>Response body</th></tr></thead>
+      <tbody>
+        <tr><td>Not authenticated</td><td>401</td><td><code>{"detail": "Authentication credentials were not provided."}</code></td></tr>
+        <tr><td>Rate limited (DRF)</td><td>429</td><td><code>{"detail": "Request was throttled. Try again later."}</code></td></tr>
+        <tr><td>Gemini 429 (RPM/quota)</td><td>503</td><td><code>{"detail": "The AI assistant is temporarily unavailable. Please try again in a moment."}</code></td></tr>
+        <tr><td>Gemini 5xx (server error)</td><td>502</td><td><code>{"detail": "The AI assistant returned an error. Please try again."}</code></td></tr>
+        <tr><td>Gemini safety block</td><td>403</td><td><code>{"detail": "The response was blocked by AI safety filters.", "safety_ratings": [...]}</code></td></tr>
+        <tr><td>Timeout (&gt;10s)</td><td>504</td><td><code>{"detail": "The assistant took too long to respond. Please try again."}</code></td></tr>
+        <tr><td>Prompt injection detected</td><td>200 (advisory)</td><td>{message: "I can only provide information..."}</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="privacy">Privacy and prompt-injection safeguards</h2>
+
+    <h3 id="prompt-injection">Prompt-injection safeguards</h3>
+
+    <ul>
+      <li><strong>Input length cap</strong>: Reject messages longer than 2,000 characters before sending to Gemini.</li>
+      <li><strong>Pre-screening</strong>: Run the user message through the <strong>deterministic injection screening</strong>
+          (<code>backend/engine/screening/patterns.py</code>, rule <code>R14_INJECTION_PATTERN</code>) before
+          forwarding to Gemini. If a match is found, return a canned advisory response instead of calling the API.</li>
+      <li><strong>No tool calling</strong>: The Gemini request must use <code>tools=[]</code> (no function calling,
+          no code execution). The model cannot call external functions.</li>
+      <li><strong>No retrieval of raw audit data</strong>: The chatbot must never query <code>AuditEvent</code>
+          directly with raw payloads. Only sanitized, human-readable summaries are provided.</li>
+    </ul>
+
+    <h3 id="privacy-considerations">Privacy considerations</h3>
+
+    <ul>
+      <li><strong>Data retention</strong>: Conversation history is stored in-memory only (or in the Django session
+          store). It is not persisted to the database unless the team explicitly adds a <code>Conversation</code>
+          model in a follow-up.</li>
+      <li><strong>No PII in logs</strong>: The backend must never log user messages to structured logs. Only log
+          request metadata (user ID, timestamps, token counts, errors).</li>
+      <li><strong>PII redaction in responses</strong>: If the model summarizes a spend request, it must not
+          include payee email addresses, PayPal references, or raw merchant URLs &mdash; only merchant names
+          and outcome codes.</li>
+      <li><strong>Cost attribution</strong>: Log <code>usage_metadata</code> (prompt + output tokens) per user
+          for billing/debugging purposes.</li>
+    </ul>
+
+    <h2 id="tests">Tests with mocked Gemini responses</h2>
+
+    <p>Tests for the chatbot must use <strong>mocked</strong> Gemini responses only &mdash; no real API calls
+      in any test environment. The test strategy:</p>
+
+    <table>
+      <thead><tr><th>Test area</th><th>Approach</th><th>File location</th></tr></thead>
+      <tbody>
+        <tr><td>Service layer</td><td>Mock <code>genai.Client</code> using <code>unittest.mock.patch</code>. Return canned <code>GenerateContentResponse</code> objects.</td><td><code>backend/apps/chatbot/tests.py</code></td></tr>
+        <tr><td>View layer</td><td>Use <code>APITestCase</code> with a logged-in user. Assert 200/401/429/503 on various inputs.</td><td><code>backend/apps/chatbot/tests.py</code></td></tr>
+        <tr><td>Read-only enforcement</td><td>Send messages like "please approve request #123" and assert the response refuses to comply.</td><td><code>backend/apps/chatbot/tests.py</code></td></tr>
+        <tr><td>Input validation</td><td>Send empty message, over-length message, non-string payload. Assert 400.</td><td><code>backend/apps/chatbot/tests.py</code></td></tr>
+        <tr><td>Prompt-injection screening</td><td>Send messages containing known injection phrases from <code>backend/tests/attacks/</code>. Assert the screening path triggers and the API is not called.</td><td><code>backend/apps/chatbot/tests.py</code></td></tr>
+        <tr><td>Frontend</td><td>Test <code>ChatWindow</code> renders user + assistant messages. Mock <code>fetch</code> to return canned responses.</td><td><code>frontend/src/chat/__tests__/ChatWindow.test.tsx</code> (requires Jest + RTL setup, see P2 in <a href="implementation-plan.html">Implementation Plan</a>)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="usage-limits">Usage limits and cost controls</h2>
+
+    <h3 id="model-choice">Model choice for cost control</h3>
+
+    <p>
+      Use <strong><code>gemini-2.5-flash</code></strong> by default, not <code>gemini-2.5-pro</code>.
+      Flash is 3&times;&ndash;10&times; cheaper and sufficient for advisory Q&amp;A. Allow
+      <code>GEMINI_MODEL</code> to be configured per environment.
+    </p>
+
+    <h3 id="token-limits">Token limits</h3>
+
+    <table>
+      <thead><tr><th>Parameter</th><th>Default</th><th>Rationale</th></tr></thead>
+      <tbody>
+        <tr><td><code>max_output_tokens</code></td><td>1024</td><td>Prevents runaway responses; advisory answers are short.</td></tr>
+        <tr><td><code>temperature</code></td><td>0.2</td><td>Low temperature for deterministic, consistent answers.</td></tr>
+        <tr><td>History window</td><td>10 messages</td><td>Keeps context small and costs predictable.</td></tr>
+        <tr><td>Input length cap</td><td>2,000 chars</td><td>Prevents oversized prompts before they reach the API.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="cost-monitoring">Cost monitoring recommendations</h3>
+
+    <ul>
+      <li>Log token usage (<code>prompt_token_count</code>, <code>candidates_token_count</code>) per <code>POST /v1/chat/</code> request in structured JSON logs.</li>
+      <li>Set Google Cloud budget alerts on the AI Studio project (e.g., $10/month soft limit).</li>
+      <li>Consider per-user daily quotas in the Django throttle to prevent abuse.</li>
+      <li>Review <code>GEMINI_MODEL</code> quarterly &mdash; downgrade from Pro to Flash when cost exceeds budget.</li>
+    </ul>
+
+    <h2 id="integration-dependencies">Integration dependencies for existing dashboard screens</h2>
+
+    <table>
+      <thead><tr><th>Dashboard screen</th><th>Chatbot integration needed</th><th>Auth required</th></tr></thead>
+      <tbody>
+        <tr><td>OverviewPage</td><td>Chatbot icon in activity feed area</td><td>Yes (viewer+)</td></tr>
+        <tr><td>ApprovalDetailPage</td><td>Chatbot can answer "why did this need approval?"</td><td>Yes (approver+)</td></tr>
+        <tr><td>TransactionDetailPage</td><td>Chatbot can summarize this request's decision</td><td>Yes (viewer+)</td></tr>
+        <tr><td>PoliciesPage</td><td>Chatbot can explain policy rules in plain language</td><td>Yes (viewer+)</td></tr>
+        <tr><td>AuditLogPage</td><td>Chatbot can answer natural-language questions about events</td><td>Yes (viewer+)</td></tr>
+        <tr><td>AgentsPage</td><td>Chatbot can list or describe agent roles</td><td>Yes (admin only for changes)</td></tr>
+        <tr><td>SettingsPage</td><td>Chatbot can explain settings (read-only)</td><td>Yes (admin only)</td></tr>
+        <tr><td>SimulatePage</td><td>No chatbot needed</td><td>No (agent key only)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="unresolved-findings">Unresolved findings</h2>
+
+    <table>
+      <thead><tr><th>#</th><th>Finding</th><th>Impact</th><th>Owner</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>No chatbot exists. No Gemini SDK in <code>requirements.txt</code>. No <code>GEMINI_API_KEY</code> in <code>.env.example</code>.</td><td>Blocker &mdash; must be built from scratch</td><td>Chatbot developer</td></tr>
+        <tr><td>2</td><td>The frontend has no pattern for authenticated, interactive components (only demo store).</td><td>Blocker &mdash; need auth integration first</td><td>Auth developer (prerequisite)</td></tr>
+        <tr><td>3</td><td>No Jest/RTL setup in <code>frontend/package.json</code>.</td><td>Medium &mdash; frontend chatbot tests cannot run until testing infra is added</td><td>Frontend team (P2)</td></tr>
+        <tr><td>4</td><td>No dedicated backend endpoint for conversational history.</td><td>Medium &mdash; conversation state will be session-based only unless a model is added</td><td>Chatbot developer</td></tr>
+        <tr><td>5</td><td>The demo store's injection screening (<code>demo/rules.ts</code>) does not match the backend engine</code>s (<code>engine/screening/patterns.py</code>). Chatbot must use the <strong>backend</strong> screening, not the demo copy.</td><td>Correctness</td><td>Chatbot developer</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>Not implemented in this assignment</h4>
+      <p>
+        Per the scope restrictions, the Gemini chatbot integration is documented
+        as a plan only. No chatbot code, no Gemini SDK integration, and no backend
+        proxy endpoint has been implemented. See
+        <a href="implementation-plan.html">Implementation Plan &mdash; Phase 6</a>
+        for the implementation sequence.
+      </p>
+    </div>
+
+    <div class="callout">
+      <h4>Navigation</h4>
+      <p>
+        Related documentation:
+        <a href="frontend-audit.html">Frontend Audit</a> &bull;
+        <a href="security-audit.html">Security Audit</a> &bull;
+        <a href="api-integration.html">API Integration</a> &bull;
+        <a href="implementation-plan.html">Implementation Plan</a> &bull;
+        <a href="index.html">Documentation Home</a>
+      </p>
+    </div>
+
+  </main>
+</body>
+</html>

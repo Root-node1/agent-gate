@@ -1,0 +1,2406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TOTP 2FA Contract &mdash; AgentGate</title>
+  <meta name="description" content="AUTH-05A: research, architecture, and endpoint contracts for TOTP 2FA, leveraging the django-allauth 65.21.0 built-in MFA module (allauth.mfa) with recovery codes and headless SPA endpoints.">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="doc-header">
+    <h1>TOTP 2FA Contract</h1>
+    <p class="subtitle">AgentGate &mdash; AUTH-05A: research, architecture, and endpoint contracts for TOTP 2FA, leveraging django-allauth 65.21.0's built-in MFA module (allauth.mfa) with recovery codes and headless SPA endpoints</p>
+    <nav class="doc-nav" aria-label="Documentation index">
+      <a href="index.html">Home</a>
+      <a href="project-current-state.html">Project State</a>
+      <a href="frontend-audit.html">Frontend Audit</a>
+      <a href="backend-audit.html">Backend Audit</a>
+      <a href="integration-gap-analysis.html">Integration Gaps</a>
+      <a href="authentication-architecture.html">Auth Architecture</a>
+      <a href="gemini-chatbot-integration.html">Gemini Chatbot</a>
+      <a href="security-audit.html">Security Audit</a>
+      <a href="developer-setup.html">Developer Setup</a>
+      <a href="api-integration.html">API Integration</a>
+      <a href="implementation-plan.html">Implementation Plan</a>
+      <a href="deployment-readiness.html">Deployment Readiness</a>
+      <a href="integration-dependency-plan.html">Integration Dependency Plan</a>
+      <a href="auth-crud-integration.html">Auth + CRUD Integration</a>
+      <a href="account-recovery-contract.html">Account Recovery Contract</a>
+      <a href="github-oauth-contract.html">GitHub OAuth Contract</a>
+      <a href="totp-2fa-contract.html" aria-current="page">TOTP 2FA Contract</a>
+    </nav>
+  </header>
+
+  <main class="doc-container">
+
+    <!-- ===== 1. Checkpoint status ===== -->
+
+    <h2 id="status">Checkpoint status</h2>
+
+    <div class="callout note">
+      <h4>Scope: AUTH-05A (research &amp; design only)</h4>
+      <p>
+        This checkpoint performs <strong>research, architecture, and HTML documentation only</strong>.
+        No Python, React, migrations, dependencies, settings, or environment files are modified.
+        No migrations are run. No endpoints are implemented.
+      </p>
+    </div>
+
+    <table>
+      <thead><tr><th>Item</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Branch</td><td><code>feat/totp-2fa</code></td></tr>
+        <tr><td>HEAD</td><td><code>986cf4a5a88b5782826072e508fbe4b554c2a687</code> (prefix <code>986cf4a</code> &mdash; <code>Merge branch 'feat/github-oauth' into feat/totp-2fa</code>)</td></tr>
+        <tr><td>Working tree</td><td><span class="badge badge-complete">Clean</span> (no uncommitted changes at checkpoint start)</td></tr>
+        <tr><td>Allauth version</td><td><code>django-allauth==65.21.0</code> (pinned in <code>backend/requirements.txt:5</code>)</td></tr>
+        <tr><td>TOTP library present?</td><td><span class="badge badge-missing">Absent</span> &mdash; <code>django-two-factor-auth</code> is not in <code>requirements.txt</code>; however allauth 65.21.0 ships a built-in <code>allauth.mfa</code> module (verified from wheel inspection).</td></tr>
+        <tr><td>Allauth MFA app in INSTALLED_APPS?</td><td><span class="badge badge-missing">Absent</span> &mdash; <code>allauth.mfa</code> is not present in <code>backend/config/settings/base.py:32-35</code>.</td></tr>
+        <tr><td>Primary evidence</td><td>Wheel source inspected (<code>django-allauth==65.21.0</code>) at <code>allauth/mfa/</code> (apps.py, models.py, adapter.py, app_settings.py, totp/internal/auth.py, totp/internal/flows.py, recovery_codes/internal/flows.py, urls.py, and <code>allauth/headless/mfa/</code>); project configuration at <code>backend/config/settings/base.py</code>, <code>backend/config/urls.py</code>; auth code at <code>apps/accounts/{adapters,models,permissions,urls,views}.py</code> and <code>apps/agents/authentication.py</code>; tests at <code>backend/tests/test_auth_signup_login.py</code>, <code>backend/tests/test_auth_github_oauth.py</code>, <code>backend/tests/test_auth_password_reset.py</code>.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <h4>Branch state note</h4>
+      <p>
+        This worktree is a descendant of <code>feat/github-oauth</code>: the AUTH-04A GitHub OAuth
+        integration is already merged in. That means <code>backend/config/settings/base.py</code>
+        currently includes <strong>not only</strong> <code>allauth.account</code> and <code>allauth.headless</code>
+        <strong> but also</strong> <code>allauth.socialaccount</code> and <code>allauth.socialaccount.providers.github</code>
+        (<code>base.py:33-34</code>). The older AUTH-04A document described socialaccount as absent;
+        <strong>that section no longer applies here</strong>. The AUTH-05A baseline reflects the
+        post-OAuth configuration actually present on this branch.
+      </p>
+    </div>
+
+    <div class="toc">
+      <h3>On this page</h3>
+      <ul>
+        <li><a href="#baseline">2. Current authentication baseline</a></li>
+        <li><a href="#mfa-capabilities">3. Existing django-allauth MFA capabilities and missing project configuration</a></li>
+        <li><a href="#architecture">4. Proposed MFA architecture</a></li>
+        <li><a href="#crypto">5. TOTP cryptography and secret protection</a></li>
+        <li><a href="#enrollment">6. TOTP enrollment and activation</a></li>
+        <li><a href="#login-challenge">7. MFA challenge during password and GitHub OAuth login</a></li>
+        <li><a href="#recovery-replay">8. Recovery codes and replay prevention</a></li>
+        <li><a href="#headless-contracts-verified">9. Verified headless MFA endpoint contracts</a></li>
+        <li><a href="#traditional-endpoints">10. Traditional MFA endpoints and compatibility notes</a></li>
+        <li><a href="#security-decisions">11. Security decisions and recommendations</a></li>
+        <li><a href="#frontend-handoff">12. Frontend handoff requirements</a></li>
+        <li><a href="#security-test-plan">13. Automated security test plan</a></li>
+        <li><a href="#auth05b-checklist">14. AUTH-05B implementation checklist</a></li>
+        <li><a href="#open-questions">15. Resolved decisions (Tech Lead approved)</a></li>
+        <li><a href="#auth05b-acceptance">16. AUTH-05B Acceptance Criteria</a></li>
+        <li><a href="#appendix-config">17. Source-verified configuration reference</a></li>
+      </ul>
+    </div>
+
+    <!-- ===== 2. Current authentication baseline ===== -->
+
+    <h2 id="baseline">2. Current authentication baseline</h2>
+
+    <p>
+      The <code>feat/totp-2fa</code> branch (HEAD <code>986cf4a</code>) is a descendant of
+      <code>feat/github-oauth</code>, so the AUTH-01 (email/password) and AUTH-04A (GitHub OAuth)
+      work is fully integrated. The authentication stack is built on
+      <code>django-allauth==65.21.0</code> with the Headless JSON contract. Two authentication
+      schemes exist and must remain strictly separated:
+    </p>
+
+    <dl>
+      <dt>Agent API Key (machine principal)</dt>
+      <dd>
+        <code>Authorization: Bearer agk_...</code> via
+        <code>backend/apps/agents/authentication.py</code>
+        (<code>AgentKeyAuthentication</code>, <code>authentication.py:49</code>). A 12-character
+        prefix is indexed and used for the initial <code>ApiKey.objects.get(prefix=...)</code>
+        lookup (<code>authentication.py:64</code>, prefix length defined in <code>apps/agents/keys.py</code>);
+        the full key is then verified with a constant-time SHA-256 hash compare
+        (<code>hash_matches(raw_key, api_key.key_hash)</code>, <code>authentication.py:71</code>).
+        Suspended agents and revoked keys are rejected inline (<code>agent__status="active"</code>,
+        <code>revoked_at__isnull=True</code>, <code>authentication.py:64-68</code>); usage is
+        throttled to <code>THROTTLE_AGENT=60/min</code> (<code>REST_FRAMEWORK</code> in
+        <code>base.py:168</code>). This scheme is unaffected by 2FA &mdash; it is machine-to-machine.
+      </dd>
+      <dt>Dashboard Session (browser user)</dt>
+      <dd>
+        Django <code>SessionAuthentication</code> with DRF, backed by
+        <code>django-allauth</code> Headless (<code>allauth.account</code> + <code>allauth.headless</code>).
+        The session cookie carries the dashboard user; <code>OrgMembership</code> roles
+        (<code>admin</code>/<code>approver</code>/<code>viewer</code>, <code>accounts/models.py:34</code>)
+        gate dashboard endpoints via <code>apps/accounts/permissions.py</code>:
+        <code>IsDashboardUser</code> (<code>permissions.py:20</code>),
+        <code>IsApprover</code> (<code>permissions.py:27</code>),
+        <code>IsOrganizationAdmin</code> (<code>permissions.py:34</code>), and
+        <code>IsAuthenticatedOr401</code> (<code>permissions.py:41</code>).
+        <code>APPROVER_ROLES = (ADMIN, APPROVER)</code> (<code>permissions.py:8</code>) is the
+        role set that 2FA enforcement will target.
+      </dd>
+    </dl>
+
+    <h3 id="active-settings">2.1 Active allauth &amp; account settings (from <code>base.py</code>)</h3>
+
+    <table>
+      <thead><tr><th>Setting</th><th>Value</th><th>Location</th></tr></thead>
+      <tbody>
+        <tr><td><code>django-allauth</code></td><td><code>==65.21.0</code></td><td><code>backend/requirements.txt:5</code></td></tr>
+        <tr><td><code>INSTALLED_APPS</code> (auth-relevant)</td><td><code>allauth.account</code> (<code>base.py:32</code>), <code>allauth.socialaccount</code> (<code>base.py:33</code>), <code>allauth.socialaccount.providers.github</code> (<code>base.py:34</code>), <code>allauth.headless</code> (<code>base.py:35</code>); <strong><code>allauth.mfa</code> absent</strong></td><td><code>backend/config/settings/base.py:32-35</code></td></tr>
+        <tr><td><code>AUTH_USER_MODEL</code></td><td><code>accounts.User</code> (UUID PK)</td><td><code>base.py:47</code></td></tr>
+        <tr><td><code>AUTHENTICATION_BACKENDS</code></td><td><code>ModelBackend</code> + <code>allauth.account.auth_backends.AuthenticationBackend</code></td><td><code>base.py:49-52</code></td></tr>
+        <tr><td><code>MIDDLEWARE</code></td><td>Includes <code>allauth.account.middleware.AccountMiddleware</code>; CSRF, Session, Auth, Messages present</td><td><code>base.py:56-65</code> (AccountMiddleware at <code>:63</code>)</td></tr>
+        <tr><td><code>REST_FRAMEWORK</code> auth</td><td><code>AgentKeyAuthentication</code> + <code>SessionAuthentication</code>; JSON renderer; throttles <code>agent=60/min</code>, <code>anon=20/min</code></td><td><code>base.py:158-171</code></td></tr>
+        <tr><td><code>ACCOUNT_LOGIN_METHODS</code></td><td><code>["email"]</code></td><td><code>base.py:201</code></td></tr>
+        <tr><td><code>ACCOUNT_SIGNUP_FIELDS</code></td><td><code>["email*", "password1*", "password2*"]</code></td><td><code>base.py:204</code></td></tr>
+        <tr><td><code>ACCOUNT_EMAIL_VERIFICATION</code></td><td><code>"mandatory"</code></td><td><code>base.py:205</code></td></tr>
+        <tr><td><code>ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED</code></td><td><code>True</code></td><td><code>base.py:206</code></td></tr>
+        <tr><td><code>ACCOUNT_ADAPTER</code></td><td><code>apps.accounts.adapters.CustomAccountAdapter</code> (email-domain allowlist)</td><td><code>base.py:210</code></td></tr>
+        <tr><td><code>SOCIALACCOUNT_ADAPTER</code></td><td><code>apps.accounts.adapters.CustomSocialAccountAdapter</code> (domain allowlist, stores no tokens)</td><td><code>base.py:213</code></td></tr>
+        <tr><td><code>SOCIALACCOUNT_STORE_TOKENS</code></td><td><code>False</code></td><td><code>base.py:216</code></td></tr>
+        <tr><td><code>SOCIALACCOUNT_PROVIDERS</code></td><td><code>{"github": {"APP": {"client_id": ..., "secret": ...}}}</code></td><td><code>base.py:219-227</code></td></tr>
+        <tr><td><code>ACCOUNT_RATE_LIMITS</code></td><td><code>{"reset_password": "3/h/key,20/m/ip"}</code></td><td><code>base.py:233-235</code></td></tr>
+        <tr><td><code>PASSWORD_RESET_TIMEOUT</code></td><td><code>3600</code> (1 hour)</td><td><code>base.py:239</code></td></tr>
+        <tr><td>Session / CSRF cookies</td><td><code>SESSION_COOKIE_HTTPONLY=True</code>, <code>SAMESITE=Lax</code>; <code>CSRF_COOKIE_HTTPONLY=False</code>, <code>SAMESITE=Lax</code></td><td><code>base.py:189-193</code></td></tr>
+        <tr><td>Cache</td><td><code>LocMemCache</code> (<code>"agentgate"</code>)</td><td><code>base.py:136-141</code></td></tr>
+        <tr><td>MFA / TOTP settings</td><td><strong>None defined</strong></td><td>Absent across <code>settings/*.py</code></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="live-endpoints">2.2 Live auth endpoints</h3>
+
+    <p>Headless base path: <code>/api/auth/headless/browser/v1/</code> (mounted at
+    <code>/api/auth/headless/</code> in <code>backend/config/urls.py:61</code>). Custom account
+    endpoints live under <code>/api/auth/</code> (<code>config/urls.py:62</code>). GitHub OAuth
+    provider URLs are mounted under <code>/accounts/</code> (<code>config/urls.py:59</code>) and
+    the allauth socialaccount URLs under <code>/3rdparty/</code> (<code>config/urls.py:60</code>).
+    These are the contracts AUTH-05 extends:</p>
+
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>GET</td><td><code>/api/auth/headless/browser/v1/config</code></td><td>Anonymous</td><td>CSRF bootstrap; sets <code>csrftoken</code> cookie; returns config (login methods, signup flag, by-code flag) and <code>socialaccount.providers</code>.</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/headless/browser/v1/auth/signup</code></td><td>Anonymous</td><td><code>{email, password}</code>; 401 + <code>verify_email</code> flow pending; sends verification code email.</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/headless/browser/v1/auth/email/verify</code></td><td>Anonymous</td><td><code>{key: code}</code>; confirms email (<code>ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION=False</code> so no auto-login).</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/headless/browser/v1/auth/login</code></td><td>Anonymous</td><td><code>{email, password}</code>; 200 on success (sets session), 401 unverified/inactive, 400 wrong password. CSRF required.</td></tr>
+        <tr><td>GET</td><td><code>/api/auth/headless/browser/v1/auth/session</code></td><td>Session</td><td>Returns <code>meta.is_authenticated</code> + user data + <code>flows</code> (pending <code>verify_email</code> stage).</td></tr>
+        <tr><td>DELETE</td><td><code>/api/auth/headless/browser/v1/auth/session</code></td><td>Session</td><td>Logout; CSRF required; 401 afterwards.</td></tr>
+        <tr><td>GET</td><td><code>/accounts/github/login/</code></td><td>Anonymous</td><td>GitHub OAuth entry (server-side redirect).</td></tr>
+        <tr><td>GET</td><td><code>/accounts/github/login/callback/</code></td><td>Anonymous</td><td>GitHub OAuth callback; allauth exchanges code, creates/updates <code>SocialAccount</code>, sets session.</td></tr>
+        <tr><td>GET</td><td><code>/api/auth/user/</code></td><td>Session only</td><td><code>CurrentUserView</code> (<code>accounts/views.py:11</code>); agent keys rejected (401). Returns user + <code>is_email_verified</code> + <code>memberships</code>.</td></tr>
+        <tr><td>POST</td><td><code>/api/auth/logout/</code></td><td>Session + CSRF</td><td><code>LogoutView</code> (<code>accounts/views.py:32</code>); 204; destroys session.</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      Source evidence: <code>backend/tests/test_auth_signup_login.py</code> exercises the full headless
+      flow (signup &rarr; verify-code &rarr; login &rarr; session &rarr; logout) including the CSRF-bootstrap
+      sequence (<code>GET /config</code> then <code>X-CSRFToken</code> header);
+      <code>backend/tests/test_auth_github_oauth.py</code> exercises the GitHub redirect/callback flow;
+      and <code>backend/tests/test_auth_password_reset.py</code> verifies recovery, rate limiting
+      (3/h/key), and CSRF enforcement against allauth 65.21.0.
+    </p>
+
+    <h3 id="data-model">2.3 Relevant data model</h3>
+
+    <p>The existing <code>User</code> model (<code>backend/apps/accounts/models.py:7</code>) extends
+    <code>AbstractUser</code> with a UUID primary key. Organization tenancy is modeled by
+    <code>Organization</code> (<code>models.py:16</code>) and <code>OrgMembership</code>
+    (<code>models.py:31</code>), the latter holding the <code>admin</code>/<code>approver</code>/
+    <code>viewer</code> <code>Role</code> (<code>models.py:34</code>) with a
+    <code>UniqueConstraint(["user", "organization"])</code> (<code>models.py:48</code>). There is
+    <strong>no</strong> 2FA/authenticator model in any <code>apps/</code> package &mdash; none is
+    required if allauth&rsquo;s own <code>allauth.mfa.Authenticator</code> is used (see &sect;3).</p>
+
+    <!-- ===== 3. Existing django-allauth MFA capabilities ===== -->
+
+    <h2 id="mfa-capabilities">3. Existing django-allauth MFA capabilities and missing project configuration</h2>
+
+    <p>
+      AUTH-05 was originally scoped (per <code>docs/implementation-plan.html:135</code> and
+      <code>docs/authentication-architecture.html:687</code>) around adding
+      <code>django-two-factor-auth</code> (built on <code>django-otp</code>) as a second library.
+      However, <strong>django-allauth 65.21.0 already ships a built-in MFA module</strong>
+      (<code>allauth.mfa</code>), verified by direct inspection of the installed wheel. Because the
+      project already standardizes on allauth for every other auth surface (Headless JSON,
+      email verification, social login, account recovery), reusing <code>allauth.mfa</code> keeps a
+      single auth framework and a single session model &mdash; it is the path taken by this
+      checkpoint unless the Tech Lead rules otherwise (see &sect;15, Q1).
+    </p>
+
+    <h3 id="mfa-capabilities-table">3.1 What <code>allauth.mfa</code> provides (verified from wheel)</h3>
+
+    <table>
+      <thead><tr><th>Capability</th><th>allauth 65.21.0 detail</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td>App / activation</td><td><code>MFAConfig</code> (<code>name="allauth.mfa"</code>); activated simply by adding <code>allauth.mfa</code> to <code>INSTALLED_APPS</code>: <code>MFA_ENABLED = apps.is_installed("allauth.mfa")</code>.</td><td><code>allauth/mfa/apps.py</code>; <code>allauth/app_settings.py:37</code></td></tr>
+        <tr><td>Data model</td><td><code>Authenticator</code> (FK &rarr; <code>User</code>, <code>type</code> &epsilon; {totp, recovery_codes, webauthn}, <code>JSONField</code> <code>data</code>, <code>last_used_at</code>); <code>UniqueConstraint(["user","type"])</code> for totp &amp; recovery_codes.</td><td><code>allauth/mfa/models.py:24-50</code>; migrations <code>0001_initial</code>, <code>0002_authenticator_timestamps</code>, <code>0003_authenticator_type_uniq</code></td></tr>
+        <tr><td>Headless URLs (auto-mounted)</td><td>Conditional include in <code>allauth/headless/urls.py</code>: when <code>MFA_ENABLED</code>, headless MFA URLs are appended to the same <code>/api/auth/headless/{browser,app}/v1/</code> namespace.</td><td><code>allauth/headless/urls.py:26-34</code>; <code>allauth/headless/mfa/urls.py</code></td></tr>
+        <tr><td>Headless MFA endpoints</td><td><code>2fa/authenticate</code>, <code>2fa/reauthenticate</code>, <code>2fa/trust</code> (only when <code>MFA_TRUST_ENABLED</code> &amp; browser client), <code>totp</code> (<code>ManageTOTPView</code>), <code>recovery-codes</code> (<code>ManageRecoveryCodesView</code>), <code>webauthn</code> (only when <code>"webauthn" &epsilon; SUPPORTED_TYPES</code>).</td><td><code>allauth/headless/mfa/urls.py</code>; views <code>allauth/headless/mfa/views.py:58,71,83,90,127,147</code></td></tr>
+        <tr><td>TOTP algorithm</td><td>RFC 4226/6288 HOTP, HMAC-SHA1, default 6 digits / 30s; tolerance <code>MFA_TOTP_TOLERANCE=0</code>; <strong>pure stdlib</strong> implementation (<code>hmac</code>, <code>hashlib</code>, <code>struct</code>, <code>base64</code>, <code>secrets</code>). <strong>No <code>pyotp</code> dependency.</strong></td><td><code>allauth/mfa/totp/internal/auth.py:25,50,76</code></td></tr>
+        <tr><td>Secret generation</td><td><code>generate_totp_secret()</code> &rarr; <code>secrets.token_bytes(20)</code> (160-bit) &rarr; Base32.</td><td><code>allauth/mfa/totp/internal/auth.py:25-27</code></td></tr>
+        <tr><td>QR / provisioning URI</td><td><code>build_totp_url()</code> emits <code>otpauth://totp/{label}?secret=...&amp;issuer=...</code>; <code>build_totp_svg()</code> renders an <code>qrcode</code> SVG.</td><td><code>allauth/mfa/adapter.py:87,90-96</code></td></tr>
+        <tr><td>Recovery codes</td><td><code>auto_generate_recovery_codes()</code> (auto-invoked on TOTP activation); <code>MFA_RECOVERY_CODE_COUNT=10</code>, <code>MFA_RECOVERY_CODE_DIGITS=8</code> by default.</td><td><code>allauth/mfa/recovery_codes/internal/flows.py</code>; <code>app_settings.py:49-60</code>; triggered from <code>activate_totp</code></td></tr>
+        <tr><td>Secret at rest (default)</td><td><code>DefaultMFAAdapter.encrypt()</code> is a <strong>no-op</strong>: returns the secret in plaintext. Secrets land in <code>Authenticator.data</code> cleartext unless overridden.</td><td><code>allauth/mfa/adapter.py:106-116</code></td></tr>
+        <tr><td>Replay protection</td><td><code>validate_code()</code> calls <code>_mark_code_used()</code>, which uses <code>cache.add()</code> with a per-user, per-code key and <code>timeout=TOTP_PERIOD</code> &mdash; each 6-digit code is consumable once per window.</td><td><code>allauth/mfa/totp/internal/auth.py:101-116</code></td></tr>
+        <tr><td>Reauthentication gate</td><td><code>MFA_REAUTHENTICATION_REQUIRED=True</code> default; enrollment/deactivation call <code>raise_if_reauthentication_required</code>.</td><td><code>allauth/mfa/app_settings.py:45-46</code>; <code>allauth/mfa/totp/internal/flows.py:23,47</code></td></tr>
+        <tr><td>Trust ("remember this device")</td><td><code>MFA_TRUST_ENABLED=False</code> default; when on, sets <code>allauth.mfa.trust</code> cookie (defaults mirror <code>SESSION_COOKIE_*</code>).</td><td><code>allauth/mfa/app_settings.py:130-179</code></td></tr>
+        <tr><td>Dev/test bypass</td><td><code>MFA_TOTP_INSECURE_BYPASS_CODE</code> &mdash; honored <strong>only when <code>settings.DEBUG=True</code></strong> (raises <code>ImproperlyConfigured</code> otherwise).</td><td><code>allauth/mfa/app_settings.py:87-100</code></td></tr>
+        <tr><td>Runtime deps (extra)</td><td>The <code>mfa</code> extra requires <code>qrcode&lt;9</code> (QR rendering) and <code>fido2&lt;3</code> (WebAuthn only). No <code>pyotp</code>.</td><td>Wheel <code>METADATA</code> (<code>Requires-Dist: ... extra == "mfa"</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>allauth mfa is per-user, not role-based</h4>
+      <p>
+        allauth&rsquo;s MFA enforces a second factor <strong>only against users who have enrolled</strong>
+        an authenticator &mdash; it does not natively gate by organization role. The project&rsquo;s
+        acceptance criteria (<code>authentication-architecture.html:697-698</code>) require that
+        <code>admin</code>/<code>approver</code> roles be <strong>required</strong> to enroll and to
+        pass a second factor. That role-based enforcement is <strong>not provided out of the box</strong>
+        and is a deliberate project responsibility (see &sect;2.3 and &sect;4).
+      </p>
+    </div>
+
+    <h3 id="mfa-missing-config">3.2 Missing project configuration</h3>
+
+    <p>
+      Verified against <code>backend/config/settings/base.py</code> (<code>base.py:32-35</code> installs
+      <code>allauth.account</code>, <code>allauth.socialaccount</code>, <code>allauth.socialaccount.providers.github</code>,
+      <code>allauth.headless</code> &mdash; but <strong>not</strong> <code>allauth.mfa</code>):
+    </p>
+
+    <table>
+      <thead><tr><th>Item</th><th>Current state</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>INSTALLED_APPS</code></td><td>No <code>allauth.mfa</code></td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td><code>MFA_ADAPTER</code></td><td>Not defined &rarr; allauth&rsquo;s default plaintext <code>encrypt()</code> would apply</td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td><code>MFA_REAUTHENTICATION_REQUIRED</code> / <code>MFA_SUPPORTED_TYPES</code> / <code>MFA_TOTP_*</code> / <code>MFA_TRUST_ENABLED</code></td><td>No <code>MFA_*</code> settings anywhere in <code>settings/*.py</code></td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td><code>qrcode</code> dependency</td><td>Not in <code>backend/requirements.txt</code> (would arrive via the <code>[mfa]</code> extra)</td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td>Headless MFA URLs</td><td>Not mounted (auto-mounted by allauth once the app is installed &mdash; URL change <em>not</em> required)</td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td>Role-based 2FA enforcement</td><td>None &mdash; no middleware/view gate that forces <code>admin</code>/<code>approver</code> through a second factor</td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td>Custom MFA model in <code>apps</code></td><td>None &mdash; none needed if allauth&rsquo;s <code>Authenticator</code> is reused</td><td><span class="badge badge-na">N/A (delegated to allauth)</span></td></tr>
+        <tr><td><code>TOTP_ENABLED</code> env var</td><td>Referenced by earlier planning (<code>deployment-readiness.html:290</code>) but <strong>not implemented</strong>; allauth has no single on/off toggle &mdash; MFA is enabled purely by the app&rsquo;s presence in <code>INSTALLED_APPS</code></td><td><span class="badge badge-missing">Absent</span></td></tr>
+        <tr><td>TOTP env vars in <code>.env.example</code></td><td>None for 2FA/MFA (<code>backend/.env.example</code> only has GitHub OAuth entries)</td><td><span class="badge badge-missing">Absent</span></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>Recovery code length &mdash; Q3 resolved</h4>
+      <p>
+        Earlier planning documents (<code>authentication-architecture.html:699</code>,
+        <code>implementation-plan.html:140</code>) specified recovery codes as <strong>20 characters
+        each</strong>. Tech Lead Decision 10 (Q3 APPROVED) confirms <strong>8 digits</strong> per code
+        (<code>MFA_RECOVERY_CODE_DIGITS=8</code>, allauth default, <code>app_settings.py:60</code>). The
+        count remains at the default 10 (<code>MFA_RECOVERY_CODE_COUNT=10</code>). Both the count and
+        length are configurable if needed in a future revision.
+      </p>
+    </div>
+
+    <!-- ===== 4. Proposed MFA architecture ===== -->
+
+    <h2 id="architecture">4. Proposed MFA architecture</h2>
+
+    <h3 id="framework-choice">4.1 Framework choice: allauth.mfa, not django-two-factor-auth</h3>
+
+    <p>
+      The original AUTH-05 spec (see <code>authentication-architecture.html:687</code> and
+      <code>implementation-plan.html:135</code>) recommended adding <code>django-two-factor-auth</code>
+      (built on <code>django-otp</code>) as a second auth library. That recommendation predates
+      the discovery that <strong>django-allauth 65.21.0 already ships a self-contained
+      <code>allauth.mfa</code> module</strong> providing TOTP + recovery codes + a Headless SPA
+      API (verified from the wheel). Reusing it avoids running two MFA implementations in one
+      project, which would conflict on:
+    </p>
+
+    <ul>
+      <li>The session model &mdash; <code>django-two-factor-auth</code> manages its own
+          <code>2fa</code> session keys and its own middleware; allauth mfa integrates with the
+          existing allauth session + <code>AccountMiddleware</code> already on this branch.</li>
+      <li>URL namespace &mdash; the project mounts allauth headless at <code>/api/auth/headless/</code>
+          (<code>config/urls.py:61</code>); allauth mfa Headless URLs auto-attach to that same
+          namespace, whereas <code>django-two-factor-auth</code> would add a parallel <code>/2fa/</code> mount.</li>
+      <li>The import-linter contract <code>engine-is-pure</code> (<code>backend/.importlinter</code>)
+          and the PayPal-isolation contract are unaffected either way, but a single auth framework
+          keeps <code>apps.accounts</code> as the sole integration boundary.</li>
+    </ul>
+
+    <p>
+      Recommended default: <strong>enable <code>allauth.mfa</code></strong> (the Tech Lead must
+      confirm this over <code>django-two-factor-auth</code> &mdash; see &sect;15 Q1). If the Tech
+      Lead insists on <code>django-two-factor-auth</code>, the remainder of this section does not
+      apply and the AUTH-05 plan must be re-derived from <code>implementation-plan.html:135</code>.
+    </p>
+
+    <h3 id="activation">4.2 Activation &amp; app wiring</h3>
+
+    <p>To activate allauth mfa, add the app to <code>INSTALLED_APPS</code> in
+    <code>backend/config/settings/base.py:32-35</code>:</p>
+
+    <pre><code>"allauth.mfa",</code></pre>
+
+    <p>
+      Activation is then automatic &mdash; <code>MFA_ENABLED = apps.is_installed("allauth.mfa")</code>
+      (<code>allauth/app_settings.py:37</code>) flips on, which:
+    </p>
+
+    <ul>
+      <li>Makes allauth create the <code>Authenticator</code> tables via its own migrations
+          (<code>0001_initial</code>, <code>0002_authenticator_timestamps</code>,
+          <code>0003_authenticator_type_uniq</code>). The first <code>makemigrations --check --dry-run</code>
+          CI step (<code>.github/workflows/ci.yml</code>) will surface these as new migrations to
+          commit; <strong>no custom migration</strong> is written in <code>apps.accounts</code>.</li>
+      <li>Auto-mounts the Headless MFA URL namespace (<code>2fa/authenticate</code>,
+          <code>2fa/reauthenticate</code>, <code>totp</code>, <code>recovery-codes</code>) onto the
+          existing <code>/api/auth/headless/browser/v1/</code> mount (&copy; <code>config/urls.py:61</code>).
+          <strong>No change to <code>config/urls.py</code> is required.</strong></li>
+      <li>Registers the <code>MFA_CHECKS</code> system checks (<code>allauth/mfa/checks.py</code>).</li>
+    </ul>
+
+    <h3 id="adapter">4.3 Custom MFA adapter &mdash; secret protection at rest</h3>
+
+    <p>
+      This is the single most important code decision in AUTH-05. allauth&rsquo;s built-in adapter
+      (<code>DefaultMFAAdapter</code>) leaves TOTP secrets on disk in <strong>cleartext</strong>:
+      <code>encrypt()</code> is a no-op returning the input unchanged, so <code>Authenticator.data</code>
+      (a <code>JSONField</code>) would store <code>{"secret": "JBSWY3DPEHPK3PXP"}</code> verbatim
+      (<code>allauth/mfa/adapter.py:106-116</code>). A database read or a backup leak would expose
+      every user&rsquo;s TOTP secret.
+    </p>
+
+    <p>The project <strong>must</strong> override the adapter (setting
+    <code>MFA_ADAPTER = "apps.accounts.adapters.CustomMFAAdapter"</code>) and implement at-rest
+    encryption. The proposed shape, mirroring the existing <code>CustomAccountAdapter</code> /
+    <code>CustomSocialAccountAdapter</code> in <code>apps/accounts/adapters.py:14,34</code>:</p>
+
+    <pre><code>from allauth.mfa.adapter import DefaultMFAAdapter
+from django.conf import settings
+from cryptography.fernet import Fernet  # AES-256-CBC + HMAC-SHA256, keyed from an env-provided value
+
+class CustomMFAAdapter(DefaultMFAAdapter):
+    def encrypt(self, text):
+        return get_fernet().encrypt(text.encode()).decode()
+
+    def decrypt(self, encrypted_text):
+        return get_fernet().decrypt(encrypted_text.encode()).decode()</code></pre>
+
+    <dl>
+      <dt>Key source</dt>
+      <dd>
+        <code>settings.MFA_ENCRYPTION_KEY</code> &mdash; a <code>urlsafe_b64encode</code> Fernet key
+        read from the environment (e.g. <code>MFA_ENCRYPTION_KEY=...</code> in <code>.env</code>,
+        absent from <code>.env.example</code> today). It must be <strong>independent</strong> of
+        <code>DJANGO_SECRET_KEY</code>: a secret-key rotation currently invalidates sessions but
+        must not silently invalidate MFA (which would force every 2FA user to re-enroll). This
+        mirrors the existing pattern where <code>GITHUB_OAUTH_SECRET</code> is env-only
+        (<code>base.py:220</code>).
+      </dd>
+      <dt>Migration of existing secrets</dt>
+      <dd>
+        Because the no-op is only in effect before deployment, any secrets enrolled during a
+        transition window must be re-encrypted. A one-off data migration is the responsibility of
+        AUTH-05B; the model itself does not change.
+      </dd>
+      <dt>Recovery codes</dt>
+      <dd>
+        Recovery codes are <strong>not</strong> stored individually. allauth derives them
+        deterministically from a per-user <code>seed</code> (320-bit, <code>secrets.token_hex(40)</code>)
+        via HMAC-SHA1, and tracks consumption with a <code>used_mask</code> bitmask
+        (<code>recovery_codes/internal/auth.py:28-37,44-67,69-77</code>). The seed is persisted in
+        <code>Authenticator.data["seed"]</code> <strong>and is itself passed through the adapter&rsquo;s
+        <code>encrypt()</code></strong> (<code>auth.py:32</code>) &mdash; so the same Fernet at-rest
+        protection that secures the TOTP secret also protects the recovery-code seed. The adapter hook
+        therefore secures <em>both</em> authenticator types, not just TOTP.
+      </dd>
+    </dl>
+
+    <h3 id="settings">4.4 Recommended <code>MFA_*</code> settings additions</h3>
+
+    <p>Add to <code>backend/config/settings/base.py:210</code> (next to the other allauth settings).
+    All keys share the <code>MFA_</code> prefix (see <code>allauth/mfa/app_settings.py</code>,
+    <code>_app_settings = AppSettings("MFA_")</code> at <code>:182</code>):</p>
+
+    <table>
+      <thead><tr><th>Setting</th><th>Recommended value</th><th>Why</th><th>Default (allauth)</th></tr></thead>
+      <tbody>
+        <tr><td><code>MFA_ADAPTER</code></td><td><code>apps.accounts.adapters.CustomMFAAdapter</code></td><td>Encrypt TOTP secrets at rest (see &sect;4.3).</td><td><code>allauth.mfa.adapter.DefaultMFAAdapter</code> (no-op)</td></tr>
+        <tr><td><code>MFA_REAUTHENTICATION_REQUIRED</code></td><td><code>True</code></td><td>Require a fresh primary login before enroll/deactivate.</td><td><code>True</code></td></tr>
+        <tr><td><code>MFA_SUPPORTED_TYPES</code></td><td><code>["totp", "recovery_codes"]</code></td><td>TOTP + backup codes; omit <code>"webauthn"</code> for v1 (avoids <code>fido2</code> dep).</td><td><code>["recovery_codes", "totp"]</code></td></tr>
+        <tr><td><code>MFA_TOTP_PERIOD</code></td><td>30</td><td>Standard 30s step (RFC 6238).</td><td>30</td></tr>
+        <tr><td><code>MFA_TOTP_DIGITS</code></td><td>6</td><td>Standard 6-digit codes.</td><td>6</td></tr>
+         <tr><td><code>MFA_TOTP_TOLERANCE</code></td><td>0</td><td>Strict RFC 6238: exactly one code per 30s window. Clock skew is an operations-layer concern.</td><td>0</td></tr>
+         <tr><td><code>MFA_RECOVERY_CODE_COUNT</code></td><td>10</td><td>Match the acceptance criterion in <code>authentication-architecture.html:699</code>.</td><td>10</td></tr>
+         <tr><td><code>MFA_RECOVERY_CODE_DIGITS</code></td><td>8</td><td>allauth default; reconciled from the 20-char spec (<code>authentication-architecture.html:699</code>, <code>implementation-plan.html:140</code>); Tech Lead Decision 10 (&sect;15 Q3) confirms 8 digits.</td><td>8</td></tr>
+         <tr><td><code>MFA_TRUST_ENABLED</code></td><td><code>False</code></td><td>No &ldquo;remember device&rdquo; cookie for v1 &mdash; admin/approver re-enter TOTP each login.</td><td><code>False</code></td></tr>
+         <tr><td><code>ACCOUNT_RATE_LIMITS["login_failed"]</code></td><td>Review default (<code>10/m/ip, 5/300s/key</code>); tune per AUTH-05B deployment needs.</td><td>MFA <code>check_rate_limit</code> calls <code>allauth.core.ratelimit</code> which hard-codes <code>app="allauth.account"</code>; MFA challenge failures consume this entry, not <code>MFA_RATE_LIMITS</code>.</td><td><code>10/m/ip, 5/300s/key</code></td></tr>
+         <tr><td><code>MFA_TOTP_ISSUER</code></td><td><code>"AgentGate"</code></td><td>Pin issuer for stable app naming in authenticator apps.</td><td>Site name (from <code>Django Site</code>)</td></tr>
+         <tr><td><code>MFA_RECOVERY_CODES_SHOW_ONCE</code></td><td><code>True</code></td><td>Mask recovery codes after first view; admin/approver users re-fetch codes if needed.</td><td><code>False</code></td></tr>
+       </tbody>
+    </table>
+
+    <h3 id="headless-contracts">4.5 Headless MFA endpoint contracts (allauth 65.21.0)</h3>
+
+    <p>
+      These endpoints are <strong>not implemented today</strong> &mdash; they are absent because
+      <code>allauth.mfa</code> is not in <code>INSTALLED_APPS</code>. They appear automatically once
+      the app is added (see &sect;4.2). All live under the existing headless mount
+      <code>/api/auth/headless/browser/v1/</code> (<code>config/urls.py:61</code>) and are
+      <strong>session-authenticated</strong> (not agent-key). Field names are taken from the allauth
+      Headless MFA input classes (<code>allauth/headless/mfa/inputs.py:18,26,30</code>).
+    </p>
+
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Request body</th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>GET</td><td><code>/2fa/authenticate</code></td><td>Session (pending 2FA)</td><td>&mdash;</td><td>Second-factor challenge; allauth returns the pending <code>AuthenticateStage</code>.</td></tr>
+        <tr><td>POST</td><td><code>/2fa/authenticate</code></td><td>Session (pending 2FA)</td><td><code>{"code": "&lt;6-digit TOTP&gt;"}</code></td><td>Verifies the code (<code>AuthenticateView.post</code>, <code>allauth/headless/mfa/views.py:63</code>); on success calls <code>post_authentication</code> which completes the login session.</td></tr>
+        <tr><td>GET</td><td><code>/totp</code></td><td>Session (authenticated)</td><td>&mdash;</td><td>If no TOTP enrolled: returns <code>TOTPNotFoundResponse</code> carrying the session-stashed <code>secret</code> and the <code>otpauth://totp/...</code> URL for QR display (<code>ManageTOTPView.get</code>, <code>views.py:93-103</code>). If enrolled: returns the existing authenticator.</td></tr>
+        <tr><td>POST</td><td><code>/totp</code></td><td>Session (authenticated)</td><td><code>{"code": "&lt;6-digit TOTP&gt;"}</code></td><td>Activates TOTP (<code>ActivateTOTPForm</code>, <code>code</code> field) and <strong>auto-generates recovery codes</strong> within <code>activate_totp</code> (<code>totp/internal/flows.py:41</code>); returns the persisted authenticator.</td></tr>
+        <tr><td>DELETE</td><td><code>/totp</code></td><td>Session (authenticated)</td><td>&mdash;</td><td>Deactivates the user&rsquo;s TOTP via <code>deactivate_totp</code> (requires reauthentication if <code>MFA_REAUTHENTICATION_REQUIRED=True</code>).</td></tr>
+        <tr><td>GET</td><td><code>/recovery-codes</code></td><td>Session (authenticated)</td><td>&mdash;</td><td>Lists recovery codes (hashed; only counts/shown once if <code>MFA_RECOVERY_CODES_SHOW_ONCE</code>).</td></tr>
+        <tr><td>POST</td><td><code>/recovery-codes</code></td><td>Session (authenticated)</td><td>empty</td><td>Regenerates recovery codes (<code>GenerateRecoveryCodesForm</code> &mdash; no fields; <code>inputs.py:30</code>).</td></tr>
+        <tr><td>POST</td><td><code>/2fa/reauthenticate</code></td><td>Session (authenticated)</td><td><code>{"code": "&lt;6-digit&gt;"}</code></td><td>Re-run a second factor for a sensitive action without a full logout.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>Enrollment secret reaches the browser &mdash; by design</h4>
+      <p>
+        During enrollment, <code>GET /totp</code> returns the raw <code>secret</code> to the
+        authenticated SPA (along with the <code>otpauth://</code> URL) so the user can scan a QR or
+        enter it manually into an authenticator app. This is inherent to TOTP provisioning; the
+        secret is only <em>persisted</em> (and, post-4.3, encrypted) once the user submits a valid
+        verification <code>code</code>. Transport confidentiality therefore depends entirely on
+        HTTPS end-to-end (the Caddy TLS termination).
+      </p>
+    </div>
+
+    <h3 id="role-enforcement">4.6 Role-based 2FA enforcement (the project responsibility)</h3>
+
+    <p>
+      allauth mfa is <strong>opt-in per user</strong>: it challenges users who <em>have</em> enrolled
+      an authenticator, but it cannot require that a given user enroll, and it knows nothing about
+      the project&rsquo;s <code>admin</code>/<code>approver</code> roles. The acceptance criteria in
+      <code>authentication-architecture.html:691,698</code> ("2FA required for admin/approver login")
+      therefore need a project layer on top. Proposed approach:
+    </p>
+
+    <ol>
+      <li><strong>TOTP challenge is native allauth (no project flag).</strong> When a user who has
+          enrolled an authenticator logs in (password, &sect;2.2, or GitHub OAuth, &sect;7.1), the
+          allauth <code>LoginStageController</code> runs <code>resume_login()</code>
+          (<code>account/internal/flows/login.py:128</code>) &rarr; <code>ctrl.handle()</code>
+          (<code>account/stages.py:117-144</code>). The <code>AuthenticateStage._should_handle()</code>
+          (<code>allauth/mfa/stages.py:28-39</code>) detects the enrolled <code>Authenticator</code> via
+          <code>is_mfa_enabled()</code> (<code>allauth/mfa/adapter.py:124-133</code>) and returns a
+          redirect to <code>mfa_authenticate</code>; the controller then <strong>stashes the login</strong>
+          under <code>account_login</code> (<code>stash_login</code>,
+          <code>account/internal/stagekit.py:65-66</code>) and <strong>does not call
+          <code>adapter.login()</code></strong>. The user is therefore
+          <code>request.user.is_authenticated == False</code> until <code>POST /2fa/authenticate</code>
+          succeeds, at which point <code>stage.exit()</code> &rarr; <code>resume_login</code> &rarr;
+          <code>adapter.login()</code> (<code>login.py:140</code>) is the only point the session is
+          completed. The SPA observes this pending state from the login response
+          (<code>flows: [{"id":"mfa_authenticate","is_pending":true,...}]</code>, &sect;7.3),
+          <strong>not</strong> from a project-defined session key.</li>
+      <li><strong>Auth-state distinction (no parallel flag needed).</strong> There are exactly three
+          meaningful states, all derivable from allauth primitives:
+          <table>
+            <thead><tr><th>State</th><th>Detection (source-anchored)</th></tr></thead>
+            <tbody>
+              <tr><td>MFA pending during login</td><td>
+                <code>not request.user.is_authenticated</code> <strong>and</strong>
+                <code>get_pending_stage(request)</code> (<code>allauth.account.internal.stagekit:17</code>)
+                returns the <code>mfa_authenticate</code> stage; headless:
+                <code>AuthenticationResponse.meta.is_authenticated == false</code> plus a pending
+                <code>mfa_authenticate</code> flow (&sect;7.3).
+              </td></tr>
+              <tr><td>Fully authenticated, MFA enrolled</td><td>
+                <code>request.user.is_authenticated</code> <strong>and</strong>
+                <code>is_mfa_enabled(request.user)</code> is <code>True</code>
+                (<code>allauth/mfa/utils.py:16</code>).
+              </td></tr>
+              <tr><td>Fully authenticated, privileged, <em>not</em> enrolled (enrollment required)</td><td>
+                <code>request.user.is_authenticated</code> <strong>and</strong>
+                <code>not is_mfa_enabled(request.user)</code> <strong>and</strong> the user holds
+                <code>role &epsilon; (admin, approver)</code> (<code>OrgMembership.Role</code>,
+                <code>accounts/models.py:34</code>).
+              </td></tr>
+            </tbody>
+          </table>
+          <code>record_authentication()</code> (<code>account/internal/flows/login.py:39-52</code>)
+          notes the method used (<code>password</code>/<code>socialaccount</code>/<code>mfa</code>) but,
+          per its own docstring, <strong>does not imply full sign-in</strong> &mdash; it is present even
+          when the 2FA challenge later fails.</li>
+      <li><strong>Mandatory enrollment &mdash; role policy, not a session flag.</strong> allauth cannot
+          *require* enrollment by role: it only challenges users who already enrolled. The project
+          enforces mandatory enrollment for privileged users in two complementary, allauth-native ways:
+          <ul class="tight">
+            <li><strong>Login-time (optional, UX):</strong> a custom <code>LoginStage</code> subclass
+                (deriving from <code>allauth.account.stages.LoginStage</code>) appended to
+                <code>adapter.get_login_stages()</code> (<code>account/adapter.py:873</code>)
+                <em>after</em> <code>AuthenticateStage</code> (<code>allauth/mfa/stages.py:17</code>).
+                For a privileged user with no enrolled <code>Authenticator</code>, it redirects to
+                <code>GET /account/authenticators/totp</code> while the login stays stashed, so the
+                session is never completed until enrollment succeeds. This rides the existing stage
+                controller &mdash; it <strong>extends</strong> <code>stash_login</code>, it does not
+                duplicate it with a separate flag.</li>
+            <li><strong>Endpoint (authoritative):</strong> a session-based DRF permission,
+                <code>IsMFAEnforced</code>, composed into <code>IsApprover</code> /
+                <code>IsOrganizationAdmin</code> (<code>permissions.py:27,34</code>). It returns
+                <code>False</code> when an authenticated privileged user has
+                <code>is_mfa_enabled(user) == False</code>, so DRF yields
+                <strong>403 Forbidden</strong> with <code>code: "mfa_enrollment_required"</code>
+                (see &sect;4.9.1). The SPA intercepts that 403 and drives the enrollment flow
+                (&sect;12.7). <code>IsDashboardUser</code> (viewer) is unaffected &mdash; 2FA remains
+                optional for viewers.</li>
+          </ul></li>
+      <li><strong>Recovery flow.</strong> Allow <code>POST /2fa/authenticate</code> with a recovery
+          code; allauth&rsquo;s <code>RecoveryCodes.validate_code</code>
+          (<code>recovery_codes/internal/auth.py:107-123</code>) checks the <code>used_mask</code>
+          bitmask, so the same challenge endpoint accepts either a live TOTP or a recovery code.</li>
+    </ol>
+
+    <div class="callout note">
+      <h4>Decision: allauth-native login stages + project role policy (no parallel flag)</h4>
+      <p>
+        The rejected design proposed a separate <code>mfa_second_factor_required</code> session flag
+        toggled by a <code>user_logged_in</code> signal and enforced by an
+        <code>MFAEnforcementMiddleware</code> returning <strong>HTTP 402</strong>. Source verification
+        disproves both choices. (1) The <code>user_logged_in</code> signal fires <em>after</em>
+        <code>adapter.login()</code> inside <code>LoginStageController.handle()</code>
+        (<code>account/stages.py:117-144</code>; <code>login.py:140</code>) &mdash; i.e. <em>after</em>
+        the MFA stage already succeeded &mdash; which is the wrong point to set a "pending 2FA" flag.
+        (2) HTTP 402 has no semantic fit for an MFA gate: it is the "Payment Required" code and is not
+        an allauth contract; the cited <code>authentication-architecture.html:822</code> is superseded.
+      </p>
+      <p>
+        The corrected architecture reuses allauth&rsquo;s own login-stage state (the
+        <code>account_login</code> stash + <code>get_pending_stage()</code>) as the source of truth for
+        the TOTP <em>challenge</em>, and a single <strong>403 <code>mfa_enrollment_required</code></strong>
+        DRF permission (<code>IsMFAEnforced</code>) for <em>mandatory enrollment</em> of
+        admin/approver users. There is <strong>no</strong> custom session flag, <strong>no</strong>
+        <code>MFAEnforcementMiddleware</code>, and <strong>no</strong> HTTP 402. Response contract:
+        <strong>401</strong> for unauthenticated / agent-key requests, <strong>403</strong> for an
+        authenticated privileged user who has not yet enrolled in MFA (&sect;4.9.1, §11.1 D16, §16 AC-06).
+      </p>
+    </div>
+
+    <h3 id="session-trust">4.7 Session &amp; device-trust model (v1)</h3>
+
+    <p>Keep <code>MFA_TRUST_ENABLED=False</code> for AUTH-05A/05B: admin/approver users re-enter a
+    TOTP code (or recovery code) on every login; no long-lived <code>mfa_trusted</code> cookie is
+    issued. The default trust cookie, when later enabled, inherits <code>SESSION_COOKIE_SECURE</code>,
+    <code>SAMESITE</code>, and <code>HTTPONLY</code> (<code>allauth/mfa/app_settings.py:157-179</code>)
+    &mdash; so enabling it later is safe by default, but it widens the replay window, hence deferred.</p>
+
+    <h3 id="caching-replay">4.8 Caching, replay, and the LocMemCache gap</h3>
+
+    <p>allauth&rsquo;s per-code replay defense (<code>_mark_code_used</code> &rarr; <code>cache.add</code>
+    with <code>timeout=TOTP_PERIOD</code>, <code>totp/internal/auth.py:114-116</code>) depends on a
+    <strong>shared</strong> cache. Today <code>CACHES["default"]</code> is <code>LocMemCache</code>
+    (<code>base.py:136-141</code>), which is correct for the single-process dev server but <strong>broken
+    for multi-worker Gunicorn</strong>: each worker holds an independent in-process cache, so a code
+    accepted by worker A can be replayed to worker B. This is a deployment-blocking gap &mdash;
+    see <code>deployment-readiness.html:290</code> &mdash; and should be resolved with a shared cache
+    (Redis) before AUTH-05 ships to production. MFA brute-force rate limiting is active via
+    allauth&rsquo;s own mechanism (see &sect;4.8 for details; <code>MFA_RATE_LIMITS</code> defaults to
+    only <code>webauthn_login</code>).</p>
+
+    <p>
+      allauth&rsquo;s MFA <code>check_rate_limit</code> function (<code>allauth/mfa/base/internal/flows.py:62-76</code>)
+      calls <code>ratelimit.consume(action="login_failed")</code> via the
+      <code>allauth.core.ratelimit</code> compatibility wrapper (<code>allauth/core/ratelimit.py</code>),
+      which <strong>hard-codes <code>app="allauth.account"</code></strong>. This means MFA challenge
+      failures are governed by <code>ACCOUNT_RATE_LIMITS["login_failed"]</code> (default:
+      <code>10/m/ip, 5/300s/key</code>; defined in <code>allauth/account/app_settings.py:268-276</code>),
+      <em>not</em> by <code>MFA_RATE_LIMITS</code>. The <code>MFA_RATE_LIMITS</code> setting
+      (<code>app_settings.py:31-42</code>) only governs the <code>webauthn_login</code> action, which
+      is not mounted in v1 (<code>MFA_SUPPORTED_TYPES</code> excludes <code>"webauthn"</code>).
+      Therefore:
+    </p>
+    <ul>
+      <li>Each failed MFA code attempt against <code>POST /auth/2fa/authenticate</code> increments the
+          <code>login_failed</code> rate-limit counter for that user&rsquo;s key
+          (<code>key=f"mfa-auth-user-{pk}"</code>).</li>
+      <li>After 5 failures per user within 300 seconds, the user is locked out from the MFA challenge.</li>
+      <li>After 10 failures per IP per minute, the IP is rate-limited.</li>
+      <li>On success, <code>ratelimit.clear()</code> is called, resetting the per-user counter.</li>
+    </ul>
+
+    <h3 id="agent-key-separation">4.9 Agent API keys are unaffected</h3>
+
+    <p>2FA is a <strong>human dashboard</strong> control. <code>AgentKeyAuthentication</code>
+    (<code>apps/agents/authentication.py:49</code>, Bearer <code>agk_...</code>) sits first in
+    <code>REST_FRAMEWORK.DEFAULT_AUTHENTICATION_CLASSES</code> (<code>base.py:160-163</code>) and
+    must remain first: agents are machine principals and must never be forced through a second
+    factor. <code>CurrentUserView</code> already refuses agent keys
+    (<code>accounts/views.py:14, authentication_classes=[SessionAuthentication]</code>). The
+    RBAC gate for approvals/policies (<code>IsApprover</code>/<code>IsOrganizationAdmin</code>) is
+    session-only; the agent spend path (<code>apps.agents</code>) continues to operate
+        exclusively on <code>Authorization: Bearer</code>. No change to the agent authentication or
+        throttling (<code>THROTTLE_AGENT=60/min</code>, <code>base.py:168</code>) is in scope.</p>
+
+    <h4 id="drf-mfa-bypass">4.9.1 DRF view-level MFA bypass prevention</h4>
+
+    <p>
+      The role-enforcement permission (&sect;4.6) guards <strong>browser</strong> dashboard routes via
+      session authentication. The DRF layer has a subtlety to defend against: the project's
+      <code>DEFAULT_AUTHENTICATION_CLASSES</code> lists
+      <code>apps.agents.authentication.AgentKeyAuthentication</code> (<code>authentication.py:49</code>)
+      <strong>first</strong>, so DRF uses it exclusively whenever a <code>Authorization: Bearer agk_...</code>
+      header is present &mdash; a machine principal must never satisfy a role gate defined by
+      <code>OrgMembership</code>. The correct control is a session-based permission,
+      <code>IsMFAEnforced</code> (composed into <code>IsApprover</code> /
+      <code>IsOrganizationAdmin</code>, <code>permissions.py:27,34</code>) that requires both:
+    </p>
+
+    <ul>
+      <li><strong>Session principal.</strong> The request authenticated via Django session
+          (<code>SessionAuthentication</code>), not via <code>AgentKeyAuthentication</code>. An
+          <code>Authorization: Bearer</code> request is handled by
+          <code>AgentKeyAuthentication</code>, which returns an <code>AgentPrincipal</code>
+          (<code>authentication.py:39</code>) that carries <strong>no</strong>
+          <code>OrgMembership</code> &mdash; so the permission sees an anonymous
+          <code>request.user</code> and yields <strong>401</strong> on role-gated views. Agent-key
+          callers therefore cannot reach (and cannot bypass) the MFA check.</li>
+      <li><strong>MFA enrolled.</strong> <code>is_mfa_enabled(request.user)</code>
+          (<code>allauth/mfa/utils.py:16</code>; backed by <code>Authenticator.objects.filter(user_id=...)
+          </code>, <code>allauth/mfa/adapter.py:124-133</code>) is <code>True</code>. For an
+          authenticated privileged user who has <strong>not</strong> enrolled, the permission
+          returns <code>False</code> and DRF yields <strong>403 Forbidden</strong> with
+          <code>code: "mfa_enrollment_required"</code>; the SPA routes to enrollment (&sect;12.7).</li>
+    </ul>
+
+    <p>
+      The spend path (<code>apps.agents</code>) is intentionally agent-key-only &mdash; machine
+      principals never pass a second factor &mdash; and is out of scope for MFA: no change to
+      <code>AgentKeyAuthentication</code> or <code>THROTTLE_AGENT=60/min</code>
+      (<code>base.py:168</code>). Sensitive, session-only actions (approval decisions, policy writes,
+      audit-chain verification) bind <code>IsMFAEnforced</code> so an enrolled admin cannot sidestep
+      the second factor with a leaked key.
+    </p>
+
+    <div class="callout note">
+      <h4>Enforcement model</h4>
+      <p>
+        This is <strong>not</strong> a parallel session flag. <code>IsMFAEnforced</code> asks allauth
+        directly: does the authenticated user own an enrolled <code>Authenticator</code>
+        (<code>allauth/mfa/models.py:24-50</code>)? There is no
+        <code>mfa_second_factor_required</code> session key and no separate middleware &mdash;
+        enforcement is a single DRF permission class evaluated per request on privileged views.
+        Because DRF selects <code>AgentKeyAuthentication</code> first on a Bearer request, that
+        request never yields a <code>User</code>, so the permission correctly yields 401 for agent-key
+        callers on role-gated routes. A dedicated test
+        (<code>test_auth_mfa_drf_bypass.py</code>, &sect;14.5) must verify: agent-key &rarr; 401 on
+        <code>IsApprover</code>/<code>IsOrganizationAdmin</code>; authenticated-but-unenrolled
+        privileged user &rarr; 403 <code>mfa_enrollment_required</code>.
+      </p>
+    </div>
+
+    <!-- ===== 5. TOTP cryptography and secret protection ===== -->
+
+    <h2 id="crypto">5. TOTP cryptography and secret protection</h2>
+
+    <h3 id="algorithm">5.1 Algorithm: RFC 4226 HOTP &rarr; RFC 6238 TOTP</h3>
+
+    <p>
+      allauth 65.21.0 implements TOTP <strong>in pure standard library</strong> code (no
+      <code>pyotp</code> dependency &mdash; verified absent from the wheel&rsquo;s
+      <code>Requires-Dist</code>). The construction (<code>allauth/mfa/totp/internal/auth.py</code>):
+    </p>
+
+    <ol>
+      <li><strong>Secret &rarr; counter binding.</strong> <code>hotp_value(secret, counter)</code>
+          (<code>auth.py:50</code>) packs the counter as an 8-byte big-endian integer
+          (<code>struct.pack("&gt;Q", counter)</code>), Base32-decodes the secret, and computes
+          <code>HMAC-SHA1</code>. This is exactly RFC 4226.</li>
+      <li><strong>Dynamic truncation.</strong> <code>offset = hmac[-1] &amp; 0x0F</code>; the 4 bytes
+          at <code>[offset:offset+4]</code> are masked to 31 bits (<code>&amp; 0x7F</code>) and read
+          big-endian (<code>auth.py:56-62</code>).</li>
+      <li><strong>Digit reduction.</strong> <code>value %= 10**TOTP_DIGITS</code> then zero-padded to
+          <code>TOTP_DIGITS</code> (<code>auth.py:63-64,68</code>). Defaults: 6 digits, 30-second
+          step (<code>app_settings.py:67-78</code>).</li>
+      <li><strong>Time windowing.</strong> <code>yield_hotp_counters_from_time()</code>
+          (<code>auth.py:43</code>) yields <code>int(time.time()) // TOTP_PERIOD</code> plus
+          <span><code>[-TOTP_TOLERANCE, +TOTP_TOLERANCE]</code></span> counters, so
+          <code>MFA_TOTP_TOLERANCE=0</code> (<strong>finalized</strong>) accepts exactly one code per
+          30s window. The earlier proposal to raise to <code>1</code> was rejected by the Tech Lead;
+          clock skew >30s is treated as an operations-layer incident, not an MFA config change.</li>
+      <li><strong>Constant-time compare.</strong> each candidate is checked with
+          <code>compare_user_code(actual=code, expected=...)</code> imported from
+          <code>allauth/core/internal/cryptokit.py</code> (<code>auth.py:16,82</code>), preventing
+          timing oracles against the submitted code.</li>
+    </ol>
+
+    <h3 id="secret-generation">5.2 Secret generation &amp; entropy</h3>
+
+    <p>
+      <code>generate_totp_secret()</code> (<code>auth.py:25-27</code>) produces
+      <code>base64.b32encode(secrets.token_bytes(20))</code>: <strong>160 bits of entropy</strong>
+      (20 bytes) rendered as 32 Base32 characters. This exceeds the 112-bit minimum for symmetric
+      authenticators (NIST SP 800-63B &Acirc; 5.1.1.2) and the 128-bit threshold widely cited for
+      TOTP secrets (BIP-0032 / RFC 6238 guidance). <code>secrets</code> is the OS CSPRNG
+      (<code>/dev/urandom</code>), not the <code>random</code> module.
+    </p>
+
+    <h3 id="provisioning">5.3 Provisioning URI &amp; QR code</h3>
+
+    <p>
+      On <code>GET /totp</code> with no existing authenticator, allauth returns a
+      <code>TOTPNotFoundResponse</code> containing <code>meta.secret</code> and
+      <code>meta.totp_url</code> (<code>allauth/headless/mfa/response.py:62-71</code>; emitted by
+      <code>ManageTOTPView.get</code> at <code>views.py:93-103</code>). The URL is built by
+      <code>DefaultMFAAdapter.build_totp_url()</code> (<code>adapter.py:74-87</code>):
+    </p>
+
+    <pre><code>otpauth://totp/AgentGate:alice@example.com?secret=JBSWY3DPEHPK3PXP&amp;issuer=AgentGate</code></pre>
+
+    <p>
+      The <code>issuer</code> defaults to the site name (<code>get_totp_issuer</code>,
+      <code>adapter.py:68-72</code>) &mdash; <strong>should be pinned to <code>"AgentGate"</code>
+      via <code>MFA_TOTP_ISSUER</code></strong> for stable app naming in authenticator apps. The
+      QR is rendered as an inline SVG by <code>build_totp_svg()</code> using the
+      <code>qrcode</code> library (<code>adapter.py:89-96</code>), so no image file round-trips
+      through the backend.
+    </p>
+
+    <h3 id="verification-replay">5.4 Verification, tolerance, and replay defense</h3>
+
+    <p>
+      <code>validate_totp_code(secret, code)</code> (<code>auth.py:76-84</code>) iterates the
+      tolerance window; the <em>first</em> matching counter wins. Crucially, <code>TOTP.validate_code
+      </code> (<code>auth.py:101-109</code>) then calls <code>_mark_code_used(code)</code>, which does
+      a <code>cache.add()</code> on key
+      <code>allauth.mfa.totp.used?user={id}&amp;code={normalized}</code> with <code>timeout=TOTP_PERIOD</code>
+      (<code>auth.py:111-116</code>). Because <code>cache.add</code> is atomic-and-return-false-if-exists,
+      <strong>each 6-digit code can be accepted at most once per 30-second window</strong> &mdash;
+      defending against replay of a captured code within the same window. (See &sect;4.8 for the
+      LocMemCache multi-worker caveat.)
+    </p>
+
+    <h3 id="at-rest">5.5 At-rest protection (the critical gap)</h3>
+
+    <p>
+      The raw TOTP secret is persisted by <code>TOTP.activate()</code> as
+      <code>data={"secret": encrypt(secret)}</code> (<code>auth.py:96</code>), i.e. it passes through
+      the adapter&rsquo;s <code>encrypt()</code>. The built-in default
+      (<code>DefaultMFAAdapter.encrypt</code>, <code>adapter.py:106-111</code>) is a <strong>no-op
+      that returns the plaintext</strong>. With no override, every user&rsquo;s Base32 secret is
+      stored in cleartext inside <code>Authenticator.data</code> on PostgreSQL &mdash; recoverable by
+      anyone with a DB read or a backup.
+    </p>
+
+    <p>The mitigation (proposed in &sect;4.3) is a project <code>CustomMFAAdapter</code>:
+    <code>MFA_ADAPTER = "apps.accounts.adapters.CustomMFAAdapter"</code>, overriding
+    <code>encrypt()</code>/<code>decrypt()</code> with <code>cryptography.fernet.Fernet</code>
+    (AES-256-CBC + HMAC-SHA256, authenticated). Key management:</p>
+
+    <ul>
+      <li><strong>Key source.</strong> <code>MFA_ENCRYPTION_KEY</code> from the environment (Fernet
+          <code>urlsafe_b64encode</code> key). Keep it <strong>out of <code>DJANGO_SECRET_KEY</code></strong>:
+          rotating <code>DJANGO_SECRET_KEY</code> (already done on every new deploy via
+          <code>run.sh:31</code> / <code>OPERATIONS.md</code>) invalidates sessions but must <strong>not</strong>
+          invalidate MFA &mdash; otherwise every enrolled user is forced through re-enrollment.</li>
+      <li><strong>Key rotation.</strong> Fernet supports an ordered <code>MultiFernet</code> key list for
+          zero-downtime rotation; rotate the MFA key independently of the Django secret.</li>
+      <li><strong>Recovery-code seeds.</strong> use the same <code>encrypt()</code> path
+          (<code>recovery_codes/internal/auth.py:32</code>), so a single adapter override covers
+          both authenticator types.</li>
+      <li><strong>Migration.</strong> No schema change is needed; any secret enrolled during the
+          plaintext window must be re-encrypted by a one-off data migration in AUTH-05B.</li>
+    </ul>
+
+    <h3 id="in-transit">5.6 In-transit &amp; enrollment disclosure</h3>
+
+    <p>
+      During enrollment the raw secret is returned to the browser in the
+      <code>TOTPNotFoundResponse</code> (<code>meta.secret</code>, <code>response.py:67</code>) so the
+      user can scan a QR or type it into an authenticator app. This is inherent to TOTP provisioning
+      &mdash; the authenticator app must receive the shared secret &mdash; and is acceptable only
+      under TLS. The secret is stashed in the request session
+      (<code>SECRET_SESSION_KEY = "mfa.totp.secret"</code>, <code>auth.py:22</code>) and cleared
+      on activation (<code>clear_totp_secret</code>, <code>flows.py:42</code>); it is <strong>never</strong>
+      logged (<code>adapters.py</code> logging in <code>apps/accounts/adapters.py:99</code> only logs
+      social-auth errors, not TOTP secrets). The SPA must render the QR and discard the secret
+      without persisting it client-side.
+    </p>
+
+    <h3 id="recovery-codes">5.7 Recovery-code cryptography (backup factor)</h3>
+
+    <p>
+      Recovery codes are <strong>deterministic, not random</strong>: a 320-bit seed
+      (<code>secrets.token_hex(40)</code>, <code>recovery_codes/internal/auth.py:41</code>) is the
+      sole stored value, and each of the <code>MFA_RECOVERY_CODE_COUNT=10</code> codes is
+      <code>HMAC-SHA1(seed, i)</code> truncated to <code>MFA_RECOVERY_CODE_DIGITS=8</code> decimals
+      (<code>auth.py:55-66</code>). Because the derivation is deterministic, the seed alone (encrypted
+      via the adapter, &sect;5.5) protects the entire set; no individual code is stored. Usage is
+      single-use via the <code>used_mask</code> bitmask (<code>auth.py:69-77</code>), checked and
+      mutated under a <code>select_for_update()</code> row lock for the validate path
+      (<code>auth.py:107-112</code>). Comparison uses the same constant-time
+      <code>compare_user_code</code> (<code>auth.py:120</code>).
+    </p>
+
+    <h3 id="bypass">5.8 Test/dev bypass (must never reach prod)</h3>
+
+    <p>
+      <code>MFA_TOTP_INSECURE_BYPASS_CODE</code> (<code>app_settings.py:87-100</code>) returns
+      <code>True</code> for a hardcoded code &mdash; but only when <code>settings.DEBUG is True</code>;
+      otherwise allauth raises <code>ImproperlyConfigured</code>. It is intended for E2E test
+      fixtures only. If it ever appears in <code>.env</code> for a production host, allauth itself
+      refuses to start, which is the desired fail-closed behavior.
+    </p>
+
+    <h3 id="config-discovery">5.9 Frontend discovery</h3>
+
+    <p>
+      Once <code>allauth.mfa</code> is installed, the headless config endpoint advertises 2FA
+      availability to the SPA: <code>GET /api/auth/headless/browser/v1/config</code> returns
+      <code>meta.mfa = {"supported_types": [...], "passkey_login_enabled": bool}</code>
+      (<code>allauth/headless/mfa/response.py:11-18</code>, surfaced via
+      <code>allauth/headless/base/urls.py</code>). The SPA can therefore gate its 2FA UI on this
+      field rather than on a project-level <code>TOTP_ENABLED</code> env var &mdash; removing the
+      need for the <code>TOTP_ENABLED</code> toggle from earlier planning
+      (<code>deployment-readiness.html:290</code>, <code>authentication-architecture.html:808</code>).
+    </p>
+
+    <!-- ===== 6. TOTP enrollment and activation ===== -->
+
+    <h2 id="enrollment">6. TOTP enrollment and activation</h2>
+
+    <p>
+      Enrollment is a three-step headless contract mediated entirely by
+      <code>ManageTOTPView</code> (<code>allauth/headless/mfa/views.py:90</code>) over the
+      <code>allauth.mfa</code> adapter. No project code is required to expose it &mdash; the
+      <code>account/authenticators/totp</code> routes auto-mount once
+      <code>allauth.mfa</code> is in <code>INSTALLED_APPS</code> (see &sect;4.2). All
+      requests are <strong>session-authenticated</strong> (not agent-key &mdash; see &sect;4.9)
+      and require CSRF for state-changing calls (the SPA already performs the
+      <code>GET /config</code> bootstrap, &sect;2.2).
+    </p>
+
+    <table>
+      <thead><tr><th>Step</th><th>Method &amp; path</th><th>Auth</th><th>Request body</th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><code>GET /api/auth/headless/browser/v1/account/authenticators/totp</code></td><td>Session (authenticated)</td><td>&mdash;</td><td>
+            <ul class="tight">
+              <li>If <strong>no</strong> TOTP authenticator:
+                <code>ManageTOTPView.get</code> (<code>views.py:93-102</code>) first calls
+                <code>_validate_can_add_authenticator</code> &rarr;
+                <code>validate_can_add_authenticator</code> (<code>mfa/internal/flows/add.py:24</code>),
+                which rejects users with an <strong>unverified</strong> email address unless
+                <code>MFA_ALLOW_UNVERIFIED_EMAIL=True</code> (default <code>False</code>). It then
+                calls <code>get_totp_secret(regenerate=True)</code>
+                (<code>totp/internal/auth.py:30-36</code>), generating a fresh 160-bit secret via
+                <code>secrets.token_bytes(20)</code> &rarr; Base32 (<code>auth.py:25-27</code>) and
+                stashing it in the request session under
+                <code>mfa.totp.secret</code> (<code>auth.py:22,35</code>). Returns
+                <code>TOTPNotFoundResponse</code> with <code>meta.secret</code> (the raw Base32
+                secret for QR scanning) and <code>meta.totp_url</code>
+                (<code>otpauth://totp/...?secret=...&amp;issuer=...</code>,
+                <code>response.py:62-71</code>).</li>
+              <li>If TOTP <strong>already enrolled</strong>: returns
+                <code>TOTPResponse</code> with the persisted authenticator data &mdash;
+                <strong>no secret</strong> is re-disclosed (<code>views.py:103</code>).</li>
+            </ul>
+          </td></tr>
+        <tr><td>2</td><td><code>POST /api/auth/headless/browser/v1/account/authenticators/totp</code></td><td>Session (authenticated)</td><td><code>{"code": "&lt;6-digit TOTP&gt;"}</code></td><td>
+            <ul class="tight">
+              <li><code>ManageTOTPView.post</code> (<code>views.py:116-118</code>) binds
+                <code>ActivateTOTPInput</code> (<code>inputs.py:26</code> &rarr;
+                <code>ActivateTOTPForm</code>, <code>totp/forms.py:14</code>), whose single field is
+                <code>code</code> with <code>autocomplete="one-time-code"</code>.</li>
+              <li>Form <code>__init__</code> calls
+                <code>get_totp_secret(regenerate=not self.is_bound)</code>
+                (<code>totp/forms.py:25</code>): on a bound POST the <em>stashed</em> secret (from
+                step 1) is reused, not regenerated &mdash; so the code the user scanned must match
+                the secret currently in the session.</li>
+              <li><code>clean_code</code> (<code>totp/forms.py:27-34</code>) calls
+                <code>validate_can_add_authenticator</code>, then
+                <code>check_rate_limit(self.user, error_key="rate_limited")</code>
+                (<code>mfa/base/internal/flows.py:63</code>, key
+                <code>mfa-auth-user-{pk}</code>), then
+                <code>auth.validate_totp_code(self.secret, code)</code>
+                (tolerance-window compare, &sect;5.4). A miss raises the
+                <code>incorrect_code</code> adapter error.</li>
+              <li>On success <code>activate_totp(request, form)</code>
+                (<code>totp/internal/flows.py:19-43</code>):
+                <ol class="tight">
+                  <li><code>raise_if_reauthentication_required(request, app="allauth.mfa")</code>
+                      &mdash; enrollment is blocked if the user has not recently (re)authenticated
+                      (<code>account/internal/flows/reauthentication.py:83</code>, gated by
+                      <code>MFA_REAUTHENTICATION_REQUIRED</code> default <code>True</code>,
+                      <code>mfa/app_settings.py:45</code>).</li>
+                  <li><code>TOTP.activate(user, form.secret)</code> persists the authenticator with
+                      <code>data={"secret": encrypt(secret)}</code> &mdash; the secret passes
+                      through the adapter <code>encrypt()</code> hook (no-op by default, &sect;4.3).</li>
+                  <li><code>auto_generate_recovery_codes(request)</code> (<code>recovery_codes/internal/flows.py:82</code>)
+                      auto-creates a recovery-codes authenticator (10 &times; 8, &sect;8.3).</li>
+                  <li><code>clear_totp_secret(request)</code> (<code>totp/internal/auth.py:39-40</code>)
+                      <strong>pops</strong> <code>mfa.totp.secret</code> from the session so the
+                      raw secret does not linger post-enrollment.</li>
+                  <li><code>transaction.on_commit</code> fires
+                      <code>signals.authenticator_added</code>, a
+                      <code>mfa/messages/totp_activated.txt</code> success message, and a
+                      <code>mfa/email/totp_activated</code> notification email
+                      (<code>adapter.send_notification_mail</code>).</li>
+                </ol>
+              Returns <code>TOTPResponse</code> with the persisted authenticator.</li>
+            </ul>
+          </td></tr>
+        <tr><td>3</td><td><code>DELETE /api/auth/headless/browser/v1/account/authenticators/totp</code></td><td>Session (authenticated)</td><td>&mdash;</td><td>
+            <ul class="tight">
+              <li><code>ManageTOTPView.delete</code> (<code>views.py:120-124</code>) calls
+                <code>deactivate_totp(request, authenticator)</code>
+                (<code>totp/internal/flows.py:46-52</code>).</li>
+              <li><code>raise_if_reauthentication_required(..., app="allauth.mfa")</code>
+                  gates deactivation (<code>flows.py:47</code>).</li>
+              <li><code>delete_and_cleanup</code> (<code>mfa/base/internal/flows.py</code>) deletes
+                  the TOTP authenticator <strong>and</strong> any now-dangling
+                  recovery-codes authenticator that was auto-generated alongside it, then emits
+                  <code>signals.authenticator_removed</code>.</li>
+              <li>On-commit notification: <code>mfa/email/totp_deactivated</code> + success message.
+              Returns <code>AuthenticatorDeletedResponse</code> (204-style, <code>response.py:54-55</code>).</li>
+            </ul>
+          </td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>Enrollment secret reaches the browser &mdash; by design (confirmed in source)</h4>
+      <p>
+        Step 1 returns the raw secret in <code>meta.secret</code>
+        (<code>response.py:67</code>) so the SPA can render the
+        <code>otpauth://</code> URL into a QR (<code>adapter.py:74-87</code>) or present a
+        manual-entry field. The secret is held <em>only</em> in the server session
+        (<code>mfa.totp.secret</code>) and is cleared on activation (<code>clear_totp_secret</code>)
+        &mdash; but it does transit the network, so this leg relies entirely on HTTPS/TLS, as
+        noted in &sect;5.6. The SPA must render the QR and discard the secret client-side
+        (do not write it to localStorage).
+      </p>
+    </div>
+
+    <!-- ===== 7. MFA challenge during password and GitHub OAuth login ===== -->
+
+    <h2 id="login-challenge">7. MFA challenge during password and GitHub OAuth login</h2>
+
+    <p>
+      The two primary-login paths (email/password and GitHub OAuth) do <strong>not</strong> get
+      separate MFA logic. They converge on a single allauth stage controller, so the second-factor
+      challenge applies uniformly once <code>allauth.mfa</code> is enabled. This is verified from
+      the installed source (<code>account/internal/flows/login.py</code> and
+      <code>socialaccount/internal/flows/login.py</code>).
+    </p>
+
+    <h3 id="convergence">7.1 Login convergence point</h3>
+
+    <p>Both flows reduce to <code>resume_login</code> &rarr;
+    <code>LoginStageController.handle()</code>.</p>
+
+    <dl>
+      <dt>Email / password login</dt>
+      <dd>
+        <code>LoginView.post</code> (<code>allauth/headless/account/views.py:142</code>) calls
+        <code>flows.login.perform_password_login</code>
+        (<code>account/internal/flows/login.py:106</code>), which records
+        <code>method="password"</code> and calls <code>perform_login</code>.
+      </dd>
+      <dt>GitHub OAuth login</dt>
+      <dd>
+        The GitHub callback completes in <code>socialaccount/internal/flows/login.py:_login</code>,
+        which first calls <code>record_authentication(request, sociallogin)</code>
+        (<code>socialaccount/internal/flows/login.py:87-94</code>) recording
+        <code>method="socialaccount"</code> with <code>provider</code> &amp; <code>uid</code>,
+        then calls the same <code>perform_login(...)</code>
+        (<code>socialaccount/internal/flows/login.py:25</code>).
+      </dd>
+    </dl>
+
+    <p>
+      <code>perform_login</code> (<code>account/internal/flows/login.py:122</code>) &rarr;
+      <code>resume_login</code> (<code>login.py:128</code>), which constructs a
+      <code>LoginStageController</code> and calls <code>ctrl.handle()</code>
+      (<code>account/stages.py:117</code>). That iterates the stages returned by
+      <code>adapter.get_login_stages()</code> (<code>account/adapter.py:873</code>).
+    </p>
+
+    <h3 id="when-challenge-fires">7.2 When the challenge fires</h3>
+
+    <p>
+      <code>get_login_stages()</code> appends <code>allauth.mfa.stages.AuthenticateStage</code>
+      when <code>allauth_settings.MFA_ENABLED</code> is true
+      (<code>account/adapter.py:879-881</code>). The stage's
+      <code>_should_handle</code> (<code>mfa/stages.py:28-39</code>) returns <code>True</code>
+      iff <strong>all</strong> of:
+    </p>
+
+    <ul>
+      <li>The login has a user (<code>self.login.user is not None</code>).</li>
+      <li>The user has at least one <code>TOTP</code> or <code>WebAuthn</code> authenticator
+          (<code>is_mfa_enabled(user, [TOTP, WEBAUTHN])</code>, <code>adapter.py:124-133</code>).
+          Users with <em>only</em> recovery codes are <strong>not</strong> challenged &mdash;
+          recovery codes are a backup, not a login gate.</li>
+      <li>The login did <strong>not</strong> come from a passwordless/WebAuthn login
+          (<code>did_use_passwordless_login</code> returns False &mdash; a passkey login already
+          satisfies the second factor).</li>
+      <li>The browser is not a trusted device (<code>trust.is_trusted_browser</code> returns False;
+          this is a no-op when <code>MFA_TRUST_ENABLED=False</code>, the v1 default
+          &mdash; see &sect;4.7).</li>
+    </ul>
+
+    <p>
+      Crucially, <code>_should_handle</code> is based purely on <strong>enrolled
+      authenticators</strong>, not on role. The project-level requirement that
+      <code>admin</code>/<code>approver</code> users <em>must</em> enroll (and thus be
+      challenged) is a project responsibility layered above allauth &mdash; see
+      &sect;4.6.
+    </p>
+
+    <h3 id="headless-challenge-contract">7.3 The headless challenge contract</h3>
+
+    <p>
+      When the stage is pending, <code>LoginStageController.handle()</code> stashes the login
+      (via <code>stash_login</code>, <code>account/internal/stagekit.py</code>) and returns an
+      <code>AuthenticationResponse</code> whose HTTP status stays <code>200</code> but whose
+      <code>flows</code> array advertises the pending stage. The SPA discovers the challenge there:
+    </p>
+
+    <pre><code>"flows": [
+  ...
+  { "id": "mfa_authenticate", "is_pending": true, "types": ["totp"] }
+]</code></pre>
+
+    <p>
+      <code>_enrich_mfa_flow</code> (<code>allauth/headless/base/response.py:104-111</code>)
+      populates <code>types</code> by calling <code>adapter.is_mfa_enabled(stage.login.user,
+      types=[typ])</code> for each <code>Authenticator.Type</code>, so the SPA learns exactly
+      which factors the user has enrolled (e.g. <code>["totp"]</code> or
+      <code>["totp", "recovery_codes"]</code>; WebAuthn is listed only when present).
+    </p>
+
+    <p>
+      The SPA then clears any "logged in" UI and renders its 2FA entry, posting the code to:
+    </p>
+
+    <pre><code>POST /api/auth/headless/browser/v1/auth/2fa/authenticate
+Content-Type: application/json
+X-CSRFToken: &lt;csrftoken&gt;
+
+{ "code": "&lt;6-digit TOTP&gt;" }</code></pre>
+
+    <p>
+      Verified handling (<code>allauth/headless/mfa/views.py:58-65</code>):
+    </p>
+
+    <ol>
+      <li><code>AuthenticationStageAPIView.handle</code> (<code>headless/base/views.py:38-48</code>)
+          re-enters the pending stage via <code>LoginStageController.enter(request,
+          MFA_AUTHENTICATE)</code>; if no stage is pending it returns
+          <code>UnauthorizedResponse</code> (401).</li>
+      <li><code>AuthenticateInput</code> (<code>inputs.py:18</code> &rarr;
+          <code>BaseAuthenticateForm</code>, <code>mfa/base/forms.py:13-54</code>) binds the
+          <code>code</code> field. <code>clean_code</code> iterates all of the user's
+          non-WebAuthn authenticators (preferring TOTP as <code>main_auth</code> for failure
+          reporting), calls <code>check_rate_limit(self.user)</code>, then
+          <code>auth.wrap().validate_code(code)</code> on each until one accepts.</li>
+      <li>The <strong>first</strong> accepting authenticator wins; on success
+          <code>post_authentication(request, authenticator)</code> (<code>mfa/base/internal/flows.py:46</code>)
+          calls <code>authenticator.record_usage()</code>, records
+          <code>method="mfa"</code> with <code>{"id", "type", ...}</code> into the session auth
+          records (<code>account/internal/flows/login.py:55-81</code>), and dispatches
+          <code>signals.authenticator_used</code>.</li>
+      <li><code>respond_next_stage()</code> (<code>views.py:52-53</code>) calls
+          <code>stage.exit()</code>, which <code>pop_login</code>s the stashed login and runs
+          <code>resume_login</code> &rarr; <code>adapter.login(request, user)</code>, setting the
+          session cookie &mdash; i.e. the user is now fully authenticated. The response is an
+          <code>AuthenticationResponse</code> with <code>meta.is_authenticated: true</code>.</li>
+    </ol>
+
+    <div class="callout note">
+      <h4>Recovery codes are accepted at the same challenge endpoint</h4>
+      <p>
+        <code>BaseAuthenticateForm.clean_code</code> iterates <strong>all</strong> non-WebAuthn
+        authenticators (<code>base/forms.py:29-32</code>), which includes the
+        <code>recovery_codes</code> type. <code>RecoveryCodes.validate_code</code>
+        (<code>recovery_codes/internal/auth.py:107-123</code>) checks the <code>used_mask</code>
+        bitmask and marks the matched code consumed. So the SPA posts the same
+        <code>{"code": "..."}</code> to <code>/2fa/authenticate</code> whether the user supplies a
+        live TOTP or a backup code &mdash; no separate switch is needed.
+      </p>
+    </div>
+
+    <h3 id="password-reset-mfa">7.4 Password reset and MFA interaction</h3>
+
+    <p>
+      Password reset (<code>POST /auth/password/reset</code> + email verification code) is a
+      <strong>primary</strong> authentication factor, not a second factor. The allauth default is
+      to log the user in on email confirmation (<code>ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION=True</code>),
+      but this project explicitly sets <code>ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION=False</code>
+      (<code>base.py:200</code>), so a user completing password reset is <strong>not</strong>
+      automatically logged in &mdash; they must re-authenticate with their new password.
+    </p>
+
+    <p>
+      Key interaction points with MFA:
+    </p>
+
+    <ol>
+      <li><strong>No MFA challenge during reset.</strong> Password reset flow does not invoke the MFA
+          stage controller. It is gated purely by email possession (the verification code).</li>
+      <li><strong>MFA persists across password reset.</strong> The TOTP secret and recovery-code seed
+          are encrypted with <code>MFA_ENCRYPTION_KEY</code> (independent of
+          <code>DJANGO_SECRET_KEY</code>, &sect;4.3/&sect;5.5). Resetting the password does
+          <strong>not</strong> invalidate MFA enrollment &mdash; the user&rsquo;s TOTP authenticator
+          continues to work after password reset.</li>
+      <li><strong>Compromised password + MFA.</strong> If an attacker obtains the password (e.g. via a
+          breach), they still cannot log in as an MFA-enrolled admin/approver without the TOTP code or
+          a recovery code. This is the primary security benefit of 2FA.</li>
+      <li><strong>Reset of MFA itself.</strong> A user who loses their TOTP app must use a recovery
+          code to log in, then disable and re-enroll TOTP. If all recovery codes are exhausted, an
+          admin must manually revoke the authenticator row (&sect;8.7).</li>
+      <li><strong>Signal: <code>authenticator_reset</code></strong> fires on recovery code regeneration
+          (<code>recovery_codes/internal/flows.py:49</code>), providing an audit trail for
+          reset-related MFA changes.</li>
+    </ol>
+
+    <h3 id="github-oauth-mfa">7.5 GitHub OAuth specifics</h3>
+
+    <p>
+      After the GitHub callback's <code>_login</code> records the
+      <code>method="socialaccount"</code> step (<code>provider</code> = <code>"github"</code>),
+      the same <code>LoginStageController.handle()</code> runs. If the user has enrolled TOTP,
+      the <code>mfa_authenticate</code> stage is pending and the headless login response again
+      advertises it in <code>flows</code>; the user is <strong>not</strong> fully authenticated
+      (no session cookie is set) until they complete <code>POST /auth/2fa/authenticate</code>.
+      Thus a GitHub-OAuth'd admin is no weaker than a password admin: both pause at the second
+      factor. The <code>record_authentication</code> session log will show
+      <code>socialaccount</code> &rarr; <code>mfa</code> in sequence
+      (<code>account/internal/flows/login.py:55-81</code>).
+    </p>
+
+    <h3 id="reauthentication">7.6 Reauthentication (not login)</h3>
+
+    <p>
+      <code>POST /api/auth/headless/browser/v1/auth/2fa/reauthenticate</code>
+      (<code>ReauthenticateView</code>, <code>views.py:71-77</code>) is a separate endpoint for
+      re-running a second factor mid-session for a sensitive action. It uses
+      <code>ReauthenticateInput</code> &rarr; <code>ReauthenticateForm</code>
+      (<code>mfa/base/forms.py:62-64</code>), the same <code>clean_code</code> validator, then
+      calls <code>post_authentication(..., reauthenticated=True)</code>, which tags the auth record
+      with <code>"reauthenticated": True</code> and dispatches
+      <code>signals.authenticator_used(reauthenticated=True)</code>. The response is an
+      <code>AuthenticationResponse</code> confirming the session remains.
+    </p>
+
+    <div class="callout warning">
+      <h4>Unverified: GET on the challenge endpoint</h4>
+      <p>
+        &sect;4.5 implies a <code>GET /2fa/authenticate</code> that "returns the pending
+        <code>AuthenticateStage</code>". Verified from source, <code>AuthenticateView</code>
+        (headless) defines <strong>no <code>get</code> method</strong>
+        (<code>allauth/headless/mfa/views.py:58-65</code>); Django's
+        <code>View.dispatch</code> falls through to <code>http_method_not_allowed</code>, so the
+        endpoint returns <strong>405 Method Not Allowed</strong> for <code>GET</code>. The
+        challenge is surfaced <em>only</em> via the login <code>flows</code> array
+        (verified <code>allauth/headless/base/response.py:66-77</code>); a GET-based challenge
+        poll is not a supported contract. Flag if the SPA depends on one.
+      </p>
+    </div>
+
+    <!-- ===== 8. Recovery codes and replay prevention ===== -->
+
+    <h2 id="recovery-replay">8. Recovery codes and replay prevention</h2>
+
+    <p>
+      Recovery codes in allauth 65.21.0 are <strong>deterministic backups</strong>, not random
+      one-shots, and are consumed through the same code path as a TOTP. Both the TOTP replay
+      defense and the recovery-code single-use defense are verified from
+      <code>allauth/mfa/{totp,recovery_codes}/internal/auth.py</code>.
+    </p>
+
+    <h3 id="recovery-generation">8.1 Recovery-code generation &mdash; deterministic seed</h3>
+
+    <p>
+      <code>RecoveryCodes.activate</code> (<code>recovery_codes/internal/auth.py:22-38</code>)
+      stores a single 320-bit seed:
+    </p>
+
+    <pre><code>"seed": encrypt(secrets.token_hex(40))   # 40 hex chars = 320 bits</code></pre>
+
+    <p>
+      with <code>"used_mask": 0</code>. The seed is passed through the adapter
+      <code>encrypt()</code> hook (<code>auth.py:32</code>), so the same Fernet at-rest
+      protection that secures the TOTP secret (&sect;4.3/&sect;5.5) also covers recovery codes.
+      Each of the <code>MFA_RECOVERY_CODE_COUNT=10</code> (<code>app_settings.py:49</code>) codes
+      is derived deterministically in <code>generate_codes</code> (<code>auth.py:50-67</code>):
+    </p>
+
+    <pre><code>HMAC-SHA1(seed, f"{i:3},")  &rarr;  first byte_count bytes  &rarr;  int % 10**N  &rarr;  zero-pad
+byte_count = min(RECOVERY_CODE_DIGITS // 2, sha1_digest_size)   # = 4 for 8-digit codes
+N = MFA_RECOVERY_CODE_DIGITS                                        # = 8 (app_settings.py:60)</code></pre>
+
+    <p>
+      Because derivation is deterministic, the <code>seed</code> is the sole secret for the whole
+      set; no individual code is persisted. Regenerating a fresh seed invalidates all prior codes
+      (the old <code>Authenticator</code> row is deleted and replaced &mdash;
+      <code>recovery_codes/internal/flows.py:40-43</code>).
+    </p>
+
+    <h3 id="recovery-consumption">8.2 Recovery-code consumption &mdash; single-use under lock</h3>
+
+    <p>
+      <code>RecoveryCodes.validate_code</code> (<code>auth.py:107-123</code>) enforces single-use:
+    </p>
+
+    <ol>
+      <li><code>select_for_update().get(pk=self.instance.pk)</code> takes a <strong>row lock</strong>
+          on the recovery-codes <code>Authenticator</code> inside <code>@transaction.atomic</code>,
+          preventing a concurrent double-spend.</li>
+      <li>It checks <code>_is_code_used(i)</code> = <code>bool(used_mask &amp; (1 &lt;&lt; i))</code>
+          (<code>auth.py:69-71</code>), skipping already-consumed slots.</li>
+      <li>Each candidate is compared with constant-time
+          <code>compare_user_code(actual=code, expected=c)</code> (<code>mfa/base/forms.py:37,base/forms.py:37</code>),
+          imported from <code>allauth.core.internal.cryptokit</code>.</li>
+      <li>On match, <code>_mark_code_used(i)</code> (<code>auth.py:73-77</code>) sets the bit and
+          <code>save()</code>s the mask &mdash; the same code can never validate again.</li>
+    </ol>
+
+    <h3 id="auto-generation">8.3 Auto-generation at TOTP activation (no email)</h3>
+
+    <p>
+      When TOTP is activated, <code>activate_totp</code> calls
+      <code>auto_generate_recovery_codes(request)</code>
+      (<code>totp/internal/flows.py:41</code>; <code>recovery_codes/internal/flows.py:82-108</code>).
+      This creates a recovery-codes authenticator <strong>only if</strong> (a) the user is
+      authenticated, (b) <code>RECOVERY_CODES</code> is in
+      <code>MFA_SUPPORTED_TYPES</code>, and (c) no recovery-codes authenticator yet exists.
+      Per its docstring, it deliberately does <strong>not</strong> send a notification email
+      &mdash; recovery codes are created implicitly and are only disclosed via the
+      <code>/account/authenticators/recovery-codes</code> view. A <code>authenticator_added</code>
+      signal and a <code>mfa/messages/recovery_codes_generated.txt</code> warning message are fired
+      (<code>flows.py:98-105</code>).
+    </p>
+
+    <h3 id="explicit-regeneration">8.4 Explicit regeneration</h3>
+
+    <p>
+      <code>POST /api/auth/headless/browser/v1/account/authenticators/recovery-codes</code>
+      (<code>ManageRecoveryCodesView.post</code>, <code>views.py:138-141</code>) takes an
+      <code>empty</code> body (<code>GenerateRecoveryCodesInput</code>,
+      <code>inputs.py:30</code> &rarr; <code>GenerateRecoveryCodesForm</code>
+      with <strong>no fields</strong>, <code>recovery_codes/forms.py:23-34</code>) and calls
+      <code>generate_recovery_codes(request)</code> (<code>flows.py:27-58</code>):
+    </p>
+
+    <ul>
+      <li><code>raise_if_reauthentication_required</code> gates the call (<code>flows.py:28-31</code>).</li>
+      <li><code>can_generate_recovery_codes</code> (<code>flows.py:18-23</code>) requires at least
+          one <strong>non-recovery-codes</strong> authenticator to exist &mdash; you cannot
+          generate recovery codes for a user with no other factor.</li>
+      <li>Old codes row is <code>delete()</code>d, a new seed generated, all under
+          <code>@transaction.atomic</code> with a <code>select_for_update()</code> user-row lock
+          (<code>flows.py:27,37-38</code>).</li>
+      <li>On-commit: <code>signals.authenticator_reset</code>, the
+          <code>mfa/messages/recovery_codes_generated.txt</code> message, and an
+          <code>mfa/email/recovery_codes_generated</code> notification email
+          (<code>flows.py:47-55</code>).</li>
+      <li>In the headless response, <code>can_view=True</code> always (<code>views.py:141</code>), so
+          the new codes are returned this once.</li>
+    </ul>
+
+    <h3 id="viewing-codes">8.5 Viewing / showing codes once</h3>
+
+    <p>
+      <code>GET /api/auth/headless/browser/v1/account/authenticators/recovery-codes</code>
+      (<code>ManageRecoveryCodesView.get</code>, <code>views.py:130-136</code>) calls
+      <code>view_recovery_codes</code> (<code>flows.py:61-79</code>):
+    </p>
+
+    <ul>
+      <li>Requires authentication (<code>flows.py:62</code>) and passes</li>
+      <li><code>raise_if_reauthentication_required</code>.</li>
+      <li>If a recovery-codes authenticator exists, <code>mark_as_viewed()</code>
+          (<code>auth.py:125-129</code>) stamps <code>data["viewed_at"] = time.time()</code> on the
+          first access.</li>
+      <li><code>can_view = (not RECOVERY_CODES_SHOW_ONCE) or not did_view</code>
+          (<code>flows.py:78</code>; allauth default <code>MFA_RECOVERY_CODES_SHOW_ONCE=False</code>,
+          <code>app_settings.py:63</code>; <strong>finalized V1 value: <code>True</code></strong>,
+          per Tech Lead Decision 7). With <code>SHOW_ONCE=True</code>, later views carry only counts, never
+          the plaintext codes.</li>
+    </ul>
+
+    <div class="callout warning">
+      <h4>File download is headless-only a gap</h4>
+      <p>
+        The traditional <code>mfa_download_recovery_codes</code> view
+        (<code>mfa/recovery_codes/views.py:65-94</code>) returns the unused codes as a
+        <code>text/plain</code> attachment (<code>Content-Disposition: attachment;
+        filename="recovery-codes.txt"</code>, <code>views.py:90</code>). There is <strong>no
+        headless equivalent</strong>: <code>_authenticator_data</code>
+        (<code>allauth/headless/mfa/response.py:21-51</code>) exposes only
+        <code>total_code_count</code>, <code>unused_code_count</code>, and (conditionally)
+        <code>unused_codes</code> in JSON. If a downloadable backup is a requirement, it must be
+        added as a project endpoint &mdash; allauth does not provide it.
+      </p>
+    </div>
+
+    <h3 id="totp-replay">8.6 TOTP replay prevention (cache.add gate)</h3>
+
+    <p>
+      <code>TOTP.validate_code</code> (<code>totp/internal/auth.py:76-84</code>) iterates the
+      tolerance window and accepts the <em>first</em> matching counter. <code>TOTP.validate_code</code>
+      (<code>auth.py:101-109</code>) then calls <code>_mark_code_used(code)</code>
+      (<code>auth.py:114-116</code>):
+    </p>
+
+    <pre><code>cache.add(
+    f"allauth.mfa.totp.used?user={self.instance.user_id}&amp;code={normalize_user_code(code)}",
+    "y",
+    timeout=app_settings.TOTP_PERIOD,   # 30s
+)</code></pre>
+
+    <p>
+      <code>cache.add</code> is <strong>atomic-return-false-if-exists</strong>, so a 6-digit code
+      is consumable <strong>at most once per TOTP period</strong> (30s) per user. A captured code
+      replayed within the same window is rejected with 401 (<code>incorrect_code</code>). This is
+      per-user, per-code <em>value</em> &mdash; the same 6 digits generated in a later 30s
+      window get a fresh key and succeed normally. Reiterating the caveat in &sect;4.8/&sect;5.4:
+      because <code>CACHES["default"]</code> is <code>LocMemCache</code>
+      (<code>base.py:136-141</code>), this defense is <strong>broken for multi-worker Gunicorn</strong>
+      &mdash; each worker has an independent in-process cache, so a code accepted by worker A can
+      be replayed to worker B. A shared cache (Redis) is a deployment blocker before prod.
+    </p>
+
+    <h3 id="lost-authenticator">8.7 Lost-authenticator recovery policy</h3>
+
+    <p>
+      A user who loses their TOTP device but retains access to recovery codes can recover:
+    </p>
+
+    <ol>
+      <li><strong>Login with recovery code</strong>: At <code>POST /auth/2fa/authenticate</code>, submit
+          any unused 8-digit recovery code. The user is fully authenticated.</li>
+      <li><strong>Disable TOTP</strong>: <code>DELETE /account/authenticators/totp</code> deactivates
+          TOTP and removes the associated recovery-codes authenticator (§6.3). Requires
+          reauthentication if <code>MFA_REAUTHENTICATION_REQUIRED=True</code>.</li>
+      <li><strong>Re-enroll</strong>: <code>POST /account/authenticators/totp</code> generates a new
+          secret and new recovery codes.</li>
+    </ol>
+
+    <p><strong>No recovery codes remaining:</strong></p>
+
+    <ul>
+      <li>The user cannot satisfy the MFA challenge at login. If they <em>are</em> enrolled in MFA,
+          the <code>mfa_authenticate</code> stage (native allauth, &sect;4.6) holds the login stashed
+          and the session is never completed. If they are an <code>admin</code>/<code>approver</code>
+          who is <strong>not</strong> enrolled, password login completes but the
+          <code>IsMFAEnforced</code> permission on privileged endpoints yields <strong>403
+          <code>mfa_enrollment_required</code></strong> (&sect;4.9.1), so the dashboard is reached
+          only after (re)enrolling a second factor.</li>
+      <li><strong>Admin intervention required</strong>: A superuser (or support agent) with database
+          access must delete the user&rsquo;s <code>Authenticator</code> rows. This must <strong>not</strong>
+          be treated as an unrestricted procedure: the action must be logged in <code>apps.audit</code>
+          with the acting admin&rsquo;s identity and justification, and confirmed via a separate
+          out-of-band support channel before execution.</li>
+      <li><strong>Proposed management command</strong>: <code>python manage.py mfa_reset_user &lt;email&gt;</code>
+          &mdash; deletes all <code>Authenticator</code> rows for the user and notifies them via email;
+          prefer this over raw SQL or Django shell.</li>
+    </ul>
+
+    <div class="callout warning">
+      <h4>Not automated in v1</h4>
+      <p>
+        There is no self-service "I lost my phone" flow in v1. Lost-authenticator recovery requires
+        either a spare recovery code or a superuser intervention. A self-service recovery flow (e.g.
+        email-based MFA reset with additional verification) is deferred to v2.
+      </p>
+    </div>
+
+    <!-- ===== 9. Verified headless MFA endpoint contracts ===== -->
+
+    <h2 id="headless-contracts-verified">9. Verified headless MFA endpoint contracts</h2>
+
+    <p>
+      Consolidated, source-verified table of the headless MFA endpoints. All live under the
+      existing headless browser mount
+      <code>/api/auth/headless/browser/v1/</code> (<code>config/urls.py:61</code>) and are
+      session-authenticated (agent keys are rejected by <code>AuthenticatedAPIView</code> /
+      <code>IsAuthenticatedOr401</code>, &sect;2.2). <strong>Note on path prefixes:</strong>
+      &sect;4.5 lists shortened paths (e.g. <code>/totp</code>, <code>/2fa/authenticate</code>);
+      the actual mounted paths include the <code>account/authenticators/</code> and
+      <code>auth/</code> prefixes shown here &mdash; verified from
+      <code>allauth/headless/mfa/urls.py:90-111</code> which include the patterns under
+      <code>"account/"</code> and <code>"auth/"</code>.
+    </p>
+
+    <table>
+      <thead><tr><th>Method</th><th>Full path (under <code>v1/</code>)</th><th>Auth</th><th>Request body</th><th>Verified behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>POST</td><td><code>/auth/2fa/authenticate</code></td><td>Session (pending 2FA)</td><td><code>{"code": "&lt;6-digit&gt;"}</code></td><td><code>AuthenticateView.post</code> (<code>views.py:63-65</code>); binds <code>AuthenticateInput</code> (<code>inputs.py:18</code>, field <code>code</code>); <code>BaseAuthenticateForm.clean_code</code> iterates non-WebAuthn authenticators (TOTP preferred as <code>main_auth</code>, <code>base/forms.py:28-37</code>); first match calls <code>post_authentication</code> then <code>stage.exit()</code> &rarr; <code>resume_login</code> &rarr; session set; returns <code>AuthenticationResponse</code> with <code>is_authenticated: true</code>. Rate-limited via <code>check_rate_limit</code>; failure emits <code>signals.authentication_failed</code> and raises <code>incorrect_code</code>.</td></tr>
+        <tr><td>GET</td><td><code>/auth/2fa/authenticate</code></td><td>Session (pending 2FA)</td><td>&mdash;</td><td><span class="badge badge-warning">Unverified / 405</span> &mdash; <code>AuthenticateView</code> defines no <code>get</code>; Django returns 405. The challenge is surfaced only via the login response <code>flows</code> array (<code>_enrich_mfa_flow</code>, <code>headless/base/response.py:66-77</code>).</td></tr>
+        <tr><td>POST</td><td><code>/auth/2fa/reauthenticate</code></td><td>Session (authenticated)</td><td><code>{"code": "&lt;6-digit&gt;"}</code></td><td><code>ReauthenticateView.post</code> (<code>views.py:75-77</code>); <code>ReauthenticateInput</code> (<code>inputs.py:22</code>); same <code>clean_code</code> validator; calls <code>post_authentication(..., reauthenticated=True)</code> which tags the auth record <code>"reauthenticated": True</code> and dispatches <code>authenticator_used(reauthenticated=True)</code>; returns <code>AuthenticationResponse</code>.</td></tr>
+        <tr><td>POST</td><td><code>/auth/2fa/trust</code></td><td>Session (pending trust stage)</td><td><code>{"trust": bool}</code></td><td><span class="badge badge-na">Conditional</span> &mdash; only registered when <code>MFA_TRUST_ENABLED=True</code> <strong>and</strong> <code>client == BROWSER</code> (<code>urls.py:23-30</code>). <code>TrustView.post</code> (<code>views.py:307-316</code>) sets the <code>mfa_trusted</code> cookie (defaults inherit <code>SESSION_COOKIE_*</code>, <code>app_settings.py:130-179</code>). Off for v1 (&sect;4.4/&sect;4.7).</td></tr>
+        <tr><td>GET</td><td><code>/account/authenticators</code></td><td>Session (authenticated)</td><td>&mdash;</td><td><code>AuthenticatorsView.get</code> (<code>views.py:83-87</code>); returns <code>AuthenticatorsResponse</code> &mdash; a list of all the user's authenticators with <code>type</code>, <code>created_at</code>, <code>last_used_at</code>, and (for recovery-codes) counts. No secrets in the payload.</td></tr>
+        <tr><td>GET</td><td><code>/account/authenticators/totp</code></td><td>Session (authenticated)</td><td>&mdash;</td><td><code>ManageTOTPView.get</code> (<code>views.py:93-103</code>; &sect;6.1). Stashed secret + <code>otpauth://</code> URL in <code>TOTPNotFoundResponse.meta</code> if not enrolled; <code>TOTPResponse</code> (counts only) if enrolled.</td></tr>
+        <tr><td>POST</td><td><code>/account/authenticators/totp</code></td><td>Session (authenticated)</td><td><code>{"code": "&lt;6-digit TOTP&gt;"}</code></td><td><code>ManageTOTPView.post</code> (<code>views.py:116-118</code>); <code>ActivateTOTPInput</code>/<code>ActivateTOTPForm</code>, field <code>code</code> (<code>inputs.py:26</code>; <code>totp/forms.py:14-20</code>); activates TOTP + auto-generates recovery codes + clears session secret + notification email (&sect;6.2).</td></tr>
+        <tr><td>DELETE</td><td><code>/account/authenticators/totp</code></td><td>Session (authenticated)</td><td>&mdash;</td><td><code>ManageTOTPView.delete</code> (<code>views.py:120-124</code>); <code>deactivate_totp</code> with reauth gate + dangling recovery-code cleanup + notification email (&sect;6.3).</td></tr>
+        <tr><td>GET</td><td><code>/account/authenticators/recovery-codes</code></td><td>Session (authenticated)</td><td>&mdash;</td><td><code>ManageRecoveryCodesView.get</code> (<code>views.py:130-136</code>); <code>RecoveryCodesResponse</code> with <code>total_code_count</code>, <code>unused_code_count</code>, and (if <code>can_view</code>) <code>unused_codes</code> (&sect;8.5); marks as viewed.</td></tr>
+        <tr><td>POST</td><td><code>/account/authenticators/recovery-codes</code></td><td>Session (authenticated)</td><td>empty</td><td><code>ManageRecoveryCodesView.post</code> (<code>views.py:138-141</code>); <code>GenerateRecoveryCodesInput</code> (no fields, <code>inputs.py:30</code>); regenerates codes, deletes old, sends <code>mfa/email/recovery_codes_generated</code> (&sect;8.4>).</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout note">
+      <h4>Headless MFA mounts are conditional on <code>SUPPORTED_TYPES</code></h4>
+      <p>
+        Per <code>allauth/headless/mfa/urls.py:32-58</code>, the <code>totp</code>
+        (<code>/account/authenticators/totp</code>) and <code>recovery-codes</code>
+        (<code>/account/authenticators/recovery-codes</code>) routes are appended <strong>only</strong>
+        if their type is in <code>MFA_SUPPORTED_TYPES</code> (default includes both). The
+        <code>webauthn</code> route is appended only if <code>"webauthn"</code> is in
+        <code>SUPPORTED_TYPES</code> &mdash; with the v1 proposal in &sect;4.4
+        (<code>["totp", "recovery_codes"]</code>), <strong>no WebAuthn endpoints are mounted</strong>.
+      </p>
+    </div>
+
+    <!-- ===== 10. Traditional MFA endpoints and compatibility notes ===== -->
+
+    <h2 id="traditional-endpoints">10. Traditional MFA endpoints and compatibility notes</h2>
+
+    <p>
+      allauth&rsquo;s MFA module also ships classic Django <em>template-form</em> URLs
+      (under the <code>mfa/</code> namespace, <code>allauth/mfa/urls.py</code>). The SPA in this
+      project uses the Headless JSON contract exclusively, so these are documented for
+      completeness and compatibility, not for adoption.
+    </p>
+
+    <h3 id="traditional-url-tree">10.1 Traditional URL tree (template-form based)</h3>
+
+    <p>
+      <code>allauth/mfa/urls.py:6-19</code> mounts three include groups, each gated on the
+      corresponding entry in <code>MFA_SUPPORTED_TYPES</code>. These are the names/paths that
+      exist <strong>only</strong> if a <code>mfa/</code> include is added to the project&rsquo;s
+      <code>urlpatterns</code>:
+    </p>
+
+    <table>
+      <thead><tr><th>Include</th><th>Mounted at (traditional)</th><th>URL name</th><th>View / behaviour</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="4"><code>allauth.mfa.base.urls</code></td><td><code>mfa/</code></td><td><code>mfa_index</code></td><td><code>IndexView</code> (<code>base/views.py:151</code>, <code>login_required</code>); template <code>mfa/index.html</code>; lists authenticators.</td></tr>
+        <tr><td><code>mfa/authenticate/</code></td><td><code>mfa_authenticate</code></td><td><code>AuthenticateView</code> (<code>base/views.py:39</code>, <code>login_stage_required(stage=MFA_AUTHENTICATE)</code>); renders <code>mfa/authenticate.html</code> with separate TOTP &amp; WebAuthn forms; POST with <code>code</code> in form data calls <code>form.save()</code> &rarr; <code>post_authentication</code> &rarr; <code>stage.exit()</code>.</td></tr>
+        <tr><td><code>mfa/reauthenticate/</code></td><td><code>mfa_reauthenticate</code></td><td><code>ReauthenticateView</code> (<code>base/views.py:131</code>; <code>login_required</code>); <code>BaseReauthenticateView</code>-based; same <code>ReauthenticateForm</code> validator.</td></tr>
+        <tr><td><code>mfa/trust/</code></td><td><code>mfa_trust</code></td><td><code>TrustView</code> (<code>base/views.py:179</code>; <code>login_stage_required(stage=MFA_TRUST)</code>); <span class="badge badge-na">Conditional</span> &mdash; only when <code>_TRUST_STAGE_ENABLED</code> (<code>base/urls.py:18-20</code>).</td></tr>
+        <tr><td rowspan="2"><code>allauth.mfa.totp.urls</code></td><td><code>mfa/totp/activate/</code></td><td><code>mfa_activate_totp</code></td><td><code>ActivateTOTPView</code> (<code>totp/views.py:36</code>); <span class="badge badge-na">Requires</span> <code>reauthentication_required(app="allauth.mfa")</code> + <code>redirect_if_add_not_allowed</code>; if already enrolled, redirects to <code>mfa_deactivate_totp</code>. Renders QR SVG inline (<code>views.py:51-57</code>); <code>form_valid</code> calls the same <code>flows.activate_totp</code> (&sect;6). On success redirects to <code>mfa_index</code> or <code>mfa_view_recovery_codes</code>.</td></tr>
+        <tr><td><code>mfa/totp/deactivate/</code></td><td><code>mfa_deactivate_totp</code></td><td><code>DeactivateTOTPView</code> (<code>totp/views.py:90</code>); <code>login_required</code> + <code>reauthentication_required</code> on inner dispatch (<code>views.py:109</code>). Redirects to <code>mfa_activate_totp</code> if not enrolled.</td></tr>
+        <tr><td rowspan="3"><code>allauth.mfa.recovery_codes.urls</code></td><td><code>mfa/recovery-codes/</code></td><td><code>mfa_view_recovery_codes</code></td><td><code>ViewRecoveryCodesView</code> (<code>recovery_codes/views.py:98</code>); <code>login_required</code> + <code>never_cache</code>; calls <code>view_recovery_codes</code> (&sect;8.5); masks codes as <code>"****"</code> when not <code>can_view</code> (<code>views.py:107-109</code>); <code>can_download_codes</code> tied to <code>not RECOVERY_CODES_SHOW_ONCE</code> (<code>views.py:114</code>).</td></tr>
+        <tr><td><code>mfa/recovery-codes/generate/</code></td><td><code>mfa_generate_recovery_codes</code></td><td><code>GenerateRecoveryCodesView</code> (<code>recovery_codes/views.py:28</code>); <code>reauthentication_required</code>; same <code>flows.generate_recovery_codes</code> (&sect;8.4>); redirects to <code>mfa_view_recovery_codes</code>.</td></tr>
+        <tr><td><code>mfa/recovery-codes/download/</code></td><td><code>mfa_download_recovery_codes</code></td><td><code>DownloadRecoveryCodesView</code> (<code>recovery_codes/views.py:65</code>); <code>login_required</code> + <code>never_cache</code>; returns <code>text/plain</code> attachment <code>recovery-codes.txt</code> (<code>views.py:67,90</code>); raises <code>Http404</code> if no codes, <code>PermissionDenied</code> if <code>not can_view</code>.</td></tr>
+        <tr><td colspan="5"><span class="badge badge-na">Excluded for v1</span> &mdash; <code>allauth.mfa.webauthn.urls</code> (<code>mfa/webauthn/...</code>) is mounted only when <code>"webauthn" in MFA_SUPPORTED_TYPES</code> (<code>mfa/urls.py:18-19</code>); the proposed v1 config omits <code>webauthn</code>, so none of these are relevant.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="project-mount-status">10.2 Project mounting status (not mounted)</h3>
+
+    <p>
+      Verified against <code>backend/config/urls.py</code> (<code>config/urls.py:1-41</code>): the
+      project mounts <strong>only</strong> the following allauth surfaces:
+    </p>
+
+    <ul>
+      <li><code>/accounts/</code> &rarr; <code>_headless_only_account_patterns(allauth_account_urls.urlpatterns)</code>
+          (account headless-stripped; <code>config/urls.py:30,44-52</code>);</li>
+      <li><code>/accounts/</code> &rarr; GitHub provider URLs (<code>config/urls.py:32</code>);</li>
+      <li><code>/3rdparty/</code> &rarr; <code>allauth.socialaccount_urls</code> (<code>config/urls.py:33</code>);</li>
+      <li><code>/api/auth/headless/</code> &rarr; <code>allauth_headless_urls.urlpatterns</code>
+          (<code>config/urls.py:34</code>), which <strong>auto-includes</strong> the headless MFA
+          endpoints once <code>allauth.mfa</code> is installed (via
+          <code>allauth/headless/urls.py:38-49</code>);</li>
+      <li><code>/api/auth/</code> &rarr; <code>apps.accounts.urls</code> (custom
+          <code>CurrentUserView</code>, <code>LogoutView</code>; <code>config/urls.py:35</code>).</li>
+    </ul>
+
+    <p>
+      <strong><code>allauth.mfa.urls</code> (the traditional <code>mfa/</code> tree) is <em>not</em>
+      included anywhere</strong>. The
+      <code>_headless_only_account_patterns</code> helper (<code>config/urls.py:36-51</code>)
+      strips only <code>password/change</code> and <code>password/reset</code> patterns from the
+      <em>account</em> url set &mdash; it has no effect on MFA, because MFA lives in its own
+      <code>allauth.mfa.urls</code> module, not inside <code>allauth.account.urls</code>.
+      Consequently the traditional template-form MFA endpoints (<code>mfa_index</code>,
+      <code>mfa_authenticate</code>, <code>mfa_activate_totp</code>, etc.) resolve to
+      <span class="badge badge-missing">NoReverseMatch</span> until a project-level
+      <code>path("mfa/", include("allauth.mfa.urls"))</code> mount is added &mdash; which is
+      <strong>out of scope</strong> for the Headless contract.
+    </p>
+
+    <h3 id="compatibility-notes">10.3 Compatibility notes &mdash; why stay headless</h3>
+
+    <p>
+      The two contracts are mutually exclusive in routing and differ in three ways that matter to
+      this SPA-first project:
+    </p>
+
+    <dl>
+      <dt>CSRF vs. session</dt>
+      <dd>
+        Traditional form views rely on Django&rsquo;s cookie CSRF + <code>HttpResponseRedirect</code>
+        on success. The headless contract uses <code>X-CSRFToken</code> + JSON
+        (<code>respond_next_stage</code>, <code>base/views.py:52-53</code>). Mixing the two on the
+        same login path is untested and would race the <code>stash_login</code> session state
+        (<code>account/internal/stagekit.py:60-64</code>).
+      </dd>
+      <dt>Challenge signalling</dt>
+      <dd>
+        Headless surfaces the pending MFA stage via the <code>flows</code> array on the login
+        response (<code>headless/base/response.py:66-77</code>), a pure-JSON contract the SPA
+        polls. Traditional views redirect to <code>mfa_authenticate</code> (a server-side
+        <code>HttpResponseRedirect</code>, <code>stages.py:25</code>), requiring a full page
+        navigation &mdash; incompatible with the SPA&rsquo;s client-side router.
+      </dd>
+      <dt>Code disclosure</dt>
+      <dd>
+        The traditional <code>mfa_download_recovery_codes</code> view
+        (<code>recovery_codes/views.py:65-94</code>) returns plaintext codes as a file download
+        (<code>Content-Disposition: attachment</code>). The headless contract <strong>never</strong>
+        returns individual plaintext codes to the SPA via a download endpoint &mdash; only
+        <code>unused_codes</code> in the JSON body of
+        <code>GET /account/authenticators/recovery-codes</code>
+        (<code>response.py:42-43</code>), gated by <code>can_view</code>. If a file download of
+        codes is ever required headless-side, it must be a new project endpoint &mdash; do not
+        mount the traditional view, as it bypasses the <code>can_view</code> JSON gating.
+      </dd>
+    </dl>
+
+    <div class="callout warning">
+      <h4>Recommendation</h4>
+      <p>
+        Do <strong>not</strong> add a <code>path("mfa/", include("allauth.mfa.urls"))</code> mount
+        in <code>config/urls.py</code>. The Headless contract already covers enrollment, challenge,
+        recovery, reauthentication, and (via &sect;4.6) the projected role gate. Mounting the
+        traditional tree would duplicate routes, surface a competing form-based reset surface, and
+        require the allauth <code>mfa/*.html</code> templates &mdash; none of which the SPA can consume.
+      </p>
+    </div>
+
+    <!-- ===== 11. Security decisions and recommendations ===== -->
+
+    <h2 id="security-decisions">11. Security decisions and recommendations</h2>
+
+    <p>
+      This section consolidates the security-relevant decisions made during AUTH-05A and lists
+      forward-looking recommendations. Each decision references the subsection in &sect;2--10
+      where the analysis originated.
+    </p>
+
+    <h3 id="decisions-summary">11.1 Security decisions summary</h3>
+
+    <table>
+      <thead><tr><th>#</th><th>Decision</th><th>Chosen value</th><th>Rationale</th><th>Origin</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Framework</td><td><code>allauth.mfa</code> (not <code>django-two-factor-auth</code>)</td><td>Single auth framework; reuse Headless session model; allauth already on the branch</td><td>&sect;4.1</td></tr>
+        <tr><td>2</td><td>TOTP algorithm</td><td>RFC 4226 HOTP &rarr; RFC 6238 TOTP, HMAC-SHA1, 6 digits, 30s</td><td>allauth default; no <code>pyotp</code> dependency; exceeds 112-bit entropy minimum</td><td>&sect;5.1</td></tr>
+        <tr><td>3</td><td>Secret entropy</td><td>160-bit (<code>secrets.token_bytes(20)</code>)</td><td>Exceeds NIST SP 800-63B &sect;5.1.1.2 minimum</td><td>&sect;5.2</td></tr>
+        <tr><td>4</td><td>At-rest encryption</td><td>Fernet (AES-256-CBC + HMAC-SHA256) via <code>CustomMFAAdapter</code></td><td>allauth default <code>encrypt()</code> is a no-op; secrets would land cleartext</td><td>&sect;4.3, &sect;5.5</td></tr>
+        <tr><td>5</td><td>Key source</td><td><code>MFA_ENCRYPTION_KEY</code> env var, independent of <code>DJANGO_SECRET_KEY</code></td><td>Rotating Django secret must not invalidate MFA enrollment</td><td>&sect;4.3, &sect;5.5</td></tr>
+        <tr><td>6</td><td>Tolerance</td><td><code>MFA_TOTP_TOLERANCE=0</code> (strict RFC 6238)</td><td>Tech Lead Decision 6: clock skew handled at operations layer; strict window reduces capture-replay surface.</td><td>&sect;4.4, &sect;5.4</td></tr>
+        <tr><td>7</td><td>Replay defense</td><td><code>cache.add()</code> with 30s TTL per user+code</td><td>Each code consumable once per window; requires shared cache for multi-worker</td><td>&sect;4.8, &sect;5.4, &sect;8.6</td></tr>
+        <tr><td>8</td><td>Trust / "remember device"</td><td><code>MFA_TRUST_ENABLED=False</code></td><td>No long-lived trust cookie; admin/approver re-enter TOTP each login</td><td>&sect;4.4, &sect;4.7</td></tr>
+        <tr><td>9</td><td>Surface types</td><td><code>["totp", "recovery_codes"]</code> (no WebAuthn)</td><td>WebAuthn excluded for v1; avoids <code>fido2</code> dependency</td><td>&sect;4.4, &sect;9, &sect;10</td></tr>
+        <tr><td>10</td><td>Recovery code length</td><td>8 digits (<code>MFA_RECOVERY_CODE_DIGITS=8</code>)</td><td>Tech Lead Decision 10 (Q3 APPROVED): 8 digits (allauth default); the earlier 20-char spec was rejected.</td><td>&sect;3.1, &sect;4.4, &sect;15 Q3</td></tr>
+        <tr><td>11</td><td>Reauthentication gate</td><td><code>MFA_REAUTHENTICATION_REQUIRED=True</code></td><td>Enroll/deactivate requires fresh primary login</td><td>&sect;3.1, &sect;6.2</td></tr>
+        <tr><td>12</td><td>Recovery code visibility</td><td><code>MFA_RECOVERY_CODES_SHOW_ONCE=True</code></td><td>Tech Lead Decision 7: codes masked after first view; reduces exposure window for compromised sessions.</td><td>&sect;4.4, &sect;8.5</td></tr>
+        <tr><td>13</td><td>Test bypass</td><td><code>MFA_TOTP_INSECURE_BYPASS_CODE</code> honored only when <code>DEBUG=True</code></td><td>Fail-closed in prod; allauth raises <code>ImproperlyConfigured</code> otherwise</td><td>&sect;5.8</td></tr>
+        <tr><td>14</td><td>MFA rate limiting</td><td>Built-in via <code>ACCOUNT_RATE_LIMITS["login_failed"]</code> (not <code>MFA_RATE_LIMITS</code>)</td><td>allauth MFA <code>check_rate_limit</code> routes through <code>allauth.core.ratelimit</code> which hard-codes <code>app="allauth.account"</code>; defaults to <code>10/m/ip, 5/300s/key</code>.</td><td>&sect;4.4, &sect;4.8</td></tr>
+        <tr><td>15</td><td>Agent API keys</td><td>Unaffected &mdash; session-only MFA gate</td><td>Machine principals never pass second factor; Bearer scheme bypasses MFA</td><td>&sect;4.9</td></tr>
+        <tr><td>16</td><td>Role enforcement</td><td>allauth-native login stage + 403 <code>mfa_enrollment_required</code> DRF permission (<code>IsMFAEnforced</code>); no parallel session flag, no HTTP 402</td><td>The TOTP <em>challenge</em> reuses allauth&rsquo;s stage controller (<code>account_login</code> stash + <code>get_pending_stage</code>); <em>mandatory enrollment</em> for admin/approver is enforced by a session permission returning 403, not by a separate flag or middleware. allauth is opt-in per user, so a project layer is required only for the <em>enrollment requirement</em>, not for the challenge.</td><td>&sect;4.6, &sect;4.9.1</td></tr>
+        <tr><td>17</td><td>Email verification prerequisite</td><td>Unverified emails blocked from TOTP enrollment unless <code>MFA_ALLOW_UNVERIFIED_EMAIL=True</code></td><td><code>_validate_can_add_authenticator</code> rejects unverified emails by default</td><td>&sect;6.2</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="recommendations">11.2 Recommendations (pre-deployment)</h3>
+
+    <ol>
+      <li><strong>Resolve the cache gap before production.</strong> <code>CACHES["default"]</code> is
+          <code>LocMemCache</code> (<code>base.py:136-141</code>), which breaks allauth&rsquo;s per-code
+          replay defense for multi-worker Gunicorn. Deploy Redis (or equivalent shared cache) and
+          reconfigure <code>CACHES["default"]</code> before AUTH-05 ships (&sect;4.8, &sect;8.6).
+          This is a deployment blocker, not a code defect.</li>
+      <li><strong>Review MFA brute-force rate limits (not MFA_RATE_LIMITS).</strong> allauth MFA challenge
+          failures are governed by <code>ACCOUNT_RATE_LIMITS["login_failed"]</code> (default
+          <code>10/m/ip, 5/300s/key</code>), not <code>MFA_RATE_LIMITS</code> (which only covers
+          WebAuthn). Review the <code>login_failed</code> entry for MFA-appropriate thresholds. The
+          <code>django-axes</code> integration from AUTH-06 provides additional defense-in-depth
+          (&sect;4.8).</li>
+      <li><strong>Recovery-code length reconciled.</strong> Q3 is APPROVED: 8 digits (allauth default).
+          The earlier 20-character spec (<code>authentication-architecture.html:699</code>,
+          <code>implementation-plan.html:140</code>) was rejected. Longer codes (more digits) remain
+          available via <code>MFA_RECOVERY_CODE_DIGITS</code> if needed in a future revision; a
+          20-character format would imply a custom adapter override.</li>
+      <li><strong>Plan MFA key rotation.</strong> Use <code>cryptography.fernet.MultiFernet</code>
+          to rotate <code>MFA_ENCRYPTION_KEY</code> with zero downtime. Document the rotation playbook
+          in <code>OPERATIONS.md</code> and store the key in a secrets manager (the same mechanism used
+          for <code>GITHUB_OAUTH_SECRET</code>).</li>
+      <li><strong>Add MFA-specific audit logging.</strong> allauth fires
+          <code>signals.authenticator_used</code>, <code>authenticator_added</code>, and
+          <code>authenticator_removed</code> (see &sect;6.2, &sect;7.3, &sect;8). Connect these to the
+          project&rsquo;s tamper-evident audit log (<code>apps.audit</code>) so MFA enrollment,
+          challenge, and recovery are auditable alongside approvals and spends.</li>
+      <li><strong>Monitor for MFA bypass in production.</strong> Alert if
+          <code>MFA_TOTP_INSECURE_BYPASS_CODE</code> is defined in any non-DEBUG environment &mdash;
+          allauth will refuse to start, but the deployment should fail loudly before reaching that
+          point.</li>
+      <li><strong>Consider MFA trust for v2.</strong> <code>MFA_TRUST_ENABLED=False</code> is the v1
+          default. If admin UX warrants a "remember this device" flow, enable it and ensure the
+          <code>mfa_trusted</code> cookie inherits <code>SESSION_COOKIE_SECURE</code> (it does by
+          default, &sect;4.7). Document the widened replay window this introduces.</li>
+      <li><strong>Set up brute-force alerting on <code>login_failed</code>.</strong> allauth&rsquo;s MFA
+          <code>check_rate_limit</code> fires <code>signals.authentication_failed</code> on each failed
+          challenge. Alert on bursts of MFA challenge failures, which indicate either a targeted attack
+          or a user lockout situation.</li>
+    </ol>
+
+    <div class="callout note">
+      <h4>Security decisions &mdash; Tech Lead approved</h4>
+      <p>
+        All security decisions have been finalized by Tech Lead approval (see &sect;15):
+      </p>
+      <ul>
+        <li>Recovery code length: 8 digits (allauth default) &mdash; Q3 resolved.</li>
+        <li><code>MFA_TOTP_TOLERANCE</code>: 0 (strict RFC 6238) &mdash; Q4 resolved.</li>
+        <li>LocMemCache &rarr; Redis: Required before production &mdash; Q9 resolved (deployment blocker).</li>
+        <li>Recovery code visibility: <code>MFA_RECOVERY_CODES_SHOW_ONCE=True</code> &mdash; Q7 resolved.</li>
+        <li>MFA rate limiting: Built-in via <code>ACCOUNT_RATE_LIMITS["login_failed"]</code>, not
+            <code>MFA_RATE_LIMITS</code> &mdash; see &sect;4.8.</li>
+        <li><strong>Role enforcement finalized:</strong> mandatory MFA enrollment for
+            <code>admin</code>/<code>approver</code> users is enforced by allauth-native login stages
+            (the <code>account_login</code> stash + <code>get_pending_stage()</code>) for the TOTP
+            challenge, and by a session-based DRF permission (<code>IsMFAEnforced</code>, returning
+            403 <code>mfa_enrollment_required</code>) on privileged endpoints. No session flag,
+            no middleware, no HTTP 402 &mdash; see &sect;4.6 and &sect;4.9.1.</li>
+      </ul>
+    </div>
+
+    <!-- ===== 12. Frontend handoff requirements ===== -->
+
+    <h2 id="frontend-handoff">12. Frontend handoff requirements</h2>
+
+    <p>
+      The SPA consumes TOTP 2FA entirely through the Headless JSON contract
+      (<code>/api/auth/headless/browser/v1/</code>). No traditional template-form endpoints are
+      mounted, so the frontend handoff is a pure REST+CSRF+session contract. This section enumerates
+      what the frontend must implement, keyed to the backend contracts in &sect;6--9.
+    </p>
+
+    <h3 id="csrf-bootstrap">12.1 CSRF bootstrap (already implemented)</h3>
+
+    <p>
+      The SPA already performs the CSRF bootstrap (verified by
+      <code>backend/tests/test_auth_signup_login.py</code>). On app init, call
+      <code>GET /api/auth/headless/browser/v1/config</code> to obtain the <code>csrftoken</code>
+      cookie, then echo it as the <code>X-CSRFToken</code> header on every state-changing request.
+      This is unchanged by 2FA but must extend to the MFA endpoints.
+    </p>
+
+    <h3 id="discovery">12.2 MFA discovery on the config and session endpoints</h3>
+
+    <p>
+      <code>GET /api/auth/headless/browser/v1/config</code> returns <code>meta.mfa</code>
+      (<code>{"supported_types": [...], "passkey_login_enabled": bool}</code>, &sect;5.9). The SPA
+      uses this to decide whether to render 2FA UI at all. After login, the session endpoint
+      (<code>GET /auth/session</code>) advertises a pending <code>mfa_authenticate</code> flow in its
+      <code>flows</code> array when a second factor is required.
+    </p>
+
+    <h3 id="login-challenge-ui">12.3 Login challenge UI</h3>
+
+    <p>
+      Both primary login paths (email/password &sect;2.2, GitHub OAuth &sect;7.1) converge on the same
+      allauth stage controller. The handshake is:
+    </p>
+
+    <ol>
+      <li>The SPA posts credentials (<code>POST /auth/login</code> or the GitHub redirect completes).</li>
+      <li>Headless login responds with <code>200 OK</code> +
+          <code>flows: [..., { "id": "mfa_authenticate", "is_pending": true, "types": ["totp"] }]</code></li>
+      <li>The user has <strong>not</strong> received a session cookie yet &mdash; they are in the
+          "pending 2FA" state.</li>
+      <li>The SPA renders the 2FA entry, accepts a 6-digit TOTP <em>or</em> a recovery code
+          in the same field, and posts:</li>
+    </ol>
+
+    <pre><code>POST /api/auth/headless/browser/v1/auth/2fa/authenticate
+Content-Type: application/json
+X-CSRFToken: &lt;csrftoken&gt;
+
+{ "code": "&lt;6-digit TOTP or 8-digit recovery code&gt;" }</code></pre>
+
+    <ol start="5">
+      <li>On success (<code>meta.is_authenticated: true</code>), the session cookie is set and the
+          user reaches the dashboard.</li>
+      <li>On failure (<code>incorrect_code</code>), the SPA shows an inline error and allows retry.
+          Repeated failures trigger allauth&rsquo;s built-in rate limiting via
+          <code>ACCOUNT_RATE_LIMITS["login_failed"]</code> (5 failures per user in 300s), with
+          <code>django-axes</code> (AUTH-06) as additional defense-in-depth (&sect;4.8).</li>
+    </ol>
+
+    <div class="callout note">
+      <h4>No GET-based challenge poll</h4>
+      <p>
+        <code>GET /auth/2fa/authenticate</code> returns <strong>405 Method Not Allowed</strong>
+        (<code>AuthenticateView</code> defines no <code>get</code>, &sect;7.3 unverified). The
+        pending challenge is discovered <em>only</em> through the login <code>flows</code> array.
+        The SPA must not implement a polling loop against <code>GET /auth/2fa/authenticate</code>.
+      </p>
+    </div>
+
+    <h3 id="enrollment-ui">12.4 TOTP enrollment UI</h3>
+
+    <table>
+      <thead><tr><th>Step</th><th>Request</th><th>SPA action</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><code>GET /account/authenticators/totp</code></td><td>
+          <ul class="tight">
+            <li>If <code>TOTPNotFoundResponse</code>: extract <code>meta.secret</code> and
+                <code>meta.totp_url</code> (<code>otpauth://totp/AgentGate:email?secret=...&amp;issuer=AgentGate</code>).</li>
+            <li>Render the <code>otpauth://</code> URI as a QR (or show a manual-entry field with the
+                raw secret).</li>
+            <li>Prompt the user for the 6-digit code their app generates.</li>
+          </ul>
+        </td></tr>
+        <tr><td>2</td><td><code>POST /account/authenticators/totp</code></td><td>
+          <ul class="tight">
+            <li>Submit <code>{ "code": "&lt;6-digit&gt;" }</code> with <code>X-CSRFToken</code>.</li>
+            <li>If <code>incorrect_code</code>: the secret was stashed server-side in the session
+                (<code>mfa.totp.secret</code>); the SPA can retry without re-fetching.</li>
+            <li>If the email is unverified (<code>MFA_ALLOW_UNVERIFIED_EMAIL=False</code>): the SPA
+                must surface the email-verification requirement before retrying enrollment.</li>
+          </ul>
+        </td></tr>
+        <tr><td>3</td><td>&mdash; on success</td><td>
+          <ul class="tight">
+            <li>The response returns the persisted authenticator (no secret re-disclosed).</li>
+            <li>Recovery codes are auto-generated (&sect;8.3). The SPA should immediately prompt the user
+                to view and download/print them via
+                <code>GET /account/authenticators/recovery-codes</code>.</li>
+            <li>The <code>mfa/email/totp_activated</code> notification email is sent server-side.</li>
+          </ul>
+        </td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warning">
+      <h4>Critical: never persist the enrollment secret client-side</h4>
+      <p>
+        During step 1, <code>meta.secret</code> exists in memory for QR rendering only. The SPA must
+        <strong>not</strong> write it to <code>localStorage</code>, <code>sessionStorage</code>, or
+        cookies. The server clears it from the session on activation
+        (<code>clear_totp_secret</code>, &sect;6.2). Transport confidentiality depends entirely on
+        HTTPS (Caddy TLS termination).
+      </p>
+    </div>
+
+    <h3 id="recovery-codes-ui">12.5 Recovery codes UI</h3>
+
+    <p>
+      <code>GET /account/authenticators/recovery-codes</code> returns
+      <code>total_code_count</code>, <code>unused_code_count</code>, and (if <code>can_view</code>)
+      <code>unused_codes</code> as a JSON array (&sect;8.5). The SPA:
+    </p>
+
+    <ul>
+      <li>Displays the codes once in a modal with a "copy to clipboard" button.</li>
+      <li>Never sends codes back to the server (they are submitted only as
+          <code>{ "code": "..." }</code> to <code>/auth/2fa/authenticate</code> during login or
+          reauthentication).</li>
+      <li>The <code>POST /account/authenticators/recovery-codes</code> endpoint
+          (<code>empty</code> body) regenerates &mdash; a destructive action the SPA should gate behind
+          a confirmation + reauthentication.</li>
+    </ul>
+
+    <div class="callout note">
+      <h4>No headless file download</h4>
+      <p>
+        The traditional <code>mfa_download_recovery_codes</code> view
+        (<code>recovery_codes/views.py:65-94</code>) returns a <code>.txt</code> attachment, but it is
+        <strong>not available</strong> on the headless contract (&sect;8.5). If a downloadable backup is
+        required, the SPA must assemble it client-side from the <code>unused_codes</code> JSON array
+        &mdash; do not attempt to mount the traditional view (it bypasses the <code>can_view</code>
+        JSON gating, &sect;10.3).
+      </p>
+    </div>
+
+    <h3 id="reauthentication-ui">12.6 Reauthentication for sensitive actions</h3>
+
+    <p>
+      For any operation gated by <code>IsApprover</code> or <code>IsOrganizationAdmin</code>, the SPA
+      may call:
+    </p>
+
+    <pre><code>POST /api/auth/headless/browser/v1/auth/2fa/reauthenticate
+X-CSRFToken: &lt;csrftoken&gt;
+
+{ "code": "&lt;6-digit TOTP or recovery code&gt;" }</code></pre>
+
+    <p>
+      A 200 response with <code>AuthenticationResponse</code> confirms the session remains and the
+      sensitive action may proceed. A 401 means reauthentication failed &mdash; the action is rejected.
+    </p>
+
+    <h3 id="role-enforcement-ui">12.7 Role-based enrollment enforcement (SPA behavior)</h3>
+
+    <p>
+      allauth challenges users <em>who have enrolled</em> an authenticator at login, but it does
+      not force enrollment, and it knows nothing about the project&rsquo;s
+      <code>admin</code>/<code>approver</code> roles. The project layer (§4.6) enforces mandatory
+      enrollment through the <code>IsMFAEnforced</code> permission: an authenticated privileged user
+      who has <strong>not</strong> enrolled receives a <strong>403</strong> with
+      <code>code: "mfa_enrollment_required"</code> from the protected dashboard endpoint. The SPA must:
+    </p>
+
+    <ol>
+      <li>Intercept the 403 <code>mfa_enrollment_required</code> response on dashboard routes
+          (distinguished from a 401, which means "not logged in" &rarr; send to login).</li>
+      <li>Render the TOTP enrollment flow (&sect;12.4) as mandatory &mdash; the user cannot dismiss it
+          or reach the dashboard until <code>POST /account/authenticators/totp</code> succeeds and the
+          authenticator is persisted.</li>
+      <li>Only grant dashboard access after the enrollment response confirms an active TOTP
+          authenticator (verify via <code>GET /account/authenticators</code>).</li>
+      <li>For <code>viewer</code>-role users: no enforcement gate; 2FA remains optional.</li>
+    </ol>
+
+    <p>
+      A privileged user <em>enrolled</em> in MFA is never in this state &mdash; the native
+      <code>mfa_authenticate</code> challenge is resolved at login (§7.3) before the dashboard is
+      reachable, so the SPA never sees the enrollment-required 403 for them. The 403 only fires for
+      the narrow "logged in, privileged, not yet enrolled" case, which is exactly the users the
+      Tech Lead decision (Force on next login, §15 Q10) targets.
+    </p>
+
+    <h3 id="error-handling">12.8 Error handling contract</h3>
+
+    <table>
+      <thead><tr><th>Error</th><th>HTTP</th><th>SPA response</th></tr></thead>
+      <tbody>
+        <tr><td><code>incorrect_code</code></td><td>401 (headless <code>ErrorResponse</code> with
+            <code>code: "incorrect_code"</code>)</td><td>Show inline error "Invalid code"; allow retry.</td></tr>
+        <tr><td><code>rate_limited</code></td><td>429 (allauth <code>check_rate_limit</code> consumes <code>ACCOUNT_RATE_LIMITS["login_failed"]</code> before code validation; 429 returned when the per-user limit is exhausted)</td><td>Show lockout message; display approximate wait time if available. <code>django-axes</code> (AUTH-06) provides additional defense-in-depth, not the primary MFA brute-force control.</td></tr>
+        <tr><td>Unverified email on enrollment</td><td>400 (<code>incorrect_code</code> adapter error from
+            <code>validate_can_add_authenticator</code>)</td><td>Surface email-verification prompt; block retry until email confirmed.</td></tr>
+        <tr><td>No stage pending on reauth</td><td>401 (<code>UnauthorizedResponse</code>)</td><td>Reload session; the reauth window has expired.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="deactivation-ui">12.9 TOTP deactivation UI</h3>
+
+    <p>
+      <code>DELETE /account/authenticators/totp</code> (no body) deactivates TOTP and auto-removes the
+      associated recovery-codes authenticator (&sect;6.3). The SPA should confirm and require
+      reauthentication before issuing the DELETE.
+    </p>
+
+    <!-- ===== 13. Automated security test plan ===== -->
+
+    <h2 id="security-test-plan">13. Automated security test plan</h2>
+
+    <p>
+      Tests are partitioned into unit, integration, and end-to-end (E2E) layers. The existing test
+      suite (<code>backend/tests/test_auth_*.py</code>) establishes the pattern; each new MFA test
+      file follows the same convention.
+    </p>
+
+    <h3 id="unit-tests">13.1 Unit tests (no Django DB / HTTP)</h3>
+
+    <table>
+      <thead><tr><th>Test module</th><th>Coverage</th><th>Key assertions</th></tr></thead>
+      <tbody>
+        <tr><td><code>test_mfa_adapter</code></td><td><code>CustomMFAAdapter.encrypt</code> /
+            <code>decrypt</code> round-trip</td><td>
+            <ul class="tight">
+              <li>Encrypt of plaintext != plaintext (Fernet, AES-256-CBC + HMAC).</li>
+              <li>Decrypt of encrypted returns original.</li>
+              <li>Token is urlsafe-base64-decodable to a valid Fernet token.</li>
+              <li>Key independence: changing <code>DJANGO_SECRET_KEY</code> does not break
+                  <code>MFA_ENCRYPTION_KEY</code> decryption.</li>
+            </ul>
+        </td></tr>
+        <tr><td><code>test_totp_auth</code></td><td>TOTP generation &amp; validation (pure logic)</td><td>
+            <ul class="tight">
+              <li><code>generate_totp_secret()</code> yields 32 Base32 chars (160 bits).</li>
+              <li><code>hotp_value(secret, counter)</code> matches RFC 4226 test vectors
+                  (secret <code>12345678901234567890</code>, known HOTP values).</li>
+              <li>Tolerance window: with <code>MFA_TOTP_TOLERANCE=0</code> (finalized), code valid at step
+                  <code>N</code> is rejected at <code>N-1</code> and <code>N+1</code> &mdash; only the exact
+                  window is accepted.</li>
+              <li>Timing: assert the import path of <code>compare_user_code</code> is unchanged
+                  from <code>allauth.core.internal.cryptokit</code> (do not re-test allauth internals).</li>
+            </ul>
+        </td></tr>
+        <tr><td><code>test_recovery_codes</code></td><td>Recovery-code deterministic derivation</td><td>
+            <ul class="tight">
+              <li><code>generate_codes(seed)</code> is deterministic &mdash; same seed yields same 10 codes.</li>
+              <li>Each code is <code>MFA_RECOVERY_CODE_DIGITS</code> decimal digits, zero-padded.</li>
+              <li><code>_is_code_used</code> / <code>_mark_code_used</code> bitmask logic is correct for
+                  slots 0--9.</li>
+            </ul>
+        </td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="integration-tests">13.2 Integration tests (Django test client, DB-backed)</h3>
+
+    <table>
+      <thead><tr><th>Test module</th><th>Scenario</th><th>Expected result</th></tr></thead>
+      <tbody>
+        <tr><td><code>test_auth_mfa_enrollment</code></td><td>
+            <ol class="tight">
+              <li>Authenticated user <code>GET /account/authenticators/totp</code></li>
+              <li>Verify email, then <code>POST /account/authenticators/totp</code> with valid code</li>
+              <li>Verify <code>GET /account/authenticators/totp</code> returns persisted auth (no secret)</li>
+            </ol>
+        </td><td>TOTP activated; recovery codes auto-generated; session secret cleared.</td></tr>
+        <tr><td><code>test_auth_mfa_login_challenge</code></td><td>
+            <ol class="tight">
+              <li>User with TOTP enrolled <code>POST /auth/login</code></li>
+              <li>Assert <code>flows.mfa_authenticate.is_pending == true</code></li>
+              <li><code>POST /auth/2fa/authenticate</code> with valid TOTP</li>
+              <li>Assert <code>meta.is_authenticated == true</code> + session cookie set</li>
+            </ol>
+        </td><td>2FA challenge completes login; no partial session.</td></tr>
+        <tr><td><code>test_auth_mfa_login_github</code></td><td>
+            <ol class="tight">
+              <li>User with TOTP enrolled &rarr; GitHub OAuth redirect & callback</li>
+              <li>Same challenge: <code>POST /auth/2fa/authenticate</code></li>
+            </ol>
+        </td><td>GitHub OAuth admin is no weaker than password admin; session not set until 2FA passes.</td></tr>
+        <tr><td><code>test_auth_mfa_login_recovery</code></td><td>
+            <code>POST /auth/2fa/authenticate</code> with an 8-digit recovery code at the login challenge.
+        </td><td>Accepted once; subsequent attempts with the same code fail.</td></tr>
+        <tr><td><code>test_auth_mfa_reauthenticate</code></td><td>
+            Authenticated user <code>POST /auth/2fa/reauthenticate</code> with valid code; assert
+            auth record tagged <code>reauthenticated: True</code>.
+        </td><td>Reauthentication succeeds; signal dispatched.</td></tr>
+        <tr><td><code>test_auth_mfa_role_enforcement</code></td><td>
+            <ol class="tight">
+              <li>Admin user (no authenticator enrolled) &rarr; <code>POST /auth/login</code> succeeds
+                  (<code>is_authenticated == true</code>); session cookie is set.</li>
+              <li><code>GET</code> a privileged dashboard endpoint &rarr; <code>403</code> with
+                  <code>code: "mfa_enrollment_required"</code> (<code>IsMFAEnforced</code> in
+                  &sect;4.9.1).</li>
+              <li>Admin enrolls TOTP (<code>POST /account/authenticators/totp</code>) &rarr;
+                  <code>GET /account/authenticators/totp</code> shows the authenticator.</li>
+              <li>Same privileged endpoint &rarr; 200 (now MFA-enrolled).</li>
+              <li>Viewer user logs in &rarr; no enforcement gate; dashboard accessible.</li>
+            </ol>
+        </td><td>Role gate enforced for admin/approver only; no session flag is set.</td></tr>
+        <tr><td><code>test_auth_mfa_rate_limit</code></td><td>
+            6 consecutive <code>POST /auth/2fa/authenticate</code> with wrong code.
+        </td><td>6th attempt rejected via <code>ACCOUNT_RATE_LIMITS["login_failed"]</code> (default 5/300s per user-key); <code>ratelimit</code> error returned. (Note: allauth built-in, not django-axes.)</td></tr>
+        <tr><td><code>test_auth_mfa_show_once</code></td><td>
+            <ol class="tight">
+            <li>User views recovery codes (codes disclosed, <code>can_view=True</code>)</li>
+            <li>User views again (<code>can_view=False</code>, masked)</li>
+            </ol>
+        </td><td>Second view returns only counts, never plaintext codes.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="replay-tests">13.3 Replay-attack tests (cache-dependent &mdash; Redis-required)</h3>
+
+    <p>
+      allauth&rsquo;s per-code replay defense uses <code>cache.add()</code> on the default cache
+      backend (<code>allauth/mfa/totp/internal/auth.py:114-116</code>). The unit/integration suites use
+      <code>LocMemCache</code> by default, which is correct for single-process tests. A dedicated
+      <strong>multi-worker replay test</strong> must run against Redis to prove the production
+      configuration:
+    </p>
+
+    <table>
+      <thead><tr><th>Test name</th><th>Cache backend</th><th>Setup</th><th>Assertion</th></tr></thead>
+      <tbody>
+        <tr><td><code>test_replay_code_twice_single_process</code></td><td>
+            <code>LocMemCache</code>
+        </td><td>Valid TOTP submitted twice within 30s via same test client.</td><td>First succeeds;
+            second returns <code>incorrect_code</code>.</td></tr>
+        <tr><td><code>test_replay_code_twice_multi_worker</code></td><td>
+            <code>DjangoRedisCache</code>
+        </td><td>Two test clients (simulating two Gunicorn workers) submit the same valid code within 30s.</td><td>First succeeds;
+            second fails &mdash; proving the shared cache closes the LocMemCache gap (&sect;4.8).</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="bypass-tests">13.4 Test-bypass tests</h3>
+
+    <table>
+      <thead><tr><th>Condition</th><th>Bypass code set?</th><th>Expected</th></tr></thead>
+      <tbody>
+        <tr><td><code>DEBUG=False</code></td><td>Yes</td><td><code>ImproperlyConfigured</code> at app
+            load; deployment fails.</td></tr>
+        <tr><td><code>DEBUG=True</code></td><td>Yes</td><td>Bypass code accepted by
+            <code>TOTP.validate_code</code>.</td></tr>
+        <tr><td><code>DEBUG=False</code></td><td>No</td><td>Bypass code rejected as
+            <code>incorrect_code</code>.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="e2e-tests">13.5 E2E tests (SPA flow simulation)</h3>
+
+    <p>
+      These mirror what <code>frontend/tests/</code> (or Cypress) would assert:
+    </p>
+
+    <ul>
+      <li><strong>Login &rarr; 2FA &rarr; dashboard</strong>: after correct TOTP, session cookie is
+          set and dashboard renders. After wrong TOTP, error inline and session not granted.</li>
+      <li><strong>GitHub OAuth &rarr; 2FA</strong>: same challenge surfaces after OAuth callback.</li>
+      <li><strong>Enrollment &rarr; secret not persisted</strong>: verify the SPA does not call
+          <code>localStorage.setItem</code> with the <code>meta.secret</code> value (instrument via
+          test spy).</li>
+      <li><strong>Recovery-code login</strong>: entering an 8-digit code at the 2FA prompt succeeds
+          once and is consumed.</li>
+      <li><strong>Reauth before destructive action</strong>: clicking "regenerate recovery codes"
+          triggers <code>POST /2fa/reauthenticate</code> first; succeeds with valid TOTP;
+          regenerates on success.</li>
+    </ul>
+
+    <h3 id="test-coverage-gap">13.6 Coverage gaps (acknowledged)</h3>
+
+    <ul>
+      <li>End-to-end timing of the 30s TOTP window boundary (edge case in code rotation).</li>
+      <li>Cross-browser CSRF token propagation on MFA endpoints (covered by existing CSRF tests but
+          not MFA-specific).</li>
+      <li>Full key-rotation lifecycle test (enroll with key A &rarr; rotate to key B &rarr; verify
+          existing codes still decrypt &mdash; requires <code>MultiFernet</code> test harness).</li>
+    </ul>
+
+    <!-- ===== 14. AUTH-05B implementation checklist ===== -->
+
+    <h2 id="auth05b-checklist">14. AUTH-05B implementation checklist</h2>
+
+    <p>
+      This checklist is consumed by the AUTH-05B implementation session. Each item cites the
+      documentation section (this file) or the evidence source that justifies it. Items are grouped
+      by deliverable area; nothing here is implemented at AUTH-05A &mdash; this is the
+      <strong>to-do</strong> that AUTH-05B starts from.
+    </p>
+
+    <h3 id="auth05b-settings">14.1 Settings (<code>backend/config/settings/base.py</code>)</h3>
+
+    <ul>
+      <li>[ ] Add <code>"allauth.mfa"</code> to <code>INSTALLED_APPS</code> (<code>base.py:32-35</code>, &sect;4.2).</li>
+      <li>[ ] Add <code>MFA_ADAPTER = "apps.accounts.adapters.CustomMFAAdapter"</code> (&sect;4.3, &sect;4.4).</li>
+      <li>[ ] Add <code>MFA_REAUTHENTICATION_REQUIRED = True</code> (&sect;4.4).</li>
+      <li>[ ] Add <code>MFA_SUPPORTED_TYPES = ["totp", "recovery_codes"]</code> (&sect;4.4; WebAuthn excluded).</li>
+      <li>[ ] Add <code>MFA_TOTP_PERIOD = 30</code> (&sect;4.4).</li>
+      <li>[ ] Add <code>MFA_TOTP_DIGITS = 6</code> (&sect;4.4).</li>
+      <li>[ ] Add <code>MFA_TOTP_TOLERANCE = 0</code> (&sect;4.4; Tech Lead Decision 6 &mdash; strict RFC 6238).</li>
+      <li>[ ] Add <code>MFA_TOTP_ISSUER = "AgentGate"</code> (&sect;5.3 &mdash; pin issuer for stable app naming).</li>
+      <li>[ ] Add <code>MFA_RECOVERY_CODE_COUNT = 10</code> (&sect;4.4, &sect;8.1).</li>
+      <li>[ ] Add <code>MFA_RECOVERY_CODE_DIGITS = 8</code> (&sect;4.4; Tech Lead Decision 10 &mdash; 8 digits
+          allauth default, reconciled from 20-char spec).</li>
+      <li>[ ] Add <code>MFA_RECOVERY_CODES_SHOW_ONCE = True</code> (&sect;4.4, &sect;8.5; Tech Lead Decision 7).</li>
+      <li>[ ] Add <code>MFA_TRUST_ENABLED = False</code> (&sect;4.4, &sect;4.7).</li>
+      <li>[ ] <code>MFA_RATE_LIMITS</code> defaults to <code>{}</code> &mdash; MFA brute-force is governed by
+          <code>ACCOUNT_RATE_LIMITS["login_failed"]</code> (&sect;4.4, &sect;4.8; no setting required).</li>
+      <li>[ ] Review <code>ACCOUNT_RATE_LIMITS["login_failed"]</code> default (<code>10/m/ip, 5/300s/key</code>)
+          for MFA-appropriate thresholds (&sect;4.8).</li>
+    </ul>
+
+    <h3 id="environment">14.2 Environment &amp; dependencies</h3>
+
+    <ul>
+      <li>[ ] Add <code>MFA_ENCRYPTION_KEY=</code> to <code>backend/.env.example</code> (Fernet key, env-only; &sect;4.3, &sect;5.5).</li>
+      <li>[ ] Add <code>qrcode&lt;9</code> to <code>backend/requirements.txt</code> (or use the <code>[mfa]</code> extra) (&sect;3.1, &sect;5.1).</li>
+      <li>[ ] Verify <code>pyotp</code> is <strong>not</strong> pulled in (allauth TOTP is stdlib-only; &sect;5.1).</li>
+      <li>[ ] Configure <code>CACHES["default"]</code> to use <code>django.core.cache.backends.redis.DjangoRedisCache</code>
+          (Django 6.1 built-in) in production (not LocMemCache) (&sect;4.8, &sect;8.6, &sect;17).</li>
+      <li>[ ] Add <code>redis</code> Python package to <code>backend/requirements.txt</code> (required for
+          the built-in <code>DjangoRedisCache</code> backend; <strong>not</strong> <code>django-redis</code> &mdash;
+          Django 6.1 ships <code>django.core.cache.backends.redis.DjangoRedisCache</code> natively; &sect;17).</li>
+      <li>[ ] Add a CI gate that fails if <code>MFA_TOTP_INSECURE_BYPASS_CODE</code> is set when <code>DEBUG=False</code> (&sect;5.8).</li>
+    </ul>
+
+    <h3 id="adapter-code">14.3 Adapter &amp; model code (<code>apps/accounts/adapters.py</code>)</h3>
+
+    <ul>
+      <li>[ ] Implement <code>CustomMFAAdapter(DefaultMFAAdapter)</code> in <code>apps/accounts/adapters.py</code> (&sect;4.3):
+        <ul class="tight">
+          <li><code>encrypt(text)</code> &rarr; <code>get_fernet().encrypt(text.encode()).decode()</code></li>
+          <li><code>decrypt(encrypted_text)</code> &rarr; <code>get_fernet().decrypt(encrypted_text.encode()).decode()</code></li>
+          <li><code>get_fernet()</code> keyed from <code>settings.MFA_ENCRYPTION_KEY</code> (Fernet); support <code>MultiFernet</code> for rotation.</li>
+        </ul>
+      </li>
+      <li>[ ] Implement role-based MFA enforcement in
+          <code>apps.accounts</code> (&sect;4.6, &sect;4.9.1):
+          <ul class="tight">
+            <li>Add a custom <code>LoginStage</code> subclass appended to
+                <code>get_login_stages()</code> (<code>account/adapter.py:873</code>) after
+                <code>AuthenticateStage</code> (<code>allauth/mfa/stages.py:17</code>) that, for a
+                privileged (<code>admin</code>/<code>approver</code>) user with no enrolled
+                <code>Authenticator</code> (<code>is_mfa_enabled</code> is <code>False</code>,
+                <code>allauth/mfa/utils.py:16</code>), redirects to
+                <code>GET /account/authenticators/totp</code> while the login stays stashed
+                (<code>account_login</code>, <code>stagekit.py:65</code>) &mdash; the session is never
+                completed until enrollment succeeds.</li>
+            <li>Add <code>IsMFAEnforced</code> (<code>permissions.py:27,34</code>) composed into
+                <code>IsApprover</code> / <code>IsOrganizationAdmin</code>: for an authenticated
+                privileged user, require <code>is_mfa_enabled(request.user)</code>; return
+                <strong>403 <code>mfa_enrollment_required</code></strong> otherwise, and
+                <strong>401</strong> for agent-key/Bearer callers (no <code>User</code>).</li>
+          </ul>
+          <strong>No</strong> <code>mfa_second_factor_required</code> session flag, <strong>no</strong>
+          <code>MFAEnforcementMiddleware</code>, <strong>no</strong> HTTP 402.</li>
+      <li>[ ] Connect allauth MFA signals (<code>authenticator_added</code>,
+          <code>authenticator_used</code>, <code>authenticator_removed</code>) to <code>apps.audit</code>
+          audit log (&sect;11.2, rec. 5).</li>
+    </ul>
+
+    <h3 id="migrations">14.4 Migrations &amp; CI</h3>
+
+    <ul>
+      <li>[ ] After adding <code>allauth.mfa</code> to <code>INSTALLED_APPS</code>, run
+          <code>makemigrations --check --dry-run</code> and confirm allauth&rsquo;s own migrations
+          (<code>0001_initial</code>, <code>0002</code>, <code>0003</code>) surface as new
+          (<code>.github/workflows/ci.yml</code> &mdash; these are allauth&rsquo;s, not project migrations; &sect;4.2).</li>
+      <li>[ ] Add MFA test files to the CI test matrix (&sect;13).</li>
+      <li>[ ] Run <code>djlint</code> / <code>black</code> on new <code>adapters.py</code> code.</li>
+      <li>[ ] Import-linter: confirm <code>CustomMFAAdapter</code> does not violate
+          <code>engine-is-pure</code> or PayPal-isolation contracts (it lives in <code>apps.accounts</code>,
+          which already imports allauth adapters). No new <code>apps.accounts</code> &rarr; <code>engine</code>
+          dependency introduced.</li>
+    </ul>
+
+    <h3 id="test-deliverables">14.5 Test deliverables</h3>
+
+    <ul>
+      <li>[ ] <code>backend/tests/test_mfa_adapter.py</code> &mdash; encryption round-trip, key independence.</li>
+      <li>[ ] <code>backend/tests/test_totp_auth.py</code> &mdash; generation, tolerance, RFC 4226 vectors.</li>
+      <li>[ ] <code>backend/tests/test_recovery_codes.py</code> &mdash; deterministic derivation, bitmask.</li>
+      <li>[ ] <code>backend/tests/test_auth_mfa_enrollment.py</code> &mdash; full enrollment flow.</li>
+      <li>[ ] <code>backend/tests/test_auth_mfa_login_challenge.py</code> &mdash; password + 2FA,
+          recovery-code-at-challenge, GitHub OAuth + 2FA.</li>
+      <li>[ ] <code>backend/tests/test_auth_mfa_role_enforcement.py</code> &mdash; admin/approver gate.</li>
+      <li>[ ] <code>backend/tests/test_auth_mfa_replay.py</code> &mdash; replay with Redis (shared cache).</li>
+      <li>[ ] <code>backend/tests/test_auth_mfa_bypass.py</code> &mdash; bypass code rejected in non-DEBUG.</li>
+      <li>[ ] <code>backend/tests/test_auth_mfa_show_once.py</code> &mdash; recovery codes masked after first view (&sect;4.4).</li>
+      <li>[ ] <code>backend/tests/test_auth_mfa_password_reset.py</code> &mdash; MFA persists across password reset (&sect;7.4).</li>
+      <li>[ ] <code>backend/tests/test_auth_mfa_drf_bypass.py</code> &mdash; <code>IsApprover</code>/<code>IsOrganizationAdmin</code> return 401 for <code>Authorization: Bearer agk_...</code> and 403 <code>mfa_enrollment_required</code> for authenticated privileged users without an enrolled authenticator (&sect;4.9.1).</li>
+    </ul>
+
+    <h3 id="deployment-pre-requisites">14.6 Deployment prerequisites (not implemented at AUTH-05A)</h3>
+
+    <ul>
+      <li>[ ] Redis shared cache configured with <code>redis</code> Python package (deployment blocker; &sect;4.8, &sect;13.3).</li>
+      <li>[ ] <code>MFA_ENCRYPTION_KEY</code> injected at runtime (secrets manager).</li>
+      <li>[ ] MFA brute-force protection is active via allauth&rsquo;s built-in <code>ACCOUNT_RATE_LIMITS["login_failed"]</code>
+          (<code>10/m/ip, 5/300s/key</code>; &sect;4.8); <code>django-axes</code> (AUTH-06) is additional
+          defense-in-depth, not the primary MFA brute-force mechanism.</li>
+      <li>[ ] Audit log pipeline receiving MFA signals (&sect;11.2, rec. 5).</li>
+      <li>[ ] Alerting on repeated MFA challenge failures (&sect;11.2, rec. 8).</li>
+    </ul>
+
+    <div class="callout note">
+      <h4>Checkpoint boundary</h4>
+      <p>
+        AUTH-05A delivers <strong>documentation only</strong> &mdash; no code, no settings, no
+        migrations. This checklist is the AUTH-05B handoff. Each item references a rationale in
+        &sect;2--11 or a source file line for traceability. AUTH-05B may refine values (e.g. recovery
+        code length, tolerance) per the Tech Lead approvals in &sect;15.
+      </p>
+    </div>
+
+    <!-- ===== 15. Open questions requiring Tech Lead approval ===== -->
+
+    <h2 id="open-questions">15. Resolved decisions (Tech Lead approved)</h2>
+
+    <p>
+      The following decisions were pending at AUTH-05A and have now been <strong>approved</strong> by
+      the Tech Lead. Each is marked APPROVED with the final value. AUTH-05B may proceed on this basis.
+    </p>
+
+    <table>
+      <thead><tr><th>ID</th><th>Question</th><th>Decision</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Q1</td><td>
+            Framework choice: confirm <code>allauth.mfa</code> over <code>django-two-factor-auth</code>?
+            (<code>authentication-architecture.html:687</code>, <code>implementation-plan.html:135
+            </code> originally specified dta.)
+        </td><td><code>allauth.mfa</code> &mdash; reuse existing allauth session/Headless model.</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q2</td><td>
+            How to enforce mandatory 2FA enrollment for <code>admin</code>/<code>approver</code> users
+            &mdash; a project middleware + session flag, or by reusing allauth&rsquo;s
+            <code>allauth.account.internal.stagekit</code> (<code>account/internal/stagekit.py</code>)?
+        </td><td><strong>Rejected the parallel-flag design.</strong> The TOTP challenge is handled by
+            allauth&rsquo;s native <code>LoginStageController</code> (the <code>account_login</code> stash
+            + <code>get_pending_stage()</code>, <code>stagekit.py:17,65</code>), which already prevents
+            session completion until <code>POST /2fa/authenticate</code> succeeds. Mandatory
+            <em>enrollment</em> is enforced by (a) an optional <code>LoginStage</code> subclass appended
+            via <code>adapter.get_login_stages()</code> (<code>account/adapter.py:873</code>) after
+            <code>AuthenticateStage</code>, and (b) a session-based DRF permission
+            <code>IsMFAEnforced</code> (<code>permissions.py:27,34</code>) returning
+            <strong>403 <code>mfa_enrollment_required</code></strong> on privileged endpoints.
+            <strong>No</strong> <code>mfa_second_factor_required</code> flag, <strong>no</strong>
+            <code>MFAEnforcementMiddleware</code>, <strong>no</strong> HTTP 402.</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q3</td><td>
+            Recovery-code format: reconcile the 20-character spec
+            (<code>authentication-architecture.html:699</code>,
+            <code>implementation-plan.html:140</code>) with allauth&rsquo;s default of 8 digits
+            (<code>MFA_RECOVERY_CODE_DIGITS=8</code>, &sect;3.1)?
+        </td><td>8 digits (allauth default) &mdash; <code>MFA_RECOVERY_CODE_DIGITS=8</code>.</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q4</td><td>
+            <code>MFA_TOTP_TOLERANCE</code>: 1 (absorb clock drift) or 0 (strict RFC 6238)?
+        </td><td><code>0</code> &mdash; exactly one code per 30s window (strict RFC 6238).</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q5</td><td>
+            <code>MFA_TRUST_ENABLED</code> for v1? ("Remember this device" cookie.)
+        </td><td><code>False</code> &mdash; admin/approver enter TOTP every login.</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q6</td><td>
+            WebAuthn (passkey) support in v1?
+        </td><td>No &mdash; TOTP + recovery codes only; WebAuthn excluded (<code>"webauthn"</code>).</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q7</td><td>
+            <code>MFA_RECOVERY_CODES_SHOW_ONCE</code>: show codes once (then mask) or allow
+            re-viewing?
+        </td><td><code>True</code> &mdash; masked after first view. Tighter exposure control.</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q8</td><td>
+            <code>MFA_ENCRYPTION_KEY</code> rotation strategy: <code>MultiFernet</code> or hard
+            cutover?
+        </td><td><code>MultiFernet</code> &mdash; zero-downtime; old key decrypts, new key encrypts.</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q9</td><td>
+            LocMemCache &rarr; Redis migration: is Redis available in the target deployment before
+            AUTH-05 ships?
+        </td><td>Yes &mdash; Redis required before production; <code>redis</code> package +
+            <code>DjangoRedisCache</code> backend (&sect;17).</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+        <tr><td>Q10</td><td>
+            Grace period for existing admin/approver users: force enrollment on next login, or
+            allow a transition window?
+        </td><td>Force on next login &mdash; admin/approver blocked from dashboard until 2FA enrolled.</td><td><span class="badge badge-approved">APPROVED</span></td></tr>
+      </tbody>
+    </table>
+
+    <h3 id="resolved">15.1 Resolved decisions (no approval needed)</h3>
+
+    <p>
+      The following were already decided during AUTH-05A and do <strong>not</strong> require Tech Lead
+      approval to proceed (per &sect;11.1):
+    </p>
+
+    <ul>
+      <li>TOTP parameters: 6 digits, 30s period, HMAC-SHA1 &mdash; allauth defaults, no override needed.</li>
+      <li>Agent keys unaffected &mdash; 2FA is session-only (&sect;4.9).</li>
+      <li><code>MFA_TOTP_INSECURE_BYPASS_CODE</code> only in DEBUG &mdash; allauth enforces this
+          (<code>ImproperlyConfigured</code> otherwise, &sect;5.8).</li>
+      <li>Traditional MFA URLs not mounted &mdash; Headless-only (&sect;10.2).</li>
+      <li>Email verification prerequisite &mdash; allauth default (<code>MFA_ALLOW_UNVERIFIED_EMAIL
+          =False</code>), no override needed (&sect;6.2).</li>
+    </ul>
+
+    <div class="callout note">
+      <h4>Checkpoint: AUTH-05A complete</h4>
+      <p>
+        Sections 1--17 form the AUTH-05A architecture review deliverable. All Tech Lead decisions
+        (Q1--Q10) have been <strong>APPROVED</strong> and the role-enforcement architecture has been
+        corrected to reuse allauth-native login stages (<code>account_login</code> stash +
+        <code>get_pending_stage()</code>) for the TOTP challenge and a 403
+        <code>mfa_enrollment_required</code> DRF permission (<code>IsMFAEnforced</code>) for mandatory
+        enrollment &mdash; with no session flag, no <code>MFAEnforcementMiddleware</code>, and no HTTP
+        402. AUTH-05B (implementation) proceeds on this basis.
+      </p>
+    </div>
+
+    <div class="callout note">
+      <h4>Security decisions &mdash; all resolved</h4>
+      <p>
+        All security decisions that were unresolved at the AUTH-05A checkpoint have now been
+        approved by the Tech Lead:
+      </p>
+      <ul>
+        <li>Recovery code format (Q3): 8 digits (allauth default) &mdash; APPROVED.</li>
+        <li>Clock drift tolerance (Q4): <code>MFA_TOTP_TOLERANCE=0</code> (strict) &mdash; APPROVED.</li>
+        <li>Recovery code visibility (Q7): <code>MFA_RECOVERY_CODES_SHOW_ONCE=True</code> &mdash; APPROVED.</li>
+        <li>Shared cache for replay defense (Q9): Redis required before production &mdash; APPROVED.</li>
+        <li>MFA rate limiting: Built-in via <code>ACCOUNT_RATE_LIMITS["login_failed"]</code>,
+            not <code>MFA_RATE_LIMITS</code> &mdash; see &sect;4.8.</li>
+        <li><code>MFA_ENCRYPTION_KEY</code> rotation (Q8): <code>MultiFernet</code> &mdash; APPROVED.</li>
+      </ul>
+    </div>
+    <!-- ===== 16. AUTH-05B Acceptance Criteria ===== -->
+
+    <h2 id="auth05b-acceptance">16. AUTH-05B Acceptance Criteria</h2>
+
+    <p>
+      The AUTH-05B implementation session is considered complete when all of the following
+      criteria pass. Each criterion references the contract section it validates.
+    </p>
+
+    <table>
+      <thead><tr><th>ID</th><th>Criterion</th><th>Test</th><th>Contract reference</th></tr></thead>
+      <tbody>
+        <tr><td>AC-01</td><td><code>allauth.mfa</code> in <code>INSTALLED_APPS</code></td><td><code>assert "allauth.mfa" in settings.INSTALLED_APPS</code></td><td>§4.2</td></tr>
+        <tr><td>AC-02</td><td>Headless MFA URLs are auto-mounted under <code>/api/auth/headless/browser/v1/</code></td><td><code>GET /config</code> returns <code>meta.mfa.supported_types</code></td><td>§4.2, §5.9</td></tr>
+        <tr><td>AC-03</td><td><code>CustomMFAAdapter</code> encrypts TOTP secrets at rest</td><td><code>test_mfa_adapter.py</code>: encrypt ≠ plaintext, decrypt round-trip</td><td>§4.3, §5.5</td></tr>
+        <tr><td>AC-04</td><td><code>MFA_TOTP_TOLERANCE=0</code> in settings</td><td><code>assert settings.MFA_TOTP_TOLERANCE == 0</code></td><td>§4.4, §5.4</td></tr>
+        <tr><td>AC-05</td><td>Recovery codes show-once with <code>SHOW_ONCE=True</code></td><td><code>test_auth_mfa_show_once.py</code>: second view returns only counts</td><td>§4.4, §8.5</td></tr>
+        <tr><td>AC-06</td><td>Role enforcement blocks admin/approver without MFA enrollment</td><td><code>test_auth_mfa_role_enforcement.py</code>: authenticated privileged user missing an enrolled authenticator gets <code>403 mfa_enrollment_required</code>; agent key on same view gets <code>401</code></td><td>§4.6, §4.9.1</td></tr>
+        <tr><td>AC-07</td><td><code>CACHES["default"]</code> uses <code>DjangoRedisCache</code> in prod</td><td><code>assert settings.CACHES["default"]["BACKEND"] == "django.core.cache.backends.redis.DjangoRedisCache"</code></td><td>§4.8, §13.3</td></tr>
+        <tr><td>AC-08</td><td><code>redis</code> Python package in <code>requirements.txt</code></td><td><code>grep redis requirements.txt</code></td><td>§14.2</td></tr>
+        <tr><td>AC-09</td><td>MFA brute-force: 5 failures per user → 6th blocked</td><td><code>test_auth_mfa_rate_limit.py</code>: 6th attempt returns <code>ratelimit</code> error via <code>ACCOUNT_RATE_LIMITS["login_failed"]</code></td><td>§4.8, §11.1 (D14)</td></tr>
+        <tr><td>AC-10</td><td>Replay defense: same code twice in 30s → second rejected</td><td><code>test_auth_mfa_replay.py</code> (Redis backend): second code returns <code>incorrect_code</code></td><td>§8.6</td></tr>
+        <tr><td>AC-11</td><td>Bypass code rejected when <code>DEBUG=False</code></td><td><code>test_auth_mfa_bypass.py</code>: <code>ImproperlyConfigured</code> at load</td><td>§5.8</td></tr>
+        <tr><td>AC-12</td><td>Agent keys bypass MFA on <code>apps.agents</code> endpoints</td><td><code>AgentKeyAuthentication</code> still first in <code>DEFAULT_AUTHENTICATION_CLASSES</code></td><td>§4.9</td></tr>
+        <tr><td>AC-13</td><td>Password reset does not invalidate MFA enrollment</td><td><code>test_auth_mfa_password_reset.py</code>: TOTP still valid after password reset</td><td>§7.4</td></tr>
+        <tr><td>AC-14</td><td><code>MFA_TOTP_ISSUER="AgentGate"</code> in settings</td><td><code>assert settings.MFA_TOTP_ISSUER == "AgentGate"</code></td><td>§5.3</td></tr>
+        <tr><td>AC-15</td><td>WebAuthn endpoints not mounted (<code>SUPPORTED_TYPES</code> excludes <code>"webauthn"</code>)</td><td><code>GET /account/authenticators/webauthn</code> returns 404</td><td>§4.4</td></tr>
+        <tr><td>AC-16</td><td>CI gate: <code>ImproperlyConfigured</code> if bypass code set and <code>DEBUG=False</code></td><td><code>grep MFA_TOTP_INSECURE_BYPASS_CODE .env && DEBUG=False</code> fails in CI</td><td>§5.8, §14.2</td></tr>
+        <tr><td>AC-17</td><td>DRF role permissions reject agent keys and require MFA enrollment</td><td><code>test_auth_mfa_drf_bypass.py</code>: <code>IsApprover</code> returns 401 for <code>Authorization: Bearer agk_...</code>; returns 403 <code>mfa_enrollment_required</code> for an authenticated privileged user with no enrolled authenticator (&sect;4.9.1)</td><td>§4.9.1</td></tr>
+      </tbody>
+    </table>
+
+    <!-- ===== 17. Source-verified configuration reference ===== -->
+
+    <h2 id="appendix-config">17. Source-verified configuration reference</h2>
+
+    <p>
+      This appendix consolidates all <code>MFA_*</code> and related settings, verified against
+      allauth 65.21.0 source (<code>allauth/mfa/app_settings.py</code>,
+      <code>allauth/account/app_settings.py</code>). Settings with the <code>MFA_</code> prefix are read
+      via <code>_app_settings = AppSettings("MFA_")</code> at <code>allauth/mfa/app_settings.py:182</code>.
+    </p>
+
+    <table>
+      <thead><tr><th>Setting</th><th>V1 Value</th><th>allauth default</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td><code>MFA_ADAPTER</code></td><td><code>apps.accounts.adapters.CustomMFAAdapter</code></td><td><code>allauth.mfa.adapter.DefaultMFAAdapter</code></td><td><code>app_settings.py:21</code></td></tr>
+        <tr><td><code>MFA_REAUTHENTICATION_REQUIRED</code></td><td><code>True</code></td><td><code>True</code></td><td><code>app_settings.py:46</code></td></tr>
+        <tr><td><code>MFA_SUPPORTED_TYPES</code></td><td><code>["totp", "recovery_codes"]</code></td><td><code>["recovery_codes", "totp"]</code></td><td><code>app_settings.py:111-112</code></td></tr>
+        <tr><td><code>MFA_TOTP_PERIOD</code></td><td>30</td><td>30</td><td><code>app_settings.py:71</code></td></tr>
+        <tr><td><code>MFA_TOTP_DIGITS</code></td><td>6</td><td>6</td><td><code>app_settings.py:78</code></td></tr>
+        <tr><td><code>MFA_TOTP_TOLERANCE</code></td><td>0</td><td>0</td><td><code>app_settings.py:107</code></td></tr>
+        <tr><td><code>MFA_TOTP_ISSUER</code></td><td><code>"AgentGate"</code></td><td><code>""</code> (empty; adapter falls back to site name via <code>get_totp_issuer()</code>, <code>adapter.py:93-96</code>)</td><td><code>app_settings.py:85</code></td></tr>
+        <tr><td><code>MFA_RECOVERY_CODE_COUNT</code></td><td>10</td><td>10</td><td><code>app_settings.py:53</code></td></tr>
+        <tr><td><code>MFA_RECOVERY_CODE_DIGITS</code></td><td>8</td><td>8</td><td><code>app_settings.py:60</code></td></tr>
+        <tr><td><code>MFA_RECOVERY_CODES_SHOW_ONCE</code></td><td>True</td><td>False</td><td><code>app_settings.py:64</code></td></tr>
+        <tr><td><code>MFA_TRUST_ENABLED</code></td><td>False</td><td>False</td><td><code>app_settings.py:132</code></td></tr>
+        <tr><td><code>MFA_TOTP_INSECURE_BYPASS_CODE</code></td><td>(unset / env only for tests)</td><td>unset (None)</td><td><code>app_settings.py:87-100</code></td></tr>
+        <tr><td><code>MFA_ALLOW_UNVERIFIED_EMAIL</code></td><td>False (default, no override)</td><td>False</td><td><code>app_settings.py:25</code></td></tr>
+      </tbody>
+    </table>
+
+    <p><strong>Related account-level setting (MFA brute-force):</strong></p>
+    <table>
+      <thead><tr><th>Setting</th><th>V1 Value</th><th>allauth default</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td><code>ACCOUNT_RATE_LIMITS["login_failed"]</code></td><td>Review; default sufficient for v1.</td><td><code>10/m/ip, 5/300s/key</code> (from <code>LOGIN_ATTEMPTS_LIMIT=5</code> &amp; <code>LOGIN_ATTEMPTS_TIMEOUT=300</code>)</td><td><code>allauth/account/app_settings.py:268-276,305</code>; MFA <code>check_rate_limit</code> calls <code>allauth.core.ratelimit.consume()</code> which hard-codes <code>app="allauth.account"</code> (<code>allauth/core/ratelimit.py:32-48</code>); MFA key is <code>key=f"mfa-auth-user-{pk}"</code> (<code>allauth/mfa/base/internal/flows.py:69</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <h4 id="appendix-redis">Redis (deployment)</h4>
+    <table>
+      <thead><tr><th>Setting</th><th>V1 Value</th><th>allauth default</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><code>CACHES["default"]</code></td><td><code>django.core.cache.backends.redis.DjangoRedisCache</code></td><td><code>django.core.cache.backends.locmem.LocMemCache</code></td><td>Built-in Django 6.1 Redis backend; requires <code>redis</code> Python package; no <code>django-redis</code> needed. Required for allauth&rsquo;s <code>cache.add()</code> replay defense across multi-worker Gunicorn.</td></tr>
+      </tbody>
+    </table>
+
+    <!-- ===== End appendices ===== -->
+
+  </main>
+  <footer class="doc-footer">
+    <p class="muted">&copy; AgentGate. Internal documentation.</p>
+  </footer>
+</body>
+</html>

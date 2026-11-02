@@ -12,7 +12,7 @@ from apps.approvals import services as approval_services
 from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
 from apps.policies.models import Policy
-from apps.spend import services
+from apps.spend import pipeline
 from apps.spend.models import SpendRequest
 from tests.base import PostgresTransactionTestCase
 
@@ -29,7 +29,7 @@ class BudgetLockTests(PostgresTransactionTestCase):
     def worker(self):
         close_old_connections()
         try:
-            return services.submit_spend_request(
+            return pipeline.submit_spend_request(
                 self.agent,
                 amount=Decimal("10.00"),
                 currency="USD",
@@ -63,7 +63,7 @@ class PolicyLockOrderTests(PostgresTransactionTestCase):
 
     def test_submit_locks_agent_then_policy(self):
         with CaptureQueriesContext(connection) as queries:
-            services.submit_spend_request(
+            pipeline.submit_spend_request(
                 self.agent,
                 amount=Decimal("10.00"),
                 currency="USD",
@@ -94,7 +94,7 @@ class VelocityLockTests(PostgresTransactionTestCase):
     def worker(self):
         close_old_connections()
         try:
-            return services.submit_spend_request(
+            return pipeline.submit_spend_request(
                 self.agent,
                 amount=Decimal("10.00"),
                 currency="USD",
@@ -127,7 +127,7 @@ class ApprovalLockTests(PostgresTransactionTestCase):
             organization=self.organization,
             role=OrgMembership.Role.APPROVER,
         )
-        self.spend_request, _ = services.submit_spend_request(
+        self.spend_request, _ = pipeline.submit_spend_request(
             self.agent,
             amount=Decimal("75.00"),
             currency="USD",

@@ -1,0 +1,61 @@
+/* Minimal centered layout for the unauthenticated auth pages. Reuses the
+   shared design tokens and form primitives (card, field, btn) defined globally. */
+
+.auth-page {
+  min-height: 100vh;
+  background: var(--color-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.auth-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: var(--space-5) var(--space-6);
+}
+
+.auth-header h1 {
+  font-size: var(--text-xl);
+  margin: 0;
+}
+
+.auth-header .muted {
+  margin: 0;
+}
+
+.auth-card form {
+  padding: var(--space-5) var(--space-6);
+}
+
+.auth-card form > .form-error {
+  margin-top: 0;
+}
+
+.auth-foot {
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.link {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 1px;
+}
+
+.link:hover {
+  color: var(--color-primary-hover);
+}

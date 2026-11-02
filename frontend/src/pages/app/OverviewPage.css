@@ -140,7 +140,7 @@
 }
 
 .ov-chart-plot svg:focus-visible {
-  outline: 3px solid var(--color-focus);
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -155,7 +155,7 @@
 }
 
 .ov-axis {
-  font-size: 11px;
+  font-size: 0.6875rem;
   fill: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -365,7 +365,7 @@
 }
 
 .ov-feed-item:has(.ov-feed-link:focus-visible) {
-  outline: 3px solid var(--color-focus);
+  outline: var(--focus-width) solid var(--color-focus);
   outline-offset: -3px;
 }
 

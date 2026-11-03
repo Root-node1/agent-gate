@@ -1,3 +1,4 @@
+anyio==4.16.0
 asgiref==3.12.1
 attrs==26.1.0
 click==8.5.0
@@ -9,6 +10,9 @@ djangorestframework==3.18.3
 drf-spectacular==0.30.0
 fido2==2.2.1
 grimp==3.17
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
 hypothesis==6.170.14
 import-linter==2.15
 inflection==0.5.1

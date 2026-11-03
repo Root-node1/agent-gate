@@ -59,6 +59,8 @@ jobs:
           DJANGO_ALLOWED_HOSTS: example.com
           DATABASE_URL: postgresql://agentgate:agentgate@localhost:5432/agentgate
           REDIS_URL: redis://127.0.0.1:6379/0
+          PAYMENT_EXECUTOR: fake
+          PAYMENTS_EXECUTION_ENABLED: "false"
       - run: python manage.py makemigrations --check --dry-run
       - run: python manage.py test
 

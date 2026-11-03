@@ -27,6 +27,11 @@ else:
 # Capture outbound verification emails in memory so tests can inspect them.
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
+# The test settings disable Procrastinate migrations on SQLite, so do not
+# enqueue payment jobs from the request/approval paths here. Execution tests
+# call the service directly with an injected executor.
+PAYMENTS_EXECUTION_ENABLED = False
+
 # AUTH-05B.2: deterministic TEST-ONLY Fernet key for MFA secret encryption.
 # Never use this key in production.  Generated via Fernet.generate_key().
 MFA_ENCRYPTION_KEY = "QG92N9nkDu9c2Nh3TjwTBLTpPFozP20BQl2dwhAmsNM="

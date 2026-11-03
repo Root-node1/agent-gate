@@ -186,6 +186,29 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
 CSRF_FAILURE_VIEW = "apps.common.errors.csrf_failure"
 
+# Payment execution. The fake executor is the zero-credential default; set
+# PAYMENT_EXECUTOR=paypal to move real sandbox money. Execution jobs are
+# enqueued after an allow decision or an approval commits.
+PAYMENT_EXECUTOR = os.environ.get("PAYMENT_EXECUTOR", "fake").strip().lower()
+FAKE_EXECUTOR_MODE = os.environ.get("FAKE_EXECUTOR_MODE", "succeed").strip().lower()
+PAYMENTS_EXECUTION_ENABLED = os.environ.get(
+    "PAYMENTS_EXECUTION_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+# PayPal Payouts. Sandbox is the only mode unless live is explicitly allowed.
+PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox").strip().lower()
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "").strip()
+PAYPAL_CLIENT_SECRET = os.environ.get("PAYPAL_CLIENT_SECRET", "").strip()
+PAYPAL_BASE_URL = os.environ.get("PAYPAL_BASE_URL", "").strip()
+PAYPAL_TIMEOUT_SECONDS = env_int("PAYPAL_TIMEOUT_SECONDS", 10)
+PAYPAL_MAX_RETRIES = env_int("PAYPAL_MAX_RETRIES", 2)
+PAYPAL_ALLOW_LIVE = os.environ.get("PAYPAL_ALLOW_LIVE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 ADMIN_PATH = os.environ.get("DJANGO_ADMIN_PATH", "admin").strip("/")
 if not ADMIN_PATH:
     ADMIN_PATH = "admin"

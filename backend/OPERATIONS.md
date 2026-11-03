@@ -83,14 +83,19 @@ No separate schema bootstrap step is required. The core tables in 3.10.0 are:
 ```bash
 DJANGO_SETTINGS_MODULE=config.settings.prod \
 python manage.py procrastinate worker \
-  -q smoke --listen-notify --delete-jobs=SUCCESSFUL
+  -q smoke,approvals,payments --listen-notify --delete-jobs=SUCCESSFUL
 ```
 
 For one-shot mode (process all current jobs then exit, useful in CI):
 
 ```bash
-python manage.py procrastinate worker -q smoke --no-listen-notify
+python manage.py procrastinate worker \
+  -q smoke,approvals,payments --no-listen-notify
 ```
+
+`apps.payments.tasks.execute_payment` runs on the `payments` queue. Payment
+jobs execute approved spend requests; production refuses to start with
+execution enabled unless `PAYMENT_EXECUTOR=paypal`.
 
 Environment variables that override CLI defaults:
 

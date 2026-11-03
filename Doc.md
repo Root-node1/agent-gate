@@ -44,6 +44,12 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 - An engine exception is recorded as a deny with an `engine_error` reason, in the same transaction as the request and audit events. The pipeline never turns an engine failure into an allow.
 - Approval-time rechecks use the same state helpers but do not run the submission pipeline.
 
+### Payment execution (built)
+
+An allowed request, or an approved one, schedules a `payments` queue job after the decision transaction commits. The job compare-and-swaps `approved` to `executing` before calling the executor, so two workers cannot pay the same request. Terminal provider statuses move the request to `succeeded` or `failed`; a timeout or ambiguous response leaves it `executing` with no blind retry. Every state change writes an audit event, and the provider reference is unique.
+
+`PAYMENT_EXECUTOR` selects the fake executor (local work and CI) or the sandbox Payouts executor. PayPal execution requires credentials from the environment; live mode is refused unless `PAYPAL_ALLOW_LIVE=1`. Reconciliation for ambiguous payments and webhook processing are not implemented yet.
+
 ### Rule engine (built)
 
 Implemented in `backend/engine/` as pure Python. `evaluate(spend, limits, spent)` accepts normalized values and returns a decision plus every rule that fired. It never touches the database, the network, the clock or Django, so it is deterministic and unit-tested (`backend/tests/test_rules.py`). The import contract in `backend/.importlinter` enforces that boundary.
@@ -218,7 +224,8 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [x] Dashboard authentication, roles, GitHub OAuth, MFA, and password reset
 - [x] Agent and API-key management, policy CRUD, spend list, and audit read/verify APIs
 - [x] Procrastinate worker and periodic approval expiry
-- [ ] PayPal sandbox payment execution and webhooks
+- [x] PayPal sandbox payout client, executor, and compare-and-swap execution job
+- [ ] PayPal webhooks and ambiguous-payment reconciliation
 - [ ] Demo agent and live classifier provider
 - [ ] Dashboard screens
 - [ ] Deploy on the Contabo VPS

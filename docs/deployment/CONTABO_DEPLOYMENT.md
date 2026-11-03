@@ -201,7 +201,7 @@ ports 80 and 443.
 | Web container unhealthy | Missing env var (fail-fast) | Check `docker compose logs web` |
 | 502 from Caddy | Web not ready | Wait or check web logs |
 | `/readyz` returns 503 | DB connection failed | Verify `DATABASE_URL`, network, SSL |
-| Worker not processing | Wrong queue name | Queues are fixed to `smoke,approvals` in compose.yaml; verify the worker command |
+| Worker not processing | Wrong queue name | Queues are fixed to `smoke,approvals,payments` in compose.yaml; verify the worker command |
 | HTTPS cert not issued | DNS not propagated | Wait, check Caddy logs |
 | Static files 404 | collectstatic not run | Run `docker compose run --rm web python manage.py collectstatic --noinput` |
 

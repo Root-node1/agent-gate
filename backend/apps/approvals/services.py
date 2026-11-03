@@ -173,6 +173,10 @@ def decide(approval_id, *, user, approve: bool, note: str = "") -> tuple[Approva
                 actor_id=str(user.pk),
                 note=note,
             )
+            if approve:
+                from apps.payments.dispatch import schedule_execution
+
+                schedule_execution(spend_request.pk)
     if expired:
         raise ApprovalExpired("This approval has expired.")
     return approval, True

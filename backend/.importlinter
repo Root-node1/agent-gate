@@ -18,8 +18,12 @@ forbidden_modules =
     procrastinate
 
 [importlinter:contract:paypal-isolation]
-name = Only the payments app may reach the PayPal client
+name = Only the payments app may import the PayPal client directly
 type = forbidden
+# Other apps may call the payment service/dispatch, which reach the PayPal
+# client inside the payments app; only a direct PayPal client import is a
+# contract violation.
+allow_indirect_imports = true
 # Add each application package here when it is created.
 source_modules =
     config

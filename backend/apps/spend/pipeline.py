@@ -373,4 +373,9 @@ def submit_spend_request(
             now=now,
         )
 
+    if spend_request.status == SpendRequest.Status.APPROVED:
+        from apps.payments.dispatch import schedule_execution
+
+        schedule_execution(spend_request.pk)
+
     return spend_request, False

@@ -8,6 +8,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from .classifier import ClassifierResult
+
 CONFUSABLES = str.maketrans(
     {
         "\u0430": "a",
@@ -74,6 +76,14 @@ class ScreeningResult:
     """Signals produced before policy evaluation, including the pattern backstop."""
 
     injection_detected: bool = False
+    classifier: ClassifierResult | None = None
+
+    def with_classifier(self, classifier: ClassifierResult) -> "ScreeningResult":
+        """Attach advisory classifier output without changing the pattern result."""
+        return ScreeningResult(
+            injection_detected=self.injection_detected,
+            classifier=classifier,
+        )
 
 
 def screen_text(*texts: str) -> ScreeningResult:

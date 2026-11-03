@@ -6,7 +6,7 @@ Messages carry no policy numbers so a decision response never reveals budgets.
 """
 
 
-from .context import EvaluationContext, PolicyLimits, SpendInput, Spent
+from .context import EvaluationContext, PayeeState, PolicyLimits, SpendInput, Spent
 from .decision import (
     ALLOW,
     DENY,
@@ -15,6 +15,7 @@ from .decision import (
     Decision,
     Reason,
 )
+from .scoring import score_reasons
 from .screening import screen_text
 
 
@@ -87,8 +88,39 @@ def evaluate_context(context: EvaluationContext) -> Decision:
     if spend.amount >= limits.approval_threshold:
         needs_approval("R10_APPROVAL_THRESHOLD", "The amount requires human approval.")
 
+    payee = context.payee
+    if payee is not None and limits.new_payee_cooldown_hours > 0:
+        if not payee.known or not payee.trusted or payee.within_cooldown:
+            needs_approval(
+                "R11_NEW_PAYEE",
+                "The payee is new, untrusted, or still inside its cooldown.",
+            )
+    if payee is not None and payee.known and payee.destination_changed:
+        needs_approval(
+            "R12_PAYEE_CHANGE",
+            "The payment destination changed for this merchant.",
+        )
+
     if screening.injection_detected:
         deny("R14_INJECTION_PATTERN", "The request contains instructions that try to override policy.")
+    classifier = screening.classifier
+    if (
+        classifier is not None
+        and classifier.available
+        and limits.injection_escalate_threshold > 0
+        and classifier.score >= limits.injection_escalate_threshold
+    ):
+        needs_approval(
+            "R15_INJECTION_CLASSIFIER",
+            "The request may contain instructions that try to override policy.",
+        )
+    elif limits.classifier_required and (
+        classifier is None or not classifier.available
+    ):
+        needs_approval(
+            "R15_INJECTION_CLASSIFIER",
+            "The injection classifier was required but is unavailable.",
+        )
     if spend.source != SOURCE_TRUSTED:
         if limits.untrusted_source_action == DENY:
             deny("R13_UNTRUSTED_SOURCE", "The payment instruction did not come from a trusted source.")
@@ -104,7 +136,11 @@ def evaluate_context(context: EvaluationContext) -> Decision:
         outcome = NEEDS_APPROVAL
     else:
         outcome = ALLOW
-    return Decision(outcome=outcome, reasons=tuple(reasons))
+    return Decision(
+        outcome=outcome,
+        reasons=tuple(reasons),
+        risk_score=score_reasons(reasons, screening),
+    )
 
 
 __all__ = [
@@ -114,6 +150,7 @@ __all__ = [
     "SOURCE_TRUSTED",
     "Decision",
     "EvaluationContext",
+    "PayeeState",
     "PolicyLimits",
     "Reason",
     "SpendInput",

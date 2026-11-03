@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -19,7 +19,7 @@ from apps.common.money import to_minor
 from apps.payees.models import Payee, fingerprint, normalize_destination
 from apps.policies.models import Policy
 
-from . import services
+from . import classifier, services
 from .idempotency import request_hash
 from .models import SpendRequest
 
@@ -127,11 +127,49 @@ def _replay(agent_id: UUID, idempotency_key: str | None, body_hash: str) -> Spen
     return existing
 
 
+def _payee_state(
+    agent: Agent,
+    policy: Policy,
+    prepared: PreparedSpend,
+    now: datetime,
+) -> engine.PayeeState | None:
+    """Describe the merchant's payee before the request is decided and recorded."""
+    if not prepared.destination_fingerprint:
+        return None
+
+    payee = (
+        Payee.objects.filter(
+            organization_id=agent.organization_id,
+            merchant_ref=prepared.merchant_ref,
+        )
+        .only("trusted_at", "first_seen_at", "destination_fingerprint")
+        .first()
+    )
+    if payee is None:
+        return engine.PayeeState(
+            known=False,
+            within_cooldown=policy.new_payee_cooldown_hours > 0,
+        )
+
+    within_cooldown = (
+        policy.new_payee_cooldown_hours > 0
+        and payee.first_seen_at + timedelta(hours=policy.new_payee_cooldown_hours) > now
+    )
+    return engine.PayeeState(
+        known=True,
+        trusted=payee.trusted_at is not None,
+        within_cooldown=within_cooldown,
+        destination_changed=payee.destination_fingerprint
+        != prepared.destination_fingerprint,
+    )
+
+
 def _decide(
     prepared: PreparedSpend,
     policy: Policy,
     spent: engine.Spent,
     screening: engine.ScreeningResult,
+    payee: engine.PayeeState | None,
     *,
     agent_active: bool,
 ) -> engine.Decision:
@@ -149,6 +187,7 @@ def _decide(
         limits=services.build_limits(policy),
         spent=spent,
         screening=screening,
+        payee=payee,
     )
 
     try:
@@ -164,6 +203,7 @@ def _decide(
                     engine.DENY,
                 ),
             ),
+            risk_score=engine.MAX_RISK_SCORE,
         )
 
 
@@ -193,7 +233,7 @@ def _record_decision(
         source_type=prepared.source_type,
         source_ref=prepared.source_ref,
         evidence_excerpt=prepared.evidence_excerpt,
-        risk_score=0,
+        risk_score=decision.risk_score,
         decision=decision.outcome,
         status=OUTCOME_STATUS[decision.outcome],
         reasons=[{"code": r.code, "message": r.message} for r in decision.reasons],
@@ -300,7 +340,9 @@ def submit_spend_request(
     if replay is not None:
         return replay, True
 
-    screening = engine.screen_text(prepared.purpose, prepared.evidence_excerpt)
+    screening = engine.screen_text(
+        prepared.purpose, prepared.evidence_excerpt
+    ).with_classifier(classifier.classify(prepared.purpose, prepared.evidence_excerpt))
 
     with transaction.atomic():
         agent = Agent.objects.select_for_update().get(pk=agent.pk)
@@ -314,11 +356,13 @@ def submit_spend_request(
 
         now = timezone.now()
         spent = services.build_spent(agent, policy, prepared.currency, prepared.merchant_ref, now)
+        payee = _payee_state(agent, policy, prepared, now)
         decision = _decide(
             prepared,
             policy,
             spent,
             screening,
+            payee,
             agent_active=agent.status == Agent.Status.ACTIVE,
         )
         spend_request = _record_decision(

@@ -9,6 +9,7 @@ djangorestframework==3.18.3
 drf-spectacular==0.30.0
 fido2==2.2.1
 grimp==3.17
+hypothesis==6.170.14
 import-linter==2.15
 inflection==0.5.1
 jsonschema==4.26.0

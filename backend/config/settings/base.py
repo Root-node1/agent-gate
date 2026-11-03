@@ -130,6 +130,8 @@ def env_int(name: str, default: int) -> int:
 
 
 TRUSTED_PROXY_COUNT = env_int("TRUSTED_PROXY_COUNT", 0)
+INJECTION_CLASSIFIER = os.environ.get("INJECTION_CLASSIFIER", "").strip()
+INJECTION_CLASSIFIER_TIMEOUT_SECONDS = env_int("INJECTION_CLASSIFIER_TIMEOUT_SECONDS", 2)
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if DATABASE_URL:

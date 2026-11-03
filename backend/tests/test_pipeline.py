@@ -6,10 +6,12 @@ from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
+import engine
 from apps.accounts.models import Organization
 from apps.agents.models import Agent
 from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
+from apps.payees.models import Payee
 from apps.policies.models import Policy
 from apps.spend import pipeline
 from apps.spend.models import SpendRequest
@@ -94,3 +96,51 @@ class PipelineTests(TestCase):
             ).exists()
         )
         self.assertFalse(Approval.objects.exists())
+
+    def test_new_payee_cooldown_escalates_and_records_risk(self):
+        self.policy.new_payee_cooldown_hours = 24
+        self.policy.save()
+        spend_request, replayed = self.submit(
+            destination_type="paypal_email",
+            destination_value="new@example.com",
+        )
+        self.assertFalse(replayed)
+        self.assertEqual(spend_request.decision, SpendRequest.Decision.NEEDS_APPROVAL)
+        self.assertIn("R11_NEW_PAYEE", spend_request.matched_rules)
+        self.assertGreater(spend_request.risk_score, 0)
+        self.assertTrue(Payee.objects.filter(merchant_ref="acme.com").exists())
+
+    def test_changed_destination_escalates(self):
+        first, _ = self.submit(
+            destination_type="paypal_email",
+            destination_value="old@example.com",
+        )
+        self.assertEqual(first.decision, SpendRequest.Decision.ALLOW)
+
+        second, _ = self.submit(
+            destination_type="paypal_email",
+            destination_value="new@example.com",
+        )
+        self.assertEqual(second.decision, SpendRequest.Decision.NEEDS_APPROVAL)
+        self.assertIn("R12_PAYEE_CHANGE", second.matched_rules)
+
+    def test_classifier_escalation_is_persisted_with_risk(self):
+        with patch(
+            "apps.spend.pipeline.classifier.classify",
+            return_value=engine.ClassifierResult(score=80),
+        ):
+            spend_request, replayed = self.submit()
+
+        self.assertFalse(replayed)
+        self.assertEqual(spend_request.decision, SpendRequest.Decision.NEEDS_APPROVAL)
+        self.assertIn("R15_INJECTION_CLASSIFIER", spend_request.matched_rules)
+        self.assertEqual(spend_request.risk_score, 100)
+
+    def test_required_classifier_outage_escalates(self):
+        self.policy.classifier_required = True
+        self.policy.save()
+        spend_request, replayed = self.submit()
+        self.assertFalse(replayed)
+        self.assertEqual(spend_request.decision, SpendRequest.Decision.NEEDS_APPROVAL)
+        self.assertIn("R15_INJECTION_CLASSIFIER", spend_request.matched_rules)
+        self.assertGreater(spend_request.risk_score, 0)

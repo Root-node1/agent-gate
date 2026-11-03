@@ -27,9 +27,9 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 ## 3. Request flow
 
 1. The agent submits a spend request (amount, currency, merchant, purpose, where the instruction came from).
-2. The rule engine checks: merchant allow/block list, per-transaction cap, daily, weekly and monthly budgets, velocity, merchant-window spend, currency, provenance and deterministic injection phrases. New-payee checks are planned.
+2. The rule engine checks: merchant allow/block list, per-transaction cap, daily, weekly and monthly budgets, velocity, merchant-window spend, currency, provenance, new-payee and payee-change state, and deterministic injection phrases.
 3. If the instruction did not come from a trusted source, the request is escalated or denied according to the policy.
-4. A later injection classifier may score the request. It can raise risk but never lower a rule-based denial; deterministic injection phrases are denied today.
+4. An advisory injection classifier may score the request when configured. It can raise risk or escalate, but never denies or lowers a rule-based denial; deterministic injection phrases are still denied.
 5. Decision: allow, deny, or needs_approval, with reasons and matching rule IDs.
 6. If needs_approval, a human approves or denies in the dashboard.
 7. If allowed or approved, AgentGate executes the payment through PayPal.
@@ -70,7 +70,9 @@ Precedence: any deny wins, then any approval reason gives `needs_approval`, othe
 
 Provenance is self-reported. The API cannot prove that `source=trusted` is true; the SDK or MCP wrapper must set it from where the instruction originated. Missing provenance defaults to `untrusted`, and every non-trusted source fails closed.
 
-Deterministic injection screening lives in `engine/screening/patterns.py`. It normalizes NFKC, casefolds, strips zero-width format characters, folds common homoglyphs, and collapses whitespace before matching phrases such as "ignore previous instructions", "override the policy" and "approve this payment". The pipeline runs it before acquiring any row lock and passes the result into the engine; direct engine calls without a result run it themselves. It is a backstop, not a detector: paraphrases can still pass. The classifier remains a later, advisory-only layer: it may escalate and add risk, never deny or lower another rule.
+Deterministic injection screening lives in `engine/screening/patterns.py`. It normalizes NFKC, casefolds, strips zero-width format characters, folds common homoglyphs, and collapses whitespace before matching phrases such as "ignore previous instructions", "override the policy" and "approve this payment". The pipeline runs it before acquiring any row lock and passes the result into the engine; direct engine calls without a result run it themselves. It is a backstop, not a detector: paraphrases can still pass.
+
+The advisory classifier is loaded from `INJECTION_CLASSIFIER` (a dotted path to a callable) and runs with `INJECTION_CLASSIFIER_TIMEOUT_SECONDS`, default 2 seconds. It returns an `engine.ClassifierResult` score from 0 to 100. A provider error or timeout becomes an unavailable result; when `classifier_required` is set, R15 escalates, otherwise the deterministic result decides. R15 never denies and never lowers another rule. Per-rule weights in `engine/scoring.py` turn the fired rules and the classifier score into the capped 0–100 `risk_score`.
 
 ## 4. Data model (built)
 
@@ -134,7 +136,7 @@ The OpenAPI schema is generated with drf-spectacular and used to generate the SD
 - The agent row is locked first (`select_for_update`), then the current policy row is locked, then the spend request is written, and only then does the audit append lock the organization. Every spend path uses that order, and approval decisions take the same locks in the same order. Concurrent requests for one agent therefore serialize and cannot both pass a budget. SQLite ignores the locks; PostgreSQL enforces them, a 20-way concurrency test covers the budget, and a query-order test covers agent-before-policy locking.
 - Audit events written per request: `request.received`, `decision.made`, and `approval.requested` when a human is needed.
 - A request from an agent with no policy returns 409.
-- `risk_score` stays 0 until the injection classifier lands.
+- `risk_score` is a capped 0–100 value computed from deterministic per-rule weights plus the advisory classifier score; it is stored with the decision and never overrides the allow/deny/needs_approval outcome.
 
 ## 6. Dashboard screens (planned)
 
@@ -205,8 +207,9 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [x] Data models, migrations and admin (split into accounts, agents, policies, payees, spend, approvals, payments, audit)
 - [x] Rule engine (pure function, unit-tested)
 - [x] Spend request API with agent key auth and audit trail
-- [x] Framework-free `engine/` package with R01–R10, R13, R14 and R16
-- [x] R08 velocity, R09 merchant-window and R16 weekly-budget rules
+- [x] Framework-free `engine/` package with R01–R16
+- [x] R08 velocity, R09 merchant-window, R11 new-payee, R12 payee-change and R16 weekly-budget rules
+- [x] Deterministic risk weights, advisory classifier integration, and property tests
 - [x] Idempotent spend requests, agent-row locking, audit hash chain and demo reset command
 - [x] Approval queue API with recheck, session auth, roles, and expiry command
 - [x] Read APIs for policies and audit, plus admin audit verification
@@ -216,7 +219,7 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [x] Agent and API-key management, policy CRUD, spend list, and audit read/verify APIs
 - [x] Procrastinate worker and periodic approval expiry
 - [ ] PayPal sandbox payment execution and webhooks
-- [ ] Demo agent and injection classifier
+- [ ] Demo agent and live classifier provider
 - [ ] Dashboard screens
 - [ ] Deploy on the Contabo VPS
 - [ ] SDK generated from the OpenAPI schema

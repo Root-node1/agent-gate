@@ -10,7 +10,7 @@ from .exceptions import (
     PayPalTimeoutError,
     PayPalTransientError,
 )
-from .payouts import PayoutResult, create_payout, payout_payload
+from .payouts import PayoutResult, create_payout, get_payout_batch, payout_payload
 from .webhooks import (
     PayoutEvent,
     WebhookSignature,
@@ -32,6 +32,7 @@ __all__ = [
     "PayoutResult",
     "WebhookSignature",
     "create_payout",
+    "get_payout_batch",
     "parse_payout_event",
     "payout_payload",
     "read_signature",

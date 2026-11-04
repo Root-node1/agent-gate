@@ -1,6 +1,7 @@
 """Payouts API request shape and response extraction."""
 
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from apps.common.money import to_major
 from apps.payees.models import DestinationType
@@ -69,15 +70,27 @@ def create_payout(
         body=payload,
         request_id=f"agentgate-{spend_request.id}",
     )
+    return _batch_result(response)
+
+
+def get_payout_batch(client: PayPalClient, reference: str) -> PayoutResult:
+    """Fetch the current state of one payout batch by its PayPal reference."""
+    if not reference:
+        raise PayPalConfigurationError("The payout reference is empty.")
+    path = f"{PAYOUTS_PATH}/{quote(reference, safe='')}"
+    return _batch_result(client.get_json(path))
+
+
+def _batch_result(response: dict) -> PayoutResult:
     batch = response.get("batch_header")
     if not isinstance(batch, dict):
         raise PayPalAmbiguousResponse(
-            "PayPal accepted the payout without a batch header."
+            "PayPal returned a payout without a batch header."
         )
     reference = batch.get("payout_batch_id")
     if not reference:
         raise PayPalAmbiguousResponse(
-            "PayPal accepted the payout without a batch id."
+            "PayPal returned a payout without a batch id."
         )
     status = str(batch.get("batch_status") or "PENDING")
     return PayoutResult(reference=str(reference), status=status)

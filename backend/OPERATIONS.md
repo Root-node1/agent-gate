@@ -107,6 +107,25 @@ endpoint writes a deduplicated inbox row and enqueues
 enqueue fails, the event remains unprocessed in `payments_webhookevent` and can
 be re-enqueued by id.
 
+### Payment reconciliation
+
+A payment whose execution response was ambiguous stays `executing`. The worker
+runs `apps.payments.tasks.reconcile_payments_periodic` every five minutes on the
+`payments` queue; it queries PayPal by the stored batch reference and applies
+only forward-only terminal results. It never retries a payment.
+
+A payment that has no provider reference cannot be looked up. It stays
+`executing` and is counted as `unreferenced` for operator follow-up; a webhook
+is the only safe resolution. Run the check manually or inspect the backlog:
+
+```bash
+python manage.py reconcile_payments --dry-run
+python manage.py reconcile_payments --older-than-minutes 10 --limit 50
+```
+
+The command exits non-zero when a PayPal lookup fails or any executing payment
+has no reference, so it can be used as an alert hook.
+
 ### Sandbox payout smoke test
 
 Use the smoke command to verify sandbox credentials, connectivity, and the

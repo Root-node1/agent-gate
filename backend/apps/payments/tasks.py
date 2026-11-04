@@ -1,5 +1,8 @@
-"""Background payment execution jobs."""
+"""Background payment execution and reconciliation jobs."""
 
+from dataclasses import asdict
+
+from procrastinate import RetryStrategy
 from procrastinate.contrib.django import app
 
 
@@ -17,3 +20,25 @@ def process_webhook_event(webhook_event_id: str) -> str:
     from .webhook_service import apply_webhook_event
 
     return apply_webhook_event(webhook_event_id)
+
+
+PAYMENT_RECONCILIATION_CRON = "*/5 * * * *"
+PAYMENT_RECONCILIATION_PERIODIC_ID = "payment_reconciliation"
+PAYMENT_RECONCILIATION_QUEUEING_LOCK = "payment_reconciliation"
+
+
+@app.periodic(
+    cron=PAYMENT_RECONCILIATION_CRON,
+    periodic_id=PAYMENT_RECONCILIATION_PERIODIC_ID,
+)
+@app.task(
+    queue="payments",
+    name="apps.payments.tasks.reconcile_payments_periodic",
+    retry=RetryStrategy(max_attempts=3, wait=2),
+    queueing_lock=PAYMENT_RECONCILIATION_QUEUEING_LOCK,
+)
+def reconcile_payments_periodic(timestamp: int) -> dict:
+    """Query PayPal for stale executing payments and apply terminal results."""
+    from .reconciliation import reconcile_payments
+
+    return asdict(reconcile_payments())

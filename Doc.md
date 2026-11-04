@@ -48,7 +48,7 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 
 An allowed request, or an approved one, schedules a `payments` queue job after the decision transaction commits. The job compare-and-swaps `approved` to `executing` before calling the executor, so two workers cannot pay the same request. Terminal provider statuses move the request to `succeeded` or `failed`; a timeout or ambiguous response leaves it `executing` with no blind retry. Every state change writes an audit event, and the provider reference is unique.
 
-`PAYMENT_EXECUTOR` selects the fake executor (local work and CI) or the sandbox Payouts executor. PayPal execution requires credentials from the environment; live mode is refused unless `PAYPAL_ALLOW_LIVE=1`. Verified PayPal webhooks update the request through a deduplicating inbox and a processing job, applying only forward-only status changes with PayPal-attributed audit events. `manage.py paypal_smoke` verifies sandbox credentials by sending one payout or a rejection probe without touching spend state or the audit log. Ambiguous-payment reconciliation is not implemented yet.
+`PAYMENT_EXECUTOR` selects the fake executor (local work and CI) or the sandbox Payouts executor. PayPal execution requires credentials from the environment; live mode is refused unless `PAYPAL_ALLOW_LIVE=1`. Verified PayPal webhooks update the request through a deduplicating inbox and a processing job, applying only forward-only status changes with PayPal-attributed audit events. `manage.py paypal_smoke` verifies sandbox credentials by sending one payout or a rejection probe without touching spend state or the audit log. A periodic reconciliation job queries PayPal by the stored batch reference for requests left `executing`; payments without a reference are reported for webhook or operator resolution, never retried blindly.
 
 ### Rule engine (built)
 
@@ -226,7 +226,7 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [x] Procrastinate worker and periodic approval expiry
 - [x] PayPal sandbox payout client, executor, and compare-and-swap execution job
 - [x] PayPal webhook signature verification, deduplicating inbox, and forward-only status processing
-- [ ] Ambiguous-payment reconciliation
+- [x] Ambiguous-payment reconciliation by provider reference
 - [ ] Demo agent and live classifier provider
 - [ ] Dashboard screens
 - [ ] Deploy on the Contabo VPS

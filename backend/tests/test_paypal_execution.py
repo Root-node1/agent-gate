@@ -95,6 +95,23 @@ class PayPalClientTests(SimpleTestCase):
             ["req-1", "req-2"],
         )
 
+    def test_get_json_uses_the_cached_bearer_token(self):
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            if request.url.path == "/v1/oauth2/token":
+                return token_response()
+            return payout_response()
+
+        client, _ = self.make_client(handler)
+        payload = client.get_json("/v1/payments/payouts/B-1")
+
+        self.assertEqual(payload["batch_header"]["payout_batch_id"], "B-1")
+        request = next(r for r in calls if r.method == "GET")
+        self.assertEqual(request.url.path, "/v1/payments/payouts/B-1")
+        self.assertEqual(request.headers["authorization"], "Bearer token")
+
     def test_retryable_status_is_retried_with_backoff(self):
         count = {"payout": 0}
 

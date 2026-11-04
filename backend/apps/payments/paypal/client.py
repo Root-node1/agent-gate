@@ -100,6 +100,18 @@ class PayPalClient:
             "PayPal-Request-Id": request_id,
         }
         response = self._send("POST", path, headers=headers, json=body)
+        return self._decode_json(response)
+
+    def get_json(self, path: str) -> dict:
+        """GET JSON with a bearer token."""
+        headers = {
+            "Authorization": f"Bearer {self._access_token()}",
+            "Accept": "application/json",
+        }
+        response = self._send("GET", path, headers=headers)
+        return self._decode_json(response)
+
+    def _decode_json(self, response: httpx.Response) -> dict:
         if response.status_code >= 400:
             code = self._error_code(response)
             raise PayPalResponseError(

@@ -69,17 +69,26 @@ def _mark_executing(spend_request_id) -> SpendRequest | None:
     return spend_request
 
 
-def _record_provider_state(
+def record_provider_state(
     spend_request_id,
     *,
     reference: str,
     provider_status: str,
-) -> None:
-    """Store a non-terminal provider response and keep the request executing."""
+) -> bool:
+    """Store a non-terminal provider response and keep the request executing.
+
+    Returns True when the stored reference or status changed.
+    """
     with transaction.atomic():
         agent, spend_request = lock_agent_and_spend(spend_request_id)
         if spend_request.status != SpendRequest.Status.EXECUTING:
-            return
+            return False
+        if (
+            spend_request.paypal_reference == reference
+            and spend_request.paypal_status == provider_status
+        ):
+            spend_request.save(update_fields=["updated_at"])
+            return False
         spend_request.paypal_reference = reference
         spend_request.paypal_status = provider_status
         spend_request.save(
@@ -94,21 +103,22 @@ def _record_provider_state(
             paypal_reference=reference,
             paypal_status=provider_status,
         )
+        return True
 
 
-def _finish(
+def finish_payment(
     spend_request_id,
     *,
     status: str,
     reference: str | None,
     provider_status: str,
     reason: str = "",
-) -> None:
+) -> bool:
     """Apply a terminal status and write the matching audit event."""
     with transaction.atomic():
         agent, spend_request = lock_agent_and_spend(spend_request_id)
         if spend_request.status != SpendRequest.Status.EXECUTING:
-            return
+            return False
         spend_request.status = status
         if reference:
             spend_request.paypal_reference = reference
@@ -135,6 +145,38 @@ def _finish(
             paypal_status=provider_status,
             reason=reason,
         )
+        return True
+
+
+def reconcile_spend_request(
+    spend_request_id,
+    *,
+    reference: str,
+    provider_status: str,
+) -> str:
+    """Apply a queried provider state without retrying the payment."""
+    status = terminal_status(provider_status)
+    if status is None:
+        record_provider_state(
+            spend_request_id,
+            reference=reference,
+            provider_status=provider_status,
+        )
+        return ExecutionOutcome.EXECUTING
+    applied = finish_payment(
+        spend_request_id,
+        status=status,
+        reference=reference,
+        provider_status=provider_status,
+        reason="reconciled",
+    )
+    if not applied:
+        return ExecutionOutcome.SKIPPED
+    return (
+        ExecutionOutcome.SUCCEEDED
+        if status == SpendRequest.Status.SUCCEEDED
+        else ExecutionOutcome.FAILED
+    )
 
 
 def terminal_status(provider_status: str) -> str | None:
@@ -164,7 +206,7 @@ def execute_spend_request(
             logger.exception(
                 "Payment executor is unavailable for request %s.", spend_request_id
             )
-            _finish(
+            finish_payment(
                 spend_request_id,
                 status=SpendRequest.Status.FAILED,
                 reference=None,
@@ -179,7 +221,7 @@ def execute_spend_request(
         logger.warning(
             "Payment was not sent for request %s: %s", spend_request_id, exc
         )
-        _finish(
+        finish_payment(
             spend_request_id,
             status=SpendRequest.Status.FAILED,
             reference=None,
@@ -202,14 +244,14 @@ def execute_spend_request(
 
     status = terminal_status(result.status)
     if status is None:
-        _record_provider_state(
+        record_provider_state(
             spend_request_id,
             reference=result.reference,
             provider_status=result.status,
         )
         return ExecutionOutcome.EXECUTING
 
-    _finish(
+    finish_payment(
         spend_request_id,
         status=status,
         reference=result.reference,

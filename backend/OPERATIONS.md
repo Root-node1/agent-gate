@@ -97,6 +97,37 @@ python manage.py procrastinate worker \
 jobs execute approved spend requests; production refuses to start with
 execution enabled unless `PAYMENT_EXECUTOR=paypal`.
 
+### PayPal webhooks
+
+`POST /webhooks/paypal` verifies every transmission through PayPal before it is
+stored. Set `PAYPAL_WEBHOOK_ID` to the webhook registered in the PayPal
+dashboard; `PAYMENT_EXECUTOR=paypal` is rejected at startup without it. The
+endpoint writes a deduplicated inbox row and enqueues
+`apps.payments.tasks.process_webhook_event` on the `payments` queue. If the
+enqueue fails, the event remains unprocessed in `payments_webhookevent` and can
+be re-enqueued by id.
+
+### Sandbox payout smoke test
+
+Use the smoke command to verify sandbox credentials, connectivity, and the
+Payouts payload without touching spend state or the audit log:
+
+```bash
+# Print the payload only.
+python manage.py paypal_smoke --receiver sandbox-buyer@example.com
+
+# Send one sandbox payout after inspecting the payload.
+python manage.py paypal_smoke --receiver sandbox-buyer@example.com \
+  --amount 0.01 --currency USD --confirm
+
+# Expect a rejection; exits 0 only when PayPal rejects the probe.
+python manage.py paypal_smoke --receiver invalid --failure --confirm
+```
+
+The command refuses to run unless `PAYPAL_MODE=sandbox` and both sandbox
+credentials are set. An ambiguous timeout exits non-zero and warns not to
+retry blindly.
+
 Environment variables that override CLI defaults:
 
 | Variable | Purpose |

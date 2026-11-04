@@ -23,6 +23,7 @@ class AuditEvent(models.Model):
         PAYMENT_EXECUTING = "payment.executing", "Payment executing"
         PAYMENT_SUCCEEDED = "payment.succeeded", "Payment succeeded"
         PAYMENT_FAILED = "payment.failed", "Payment failed"
+        PAYMENT_REVERSED = "payment.reversed", "Payment reversed"
         WEBHOOK_RECEIVED = "webhook.received", "Webhook received"
         POLICY_CHANGED = "policy.changed", "Policy changed"
         AGENT_CREATED = "agent.created", "Agent created"

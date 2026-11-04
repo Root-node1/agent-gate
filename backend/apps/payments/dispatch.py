@@ -33,3 +33,26 @@ def enqueue_execution(spend_request_id) -> bool:
 def schedule_execution(spend_request_id) -> None:
     """Enqueue after the surrounding transaction commits."""
     transaction.on_commit(lambda: enqueue_execution(spend_request_id))
+
+
+def enqueue_webhook_processing(webhook_event_id) -> bool:
+    """Defer one webhook processing job, deduplicated by the event id."""
+    from . import tasks
+
+    try:
+        tasks.process_webhook_event.configure(
+            queueing_lock=f"webhook:{webhook_event_id}"
+        ).defer(str(webhook_event_id))
+    except Exception:
+        # The event is already stored; an operator can re-enqueue it by id.
+        logger.exception(
+            "Could not enqueue webhook processing for event %s.",
+            webhook_event_id,
+        )
+        return False
+    return True
+
+
+def schedule_webhook_processing(webhook_event_id) -> None:
+    """Enqueue webhook processing after the surrounding transaction commits."""
+    transaction.on_commit(lambda: enqueue_webhook_processing(webhook_event_id))

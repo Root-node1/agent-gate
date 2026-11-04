@@ -13,6 +13,7 @@ from django.views import defaults
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from apps.common.errors import ErrorCode, ensure_request_id, error_payload
+from apps.payments.views import paypal_webhook
 
 
 def _api_error(request, *, status, code, message):
@@ -129,6 +130,7 @@ urlpatterns = [
     path("mfa/", include(allauth_mfa_urls)),
     path("api/auth/headless/", include(headless_patterns)),
     path("api/auth/", include("apps.accounts.urls")),
+    path("webhooks/paypal", paypal_webhook, name="paypal-webhook"),
     path("v1/", include("apps.spend.urls")),
     path("v1/", include("apps.approvals.urls")),
     path("v1/", include("apps.audit.urls")),

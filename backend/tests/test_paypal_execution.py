@@ -571,10 +571,21 @@ class PayPalChecksTests(SimpleTestCase):
             PAYMENT_EXECUTOR="paypal",
             PAYPAL_CLIENT_ID="id",
             PAYPAL_CLIENT_SECRET="secret",
+            PAYPAL_WEBHOOK_ID="webhook-id",
             PAYPAL_MODE="sandbox",
         ):
             errors = check_paypal_configuration(None)
         self.assertEqual(errors, [])
+
+    def test_paypal_executor_requires_a_webhook_id(self):
+        with override_settings(
+            PAYMENT_EXECUTOR="paypal",
+            PAYPAL_CLIENT_ID="id",
+            PAYPAL_CLIENT_SECRET="secret",
+            PAYPAL_WEBHOOK_ID="",
+        ):
+            errors = check_paypal_configuration(None)
+        self.assertIn("payments.E005", [error.id for error in errors])
 
 
 class PayloadTests(SimpleTestCase):

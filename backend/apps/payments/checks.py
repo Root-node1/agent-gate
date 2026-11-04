@@ -49,5 +49,13 @@ def check_paypal_configuration(app_configs, **kwargs):
                     id="payments.E004",
                 )
             )
+        if not getattr(settings, "PAYPAL_WEBHOOK_ID", ""):
+            errors.append(
+                Error(
+                    "PAYMENT_EXECUTOR=paypal requires PAYPAL_WEBHOOK_ID for "
+                    "signature verification.",
+                    id="payments.E005",
+                )
+            )
 
     return errors

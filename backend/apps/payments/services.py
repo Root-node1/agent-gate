@@ -35,7 +35,7 @@ class ExecutionOutcome:
     SKIPPED = "skipped"
 
 
-def _lock_agent_and_spend(spend_request_id):
+def lock_agent_and_spend(spend_request_id):
     """Lock the agent before the spend request, matching the documented order."""
     agent_id = (
         SpendRequest.objects.only("agent_id")
@@ -54,7 +54,7 @@ def _lock_agent_and_spend(spend_request_id):
 def _mark_executing(spend_request_id) -> SpendRequest | None:
     """Compare-and-swap approved to executing before any provider call."""
     with transaction.atomic():
-        agent, spend_request = _lock_agent_and_spend(spend_request_id)
+        agent, spend_request = lock_agent_and_spend(spend_request_id)
         if spend_request.status != SpendRequest.Status.APPROVED:
             return None
         spend_request.status = SpendRequest.Status.EXECUTING
@@ -77,7 +77,7 @@ def _record_provider_state(
 ) -> None:
     """Store a non-terminal provider response and keep the request executing."""
     with transaction.atomic():
-        agent, spend_request = _lock_agent_and_spend(spend_request_id)
+        agent, spend_request = lock_agent_and_spend(spend_request_id)
         if spend_request.status != SpendRequest.Status.EXECUTING:
             return
         spend_request.paypal_reference = reference
@@ -106,7 +106,7 @@ def _finish(
 ) -> None:
     """Apply a terminal status and write the matching audit event."""
     with transaction.atomic():
-        agent, spend_request = _lock_agent_and_spend(spend_request_id)
+        agent, spend_request = lock_agent_and_spend(spend_request_id)
         if spend_request.status != SpendRequest.Status.EXECUTING:
             return
         spend_request.status = status

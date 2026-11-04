@@ -11,6 +11,13 @@ from .exceptions import (
     PayPalTransientError,
 )
 from .payouts import PayoutResult, create_payout, payout_payload
+from .webhooks import (
+    PayoutEvent,
+    WebhookSignature,
+    parse_payout_event,
+    read_signature,
+    verify_webhook_signature,
+)
 
 __all__ = [
     "PayPalAmbiguousResponse",
@@ -21,7 +28,12 @@ __all__ = [
     "PayPalResponseError",
     "PayPalTimeoutError",
     "PayPalTransientError",
+    "PayoutEvent",
     "PayoutResult",
+    "WebhookSignature",
     "create_payout",
+    "parse_payout_event",
     "payout_payload",
+    "read_signature",
+    "verify_webhook_signature",
 ]

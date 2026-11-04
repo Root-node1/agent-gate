@@ -48,7 +48,7 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 
 An allowed request, or an approved one, schedules a `payments` queue job after the decision transaction commits. The job compare-and-swaps `approved` to `executing` before calling the executor, so two workers cannot pay the same request. Terminal provider statuses move the request to `succeeded` or `failed`; a timeout or ambiguous response leaves it `executing` with no blind retry. Every state change writes an audit event, and the provider reference is unique.
 
-`PAYMENT_EXECUTOR` selects the fake executor (local work and CI) or the sandbox Payouts executor. PayPal execution requires credentials from the environment; live mode is refused unless `PAYPAL_ALLOW_LIVE=1`. Reconciliation for ambiguous payments and webhook processing are not implemented yet.
+`PAYMENT_EXECUTOR` selects the fake executor (local work and CI) or the sandbox Payouts executor. PayPal execution requires credentials from the environment; live mode is refused unless `PAYPAL_ALLOW_LIVE=1`. Verified PayPal webhooks update the request through a deduplicating inbox and a processing job, applying only forward-only status changes with PayPal-attributed audit events. Ambiguous-payment reconciliation is not implemented yet.
 
 ### Rule engine (built)
 
@@ -109,7 +109,7 @@ Note: bulk operations like `QuerySet.update()` bypass model methods. Never use t
 - `POST /v1/approvals/{id}/approve` and `/deny` (built): approve rechecks current policy and destination; a failed recheck returns 409 and leaves the request pending
 - `GET /v1/policies/` (built): policy versions and merchant rules for the caller's organizations; policy writes are still planned
 - `GET /v1/audit/` and `GET /v1/audit/verify/` (built): filterable log and admin-only chain verification
-- `POST /webhooks/paypal`: payment events (planned)
+- `POST /webhooks/paypal` (built): signature-verified Payouts events, stored in a deduplicating inbox and applied by a background job
 
 The OpenAPI schema is generated with drf-spectacular and used to generate the SDK. Error responses declare the shared envelope and the machine-readable code enum; CI runs `python manage.py spectacular --file /tmp/schema.yaml --validate`.
 
@@ -225,7 +225,8 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [x] Agent and API-key management, policy CRUD, spend list, and audit read/verify APIs
 - [x] Procrastinate worker and periodic approval expiry
 - [x] PayPal sandbox payout client, executor, and compare-and-swap execution job
-- [ ] PayPal webhooks and ambiguous-payment reconciliation
+- [x] PayPal webhook signature verification, deduplicating inbox, and forward-only status processing
+- [ ] Ambiguous-payment reconciliation
 - [ ] Demo agent and live classifier provider
 - [ ] Dashboard screens
 - [ ] Deploy on the Contabo VPS

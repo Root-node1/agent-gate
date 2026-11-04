@@ -199,6 +199,7 @@ PAYMENTS_EXECUTION_ENABLED = os.environ.get(
 PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox").strip().lower()
 PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "").strip()
 PAYPAL_CLIENT_SECRET = os.environ.get("PAYPAL_CLIENT_SECRET", "").strip()
+PAYPAL_WEBHOOK_ID = os.environ.get("PAYPAL_WEBHOOK_ID", "").strip()
 PAYPAL_BASE_URL = os.environ.get("PAYPAL_BASE_URL", "").strip()
 PAYPAL_TIMEOUT_SECONDS = env_int("PAYPAL_TIMEOUT_SECONDS", 10)
 PAYPAL_MAX_RETRIES = env_int("PAYPAL_MAX_RETRIES", 2)

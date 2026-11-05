@@ -11,7 +11,7 @@ from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
 from apps.payees.models import Payee, fingerprint
 from apps.policies.models import Policy
-from apps.spend import services
+from apps.spend import pipeline
 from apps.spend.models import SpendRequest
 from tests.base import force_mfa
 
@@ -36,7 +36,7 @@ class ApprovalApiBase(APITestCase):
         self.client.force_authenticate(user=user)
 
     def pending(self, amount="75.00", **kwargs):
-        spend_request, _ = services.submit_spend_request(
+        spend_request, _ = pipeline.submit_spend_request(
             self.agent,
             amount=Decimal(amount),
             currency="USD",
@@ -95,7 +95,7 @@ class ApprovalListTests(ApprovalApiBase):
         other_org = Organization.objects.create(name="other")
         other_agent, _ = Agent.create_with_key("other", other_org)
         Policy.objects.create(agent=other_agent)
-        other, _ = services.submit_spend_request(
+        other, _ = pipeline.submit_spend_request(
             other_agent,
             amount=Decimal("75.00"),
             currency="USD",
@@ -175,7 +175,9 @@ class ApprovalDecisionTests(ApprovalApiBase):
             self.url(spend_request.approval) + "approve/", {}, format="json"
         )
         self.assertEqual(response.status_code, 409)
-        self.assertIn("R06_DAILY_BUDGET", response.json()["rules"])
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "recheck_failed")
+        self.assertIn("R06_DAILY_BUDGET", body["error"]["details"]["rules"])
         spend_request.refresh_from_db()
         self.assertEqual(spend_request.status, SpendRequest.Status.PENDING_APPROVAL)
         self.assertEqual(spend_request.approval.outcome, Approval.Outcome.PENDING)
@@ -184,7 +186,7 @@ class ApprovalDecisionTests(ApprovalApiBase):
         spend_request = self.pending(
             destination_type="paypal_email", destination_value="old@example.com"
         )
-        services.submit_spend_request(
+        pipeline.submit_spend_request(
             self.agent,
             amount=Decimal("10.00"),
             currency="USD",
@@ -200,7 +202,9 @@ class ApprovalDecisionTests(ApprovalApiBase):
             self.url(spend_request.approval) + "approve/", {}, format="json"
         )
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["rules"], ["destination_changed"])
+        self.assertEqual(
+            response.json()["error"]["details"]["rules"], ["destination_changed"]
+        )
 
     def test_expired_approval_cannot_be_approved(self):
         spend_request = self.pending()

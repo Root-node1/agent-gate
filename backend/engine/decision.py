@@ -26,6 +26,7 @@ class Decision:
 
     outcome: str
     reasons: tuple[Reason, ...]
+    risk_score: int = 0
 
     @property
     def matched_rules(self) -> list[str]:

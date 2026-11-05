@@ -188,7 +188,7 @@ class AgentUpdateTests(AgentApiTestBase):
             format="json",
             HTTP_IDEMPOTENCY_KEY="suspend-spend-1",
         )
-        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.status_code, 403)
 
     def test_viewer_cannot_update(self):
         self.client.force_authenticate(user=self.viewer)

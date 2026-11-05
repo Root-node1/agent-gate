@@ -13,6 +13,7 @@ append-only ``audit_auditevent`` table needs trigger-aware teardown.
 
 from datetime import timedelta
 from decimal import Decimal
+from unittest import skipUnless
 
 from django.db import connection, connections
 from django.utils import timezone
@@ -24,11 +25,12 @@ from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
 from apps.background.tasks import expire_approvals_periodic
 from apps.policies.models import Policy
-from apps.spend import services
+from apps.spend import pipeline
 from apps.spend.models import SpendRequest
 from tests.base import PostgresTransactionTestCase
 
 
+@skipUnless(connection.vendor == "postgresql", "Procrastinate requires a PostgreSQL backend.")
 class ApprovalExpiryPeriodicTests(PostgresTransactionTestCase):
     """Periodic ``expire_approvals_periodic`` task against PostgreSQL."""
 
@@ -37,7 +39,7 @@ class ApprovalExpiryPeriodicTests(PostgresTransactionTestCase):
         self.organization = Organization.objects.create(name="acme")
         self.agent, _ = Agent.create_with_key("shopper", self.organization)
         Policy.objects.create(agent=self.agent)
-        self.spend_request, _ = services.submit_spend_request(
+        self.spend_request, _ = pipeline.submit_spend_request(
             self.agent,
             amount=Decimal("75.00"),
             currency="USD",

@@ -10,4 +10,4 @@ def validate_timezone(value: str) -> None:
     try:
         ZoneInfo(value)
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise ValidationError(f"{value!r} is not a known IANA timezone.") from exc
+        raise ValidationError("Enter a valid IANA timezone name.") from exc

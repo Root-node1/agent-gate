@@ -148,14 +148,14 @@ class MFAEnforcementPermissionTests(APITestCase):
         client, _, _, _ = _create_user(OrgMembership.Role.ADMIN)
         resp = client.get(AUDIT_VERIFY_URL)
         self.assertEqual(resp.status_code, HTTPStatus.FORBIDDEN)
-        self.assertEqual(resp.json()["code"], "mfa_enrollment_required")
+        self.assertEqual(resp.json()["error"]["code"], "mfa_enrollment_required")
 
     # 2. Approver without MFA denied
     def test_approver_without_mfa_denied(self):
         client, _, _, _ = _create_user(OrgMembership.Role.APPROVER)
         resp = client.get(APPROVAL_LIST_URL)
         self.assertEqual(resp.status_code, HTTPStatus.FORBIDDEN)
-        self.assertEqual(resp.json()["code"], "mfa_enrollment_required")
+        self.assertEqual(resp.json()["error"]["code"], "mfa_enrollment_required")
 
     # 3. Admin with MFA allowed
     def test_admin_with_mfa_allowed(self):

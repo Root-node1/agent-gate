@@ -8,7 +8,9 @@ from rest_framework.views import APIView
 
 from apps.accounts.permissions import IsDashboardUser, IsOrganizationAdmin
 from apps.agents.authentication import DashboardSessionAuthentication
+from apps.common.errors import ApiError, ErrorCode
 from apps.common.pagination import DashboardPagination
+from apps.common.schema import error_responses
 
 from .models import Policy
 from .serializers import (
@@ -35,7 +37,10 @@ class PolicyListView(APIView):
             return [IsOrganizationAdmin()]
         return [IsDashboardUser()]
 
-    @extend_schema(responses={200: PolicySerializer(many=True)}, summary="List policy versions")
+    @extend_schema(
+        responses={200: PolicySerializer(many=True), **error_responses(400, 401, 403, 429)},
+        summary="List policy versions",
+    )
     def get(self, request):
         queryset = (
             Policy.objects.filter(organization__memberships__user=request.user)
@@ -46,10 +51,12 @@ class PolicyListView(APIView):
         if agent:
             try:
                 UUID(agent)
-            except ValueError:
-                return Response(
-                    {"detail": "agent must be a UUID."}, status=status.HTTP_400_BAD_REQUEST
-                )
+            except ValueError as exc:
+                raise ApiError(
+                    "agent must be a UUID.",
+                    code=ErrorCode.VALIDATION_ERROR,
+                    details={"agent": ["Enter a valid UUID."]},
+                ) from exc
             queryset = queryset.filter(agent_id=agent)
         paginator = DashboardPagination()
         page = paginator.paginate_queryset(queryset, request, view=self)

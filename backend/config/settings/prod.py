@@ -54,6 +54,12 @@ if prod_email_host:
 else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
+if PAYMENT_EXECUTOR != "paypal" and PAYMENTS_EXECUTION_ENABLED:  # noqa: F405
+    raise ImproperlyConfigured(
+        "Production payment execution requires PAYMENT_EXECUTOR=paypal; "
+        "set PAYMENTS_EXECUTION_ENABLED=false to leave execution off."
+    )
+
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405
 
 # Redis cache configuration for production.

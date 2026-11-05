@@ -1,10 +1,11 @@
 """Role checks and organization scoping for dashboard principals."""
 
 from allauth.mfa.utils import is_mfa_enabled
-from rest_framework.exceptions import NotAuthenticated, PermissionDenied
+from rest_framework.exceptions import NotAuthenticated
 from rest_framework.permissions import BasePermission
 
 from apps.agents.authentication import AgentPrincipal
+from apps.common.errors import ApiError
 
 from .models import OrgMembership
 
@@ -43,21 +44,19 @@ class IsMFAEnforced(BasePermission):
 class MFAEnrollmentRequired(BasePermission):
     """Require an enrolled MFA authenticator for the authenticated user.
 
-    Raises 403 with ``code: "mfa_enrollment_required"`` when the user is
-    authenticated but has not enrolled in MFA.  Used by ``IsApprover`` and
-    ``IsOrganizationAdmin`` to enforce mandatory TOTP enrollment for
+    Rejects with status 403 and ``code: "mfa_enrollment_required"`` when the
+    user is authenticated but has not enrolled in MFA. Used by ``IsApprover``
+    and ``IsOrganizationAdmin`` to enforce mandatory TOTP enrollment for
     privileged roles (``IsDashboardUser`` / viewers are unaffected).
     """
 
     def has_permission(self, request, view):
-        if is_mfa_enabled(request.user):
+        if getattr(request, "demo_mode", False) or is_mfa_enabled(request.user):
             return True
-        raise PermissionDenied(
-            detail={
-                "code": MFA_ENROLLMENT_REQUIRED_CODE,
-                "detail": "MFA enrollment is required for this role.",
-            },
+        raise ApiError(
+            "MFA enrollment is required for this role.",
             code=MFA_ENROLLMENT_REQUIRED_CODE,
+            status_code=403,
         )
 
 

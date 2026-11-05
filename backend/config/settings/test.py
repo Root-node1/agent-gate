@@ -20,9 +20,17 @@ else:
             "NAME": BASE_DIR / "db.sqlite3",  # noqa: F405
         }
     }
+    # Procrastinate's schema is PostgreSQL-only. SQLite tests skip its tables;
+    # the queue tests themselves are PostgreSQL-only.
+    MIGRATION_MODULES = {"procrastinate": None}
 
 # Capture outbound verification emails in memory so tests can inspect them.
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
+# The test settings disable Procrastinate migrations on SQLite, so do not
+# enqueue payment jobs from the request/approval paths here. Execution tests
+# call the service directly with an injected executor.
+PAYMENTS_EXECUTION_ENABLED = False
 
 # AUTH-05B.2: deterministic TEST-ONLY Fernet key for MFA secret encryption.
 # Never use this key in production.  Generated via Fernet.generate_key().

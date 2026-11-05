@@ -6,8 +6,14 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import OrgMembership
 from apps.accounts.permissions import IsApprover
-from apps.agents.authentication import DashboardSessionAuthentication
+from apps.agents.authentication import (
+    DashboardSessionAuthentication,
+    DemoModeAuthentication,
+)
+from apps.agents.throttling import DemoModeRateThrottle
+from apps.common.errors import ApiError, ErrorCode
 from apps.common.pagination import DashboardPagination
+from apps.common.schema import error_responses
 
 from . import services
 from .models import Approval
@@ -25,16 +31,22 @@ def approval_queryset(user):
 
 
 class ApprovalListView(APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsApprover]
+    throttle_classes = [DemoModeRateThrottle]
 
-    @extend_schema(responses={200: ApprovalSerializer(many=True)}, summary="List approvals")
+    @extend_schema(
+        auth=[{"Session": []}],
+        responses={200: ApprovalSerializer(many=True), **error_responses(400, 401, 403, 429)},
+        summary="List approvals",
+    )
     def get(self, request):
         outcome = request.query_params.get("outcome", Approval.Outcome.PENDING)
         if outcome != "all" and outcome not in Approval.Outcome.values:
-            return Response(
-                {"detail": "outcome must be pending, approved, denied, expired, or all."},
-                status=status.HTTP_400_BAD_REQUEST,
+            raise ApiError(
+                "outcome must be pending, approved, denied, expired, or all.",
+                code=ErrorCode.VALIDATION_ERROR,
+                details={"outcome": ["Select a valid outcome."]},
             )
         queryset = approval_queryset(request.user)
         if outcome != "all":
@@ -45,10 +57,15 @@ class ApprovalListView(APIView):
 
 
 class ApprovalDetailView(APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsApprover]
+    throttle_classes = [DemoModeRateThrottle]
 
-    @extend_schema(responses={200: ApprovalSerializer}, summary="Get an approval")
+    @extend_schema(
+        auth=[{"Session": []}],
+        responses={200: ApprovalSerializer, **error_responses(401, 403, 404, 429)},
+        summary="Get an approval",
+    )
     def get(self, request, pk):
         approval = get_object_or_404(approval_queryset(request.user), pk=pk)
         return Response(ApprovalSerializer(approval).data)
@@ -65,28 +82,44 @@ class DecisionMixin:
                 approve=approve,
                 note=serializer.validated_data["note"],
             )
-        except services.ApprovalNotFound:
-            return Response({"detail": "Approval not found."}, status=status.HTTP_404_NOT_FOUND)
-        except services.ApprovalExpired:
-            return Response({"detail": "This approval has expired."}, status=status.HTTP_409_CONFLICT)
+        except services.ApprovalNotFound as exc:
+            raise ApiError(
+                "Approval not found.",
+                code=ErrorCode.NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
+            ) from exc
+        except services.ApprovalExpired as exc:
+            raise ApiError(
+                "This approval has expired.",
+                code=ErrorCode.APPROVAL_EXPIRED,
+                status_code=status.HTTP_409_CONFLICT,
+            ) from exc
         except services.ApprovalConflict as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.APPROVAL_CONFLICT,
+                status_code=status.HTTP_409_CONFLICT,
+            ) from exc
         except services.ApprovalRecheckFailed as exc:
-            return Response(
-                {"detail": str(exc), "rules": exc.rules},
-                status=status.HTTP_409_CONFLICT,
-            )
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.RECHECK_FAILED,
+                status_code=status.HTTP_409_CONFLICT,
+                details={"rules": exc.rules},
+            ) from exc
         approval = get_object_or_404(approval_queryset(request.user), pk=approval.pk)
         return Response(ApprovalSerializer(approval).data)
 
 
 class ApprovalApproveView(DecisionMixin, APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsApprover]
+    throttle_classes = [DemoModeRateThrottle]
 
     @extend_schema(
+        auth=[{"Session": []}],
         request=DecisionSerializer,
-        responses={200: ApprovalSerializer},
+        responses={200: ApprovalSerializer, **error_responses(400, 401, 403, 404, 409, 429)},
         summary="Approve a pending request after a recheck",
     )
     def post(self, request, pk):
@@ -94,12 +127,14 @@ class ApprovalApproveView(DecisionMixin, APIView):
 
 
 class ApprovalDenyView(DecisionMixin, APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsApprover]
+    throttle_classes = [DemoModeRateThrottle]
 
     @extend_schema(
+        auth=[{"Session": []}],
         request=DecisionSerializer,
-        responses={200: ApprovalSerializer},
+        responses={200: ApprovalSerializer, **error_responses(400, 401, 403, 404, 409, 429)},
         summary="Deny a pending request",
     )
     def post(self, request, pk):

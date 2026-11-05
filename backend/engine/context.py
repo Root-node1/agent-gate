@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from .screening import ScreeningResult
+
 
 @dataclass(frozen=True)
 class PolicyLimits:
@@ -19,6 +21,19 @@ class PolicyLimits:
     untrusted_source_action: str = "needs_approval"
     velocity_max_count: int = 0
     merchant_window_cap: Decimal = Decimal("0")
+    new_payee_cooldown_hours: int = 0
+    injection_escalate_threshold: int = 60
+    classifier_required: bool = False
+
+
+@dataclass(frozen=True)
+class PayeeState:
+    """What the engine needs to know about the merchant's known destination."""
+
+    known: bool
+    trusted: bool = False
+    within_cooldown: bool = False
+    destination_changed: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,3 +67,5 @@ class EvaluationContext:
     spend: SpendInput
     limits: PolicyLimits
     spent: Spent = field(default_factory=lambda: Spent(Decimal("0"), Decimal("0")))
+    screening: ScreeningResult | None = None
+    payee: PayeeState | None = None

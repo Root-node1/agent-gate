@@ -62,6 +62,7 @@ AUTHENTICATION_BACKENDS = [
 SITE_ID = 1
 
 MIDDLEWARE = [
+    "apps.common.middleware.RequestIdMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -129,6 +130,8 @@ def env_int(name: str, default: int) -> int:
 
 
 TRUSTED_PROXY_COUNT = env_int("TRUSTED_PROXY_COUNT", 0)
+INJECTION_CLASSIFIER = os.environ.get("INJECTION_CLASSIFIER", "").strip()
+INJECTION_CLASSIFIER_TIMEOUT_SECONDS = env_int("INJECTION_CLASSIFIER_TIMEOUT_SECONDS", 2)
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if DATABASE_URL:
@@ -164,6 +167,7 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
+    "EXCEPTION_HANDLER": "apps.common.errors.api_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "apps.agents.authentication.AgentKeyAuthentication",
@@ -175,11 +179,37 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "agent": os.environ.get("THROTTLE_AGENT", "60/min"),
         "anon": os.environ.get("THROTTLE_ANON", "20/min"),
+        "demo": os.environ.get("THROTTLE_DEMO", "60/min"),
     },
 }
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
+CSRF_FAILURE_VIEW = "apps.common.errors.csrf_failure"
+
+# Payment execution. The fake executor is the zero-credential default; set
+# PAYMENT_EXECUTOR=paypal to move real sandbox money. Execution jobs are
+# enqueued after an allow decision or an approval commits.
+PAYMENT_EXECUTOR = os.environ.get("PAYMENT_EXECUTOR", "fake").strip().lower()
+FAKE_EXECUTOR_MODE = os.environ.get("FAKE_EXECUTOR_MODE", "succeed").strip().lower()
+PAYMENTS_EXECUTION_ENABLED = os.environ.get(
+    "PAYMENTS_EXECUTION_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+# PayPal Payouts. Sandbox is the only mode unless live is explicitly allowed.
+PAYPAL_MODE = os.environ.get("PAYPAL_MODE", "sandbox").strip().lower()
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "").strip()
+PAYPAL_CLIENT_SECRET = os.environ.get("PAYPAL_CLIENT_SECRET", "").strip()
+PAYPAL_WEBHOOK_ID = os.environ.get("PAYPAL_WEBHOOK_ID", "").strip()
+PAYPAL_BASE_URL = os.environ.get("PAYPAL_BASE_URL", "").strip()
+PAYPAL_TIMEOUT_SECONDS = env_int("PAYPAL_TIMEOUT_SECONDS", 10)
+PAYPAL_MAX_RETRIES = env_int("PAYPAL_MAX_RETRIES", 2)
+PAYPAL_ALLOW_LIVE = os.environ.get("PAYPAL_ALLOW_LIVE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 ADMIN_PATH = os.environ.get("DJANGO_ADMIN_PATH", "admin").strip("/")
 if not ADMIN_PATH:
@@ -187,6 +217,13 @@ if not ADMIN_PATH:
 ADMIN_PATH = f"{ADMIN_PATH}/"
 
 DEMO_ORG_NAME = os.environ.get("DEMO_ORG_NAME", "demo")
+DEMO_USERNAME = os.environ.get("DEMO_USERNAME", "demo-viewer")
+DEMO_MODE = os.environ.get("DEMO_MODE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "AgentGate API",

@@ -48,6 +48,18 @@ python manage.py verify_audit
 
 If the reset happens after real audit events exist, stop and take a normal backup instead. Resetting destroys the chain.
 
+### Restricted audit-table grants
+
+The PostgreSQL trigger is the runtime guard. As defence in depth, restrict the
+application role on the audit table after migrations:
+
+```bash
+psql "$DATABASE_URL" -v app_role=agentgate_app -f deploy/audit-table-grants.sql
+```
+
+Run it as the table owner; ownership bypasses grants. The role keeps
+`SELECT`/`INSERT` on `audit_auditevent` and loses `UPDATE`/`DELETE`/`TRUNCATE`.
+
 ## Audit chain check
 
 ```bash
@@ -57,6 +69,55 @@ python manage.py verify_audit
 The command walks each organization's events in id order, recomputes every hash from the stored canonical payload, and exits non-zero at the first mismatch.
 
 Keep a periodic off-server `pg_dump` of the audit tables. The chain is tamper-evident, not tamper-proof, unless the head hash is anchored outside Neon.
+
+## Dashboard list filters
+
+Spend requests and audit events use `limit`/`offset` pagination and reject
+unknown filter or ordering fields with `400`.
+
+- Spend requests: `status`, `decision`, `agent`, `created_after`,
+  `created_before`, `ordering` (`id`, `created_at`, `updated_at`,
+  `amount_minor`, `merchant_ref`, `risk_score`, `status`, `decision`).
+  Date-only values cover the whole UTC day.
+- Audit events: `event_type`, `agent`, `spend_request`, `actor`
+  (`person`, `agent`, `system`), `actor_type`, `actor_id`, `created_after`,
+  `created_before`, `after`, `ordering` (`id`, `created_at`, `event_type`,
+  `actor_type`, `agent`, `spend_request`). `after` is the live-feed cursor and
+  orders newest results by ascending id.
+
+`GET /v1/spend-requests/{id}/` accepts either an agent key scoped to that
+agent or a dashboard session scoped to the caller's organizations.
+
+## Demo mode
+
+`DEMO_MODE=true` exposes anonymous, rate-limited dashboard reads and
+approval decisions for the seeded demo organization. It cannot create spend
+requests, agents, or policies, and it does not grant agent, policy, or admin
+surfaces.
+
+```bash
+python manage.py seed_demo
+# DEMO_MODE=true
+# DEMO_ORG_NAME=demo
+# DEMO_USERNAME=demo-viewer
+```
+
+`seed_demo` creates a passwordless `demo-viewer` user with the `approver` role
+in the demo organization. It refuses to reuse a real account or a username that
+belongs to another organization. Do not point `DEMO_ORG_NAME` at a production
+organization. Demo requests use `THROTTLE_DEMO` (default `60/min` per IP).
+
+## Sandbox smoke script
+
+From the repository root:
+
+```bash
+scripts/sandbox_smoke.py --receiver sandbox-buyer@example.com
+scripts/sandbox_smoke.py --receiver sandbox-buyer@example.com --confirm
+```
+
+The script delegates to `manage.py paypal_smoke`; see the sandbox payout smoke
+test section below.
 
 ## Procrastinate background jobs
 
@@ -83,14 +144,69 @@ No separate schema bootstrap step is required. The core tables in 3.10.0 are:
 ```bash
 DJANGO_SETTINGS_MODULE=config.settings.prod \
 python manage.py procrastinate worker \
-  -q smoke --listen-notify --delete-jobs=SUCCESSFUL
+  -q smoke,approvals,payments --listen-notify --delete-jobs=SUCCESSFUL
 ```
 
 For one-shot mode (process all current jobs then exit, useful in CI):
 
 ```bash
-python manage.py procrastinate worker -q smoke --no-listen-notify
+python manage.py procrastinate worker \
+  -q smoke,approvals,payments --no-listen-notify
 ```
+
+`apps.payments.tasks.execute_payment` runs on the `payments` queue. Payment
+jobs execute approved spend requests; production refuses to start with
+execution enabled unless `PAYMENT_EXECUTOR=paypal`.
+
+### PayPal webhooks
+
+`POST /webhooks/paypal` verifies every transmission through PayPal before it is
+stored. Set `PAYPAL_WEBHOOK_ID` to the webhook registered in the PayPal
+dashboard; `PAYMENT_EXECUTOR=paypal` is rejected at startup without it. The
+endpoint writes a deduplicated inbox row and enqueues
+`apps.payments.tasks.process_webhook_event` on the `payments` queue. If the
+enqueue fails, the event remains unprocessed in `payments_webhookevent` and can
+be re-enqueued by id.
+
+### Payment reconciliation
+
+A payment whose execution response was ambiguous stays `executing`. The worker
+runs `apps.payments.tasks.reconcile_payments_periodic` every five minutes on the
+`payments` queue; it queries PayPal by the stored batch reference and applies
+only forward-only terminal results. It never retries a payment.
+
+A payment that has no provider reference cannot be looked up. It stays
+`executing` and is counted as `unreferenced` for operator follow-up; a webhook
+is the only safe resolution. Run the check manually or inspect the backlog:
+
+```bash
+python manage.py reconcile_payments --dry-run
+python manage.py reconcile_payments --older-than-minutes 10 --limit 50
+```
+
+The command exits non-zero when a PayPal lookup fails or any executing payment
+has no reference, so it can be used as an alert hook.
+
+### Sandbox payout smoke test
+
+Use the smoke command to verify sandbox credentials, connectivity, and the
+Payouts payload without touching spend state or the audit log:
+
+```bash
+# Print the payload only.
+python manage.py paypal_smoke --receiver sandbox-buyer@example.com
+
+# Send one sandbox payout after inspecting the payload.
+python manage.py paypal_smoke --receiver sandbox-buyer@example.com \
+  --amount 0.01 --currency USD --confirm
+
+# Expect a rejection; exits 0 only when PayPal rejects the probe.
+python manage.py paypal_smoke --receiver invalid --failure --confirm
+```
+
+The command refuses to run unless `PAYPAL_MODE=sandbox` and both sandbox
+credentials are set. An ambiguous timeout exits non-zero and warns not to
+retry blindly.
 
 Environment variables that override CLI defaults:
 

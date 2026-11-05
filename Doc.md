@@ -27,13 +27,28 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 ## 3. Request flow
 
 1. The agent submits a spend request (amount, currency, merchant, purpose, where the instruction came from).
-2. The rule engine checks: merchant allow/block list, per-transaction cap, daily, weekly and monthly budgets, velocity, merchant-window spend, currency, provenance and deterministic injection phrases. New-payee checks are planned.
+2. The rule engine checks: merchant allow/block list, per-transaction cap, daily, weekly and monthly budgets, velocity, merchant-window spend, currency, provenance, new-payee and payee-change state, and deterministic injection phrases.
 3. If the instruction did not come from a trusted source, the request is escalated or denied according to the policy.
-4. A later injection classifier may score the request. It can raise risk but never lower a rule-based denial; deterministic injection phrases are denied today.
+4. An advisory injection classifier may score the request when configured. It can raise risk or escalate, but never denies or lowers a rule-based denial; deterministic injection phrases are still denied.
 5. Decision: allow, deny, or needs_approval, with reasons and matching rule IDs.
 6. If needs_approval, a human approves or denies in the dashboard.
 7. If allowed or approved, AgentGate executes the payment through PayPal.
 8. Every step is written to the audit log.
+
+### Spend pipeline (built)
+
+`backend/apps/spend/pipeline.py` owns the request path: normalize, idempotency replay, deterministic screening, agent lock, policy lock, context building, engine evaluation, persistence, audit, and approval creation. The view validates the body and calls the pipeline once.
+
+- Normalization and the body hash happen before the transaction. A matching `Idempotency-Key` and body returns the stored request before screening; a different body raises a conflict.
+- Deterministic screening runs before any row lock. The transaction then locks the agent and rechecks idempotency before locking the current policy, so concurrent retries cannot create duplicates.
+- An engine exception is recorded as a deny with an `engine_error` reason, in the same transaction as the request and audit events. The pipeline never turns an engine failure into an allow.
+- Approval-time rechecks use the same state helpers but do not run the submission pipeline.
+
+### Payment execution (built)
+
+An allowed request, or an approved one, schedules a `payments` queue job after the decision transaction commits. The job compare-and-swaps `approved` to `executing` before calling the executor, so two workers cannot pay the same request. Terminal provider statuses move the request to `succeeded` or `failed`; a timeout or ambiguous response leaves it `executing` with no blind retry. Every state change writes an audit event, and the provider reference is unique.
+
+`PAYMENT_EXECUTOR` selects the fake executor (local work and CI) or the sandbox Payouts executor. PayPal execution requires credentials from the environment; live mode is refused unless `PAYPAL_ALLOW_LIVE=1`. Verified PayPal webhooks update the request through a deduplicating inbox and a processing job, applying only forward-only status changes with PayPal-attributed audit events. `manage.py paypal_smoke` verifies sandbox credentials by sending one payout or a rejection probe without touching spend state or the audit log. A periodic reconciliation job queries PayPal by the stored batch reference for requests left `executing`; payments without a reference are reported for webhook or operator resolution, never retried blindly.
 
 ### Rule engine (built)
 
@@ -61,7 +76,9 @@ Precedence: any deny wins, then any approval reason gives `needs_approval`, othe
 
 Provenance is self-reported. The API cannot prove that `source=trusted` is true; the SDK or MCP wrapper must set it from where the instruction originated. Missing provenance defaults to `untrusted`, and every non-trusted source fails closed.
 
-Deterministic injection screening lives in `engine/screening/patterns.py`. It normalizes NFKC, casefolds, strips zero-width format characters, folds common homoglyphs, and collapses whitespace before matching phrases such as "ignore previous instructions", "override the policy" and "approve this payment". It is a backstop, not a detector: paraphrases can still pass. The classifier remains a later, advisory-only layer: it may escalate and add risk, never deny or lower another rule.
+Deterministic injection screening lives in `engine/screening/patterns.py`. It normalizes NFKC, casefolds, strips zero-width format characters, folds common homoglyphs, and collapses whitespace before matching phrases such as "ignore previous instructions", "override the policy" and "approve this payment". The pipeline runs it before acquiring any row lock and passes the result into the engine; direct engine calls without a result run it themselves. It is a backstop, not a detector: paraphrases can still pass.
+
+The advisory classifier is loaded from `INJECTION_CLASSIFIER` (a dotted path to a callable) and runs with `INJECTION_CLASSIFIER_TIMEOUT_SECONDS`, default 2 seconds. It returns an `engine.ClassifierResult` score from 0 to 100. A provider error or timeout becomes an unavailable result; when `classifier_required` is set, R15 escalates, otherwise the deterministic result decides. R15 never denies and never lowers another rule. Per-rule weights in `engine/scoring.py` turn the fired rules and the classifier score into the capped 0–100 `risk_score`.
 
 ## 4. Data model (built)
 
@@ -87,14 +104,24 @@ Note: bulk operations like `QuerySet.update()` bypass model methods. Never use t
 - `GET /api/health/` (built): compatibility alias for liveness
 - `GET /api/schema/` and `/api/docs/` (built): OpenAPI schema and Swagger UI
 - `POST /v1/spend-requests/` (built): submit a request with an `Idempotency-Key`. Returns 201 with `decision` (allow, deny or needs_approval), reasons and matched rules in the body
-- `GET /v1/spend-requests/{id}/` (built): read one of the agent's own requests
+- `GET /v1/spend-requests/` (built): dashboard list with `status`, `decision`, `agent`, `created_after`, `created_before` and whitelisted `ordering` filters
+- `GET /v1/spend-requests/{id}/` (built): an agent may read its own request; dashboard members may read their organizations' requests
 - `GET /v1/approvals/` and `GET /v1/approvals/{id}/` (built): approver/admin queue, pending by default, paginated
 - `POST /v1/approvals/{id}/approve` and `/deny` (built): approve rechecks current policy and destination; a failed recheck returns 409 and leaves the request pending
 - `GET /v1/policies/` (built): policy versions and merchant rules for the caller's organizations; policy writes are still planned
-- `GET /v1/audit/` and `GET /v1/audit/verify/` (built): filterable log and admin-only chain verification
-- `POST /webhooks/paypal`: payment events (planned)
+- `GET /v1/audit/` (built): filterable log with `actor`, `actor_type`, `actor_id`, `created_after`, `created_before`, `after` and whitelisted `ordering`
+- `GET /v1/audit/verify/` (built): admin-only chain verification
+- `POST /webhooks/paypal` (built): signature-verified Payouts events, stored in a deduplicating inbox and applied by a background job
 
-The OpenAPI schema is generated with drf-spectacular and used to generate the SDK.
+The OpenAPI schema is generated with drf-spectacular and used to generate the SDK. Error responses declare the shared envelope and the machine-readable code enum; CI runs `python manage.py spectacular --file /tmp/schema.yaml --validate`.
+
+### API errors, request ids and input handling (built)
+
+- Every API failure returns `{"error": {"code", "message", "details"}, "request_id": ...}` and the same id in the `X-Request-Id` response header. The id is generated server-side and never copied from a client header.
+- Errors use a stable machine code and the matching status: 400 validation/JSON problems, 401 bad or revoked key, 403 suspended agent or wrong role, 404 missing or out-of-scope objects, 405 wrong method, 409 idempotency or approval conflicts, 415 unsupported media, 429 throttling. Validation `details` are field-keyed objects; they never echo submitted values.
+- `amount` is accepted only as a decimal string. JSON numbers, exponents, signs, surrounding whitespace, too many digits, and fractional minor units for zero-decimal currencies are rejected before conversion. Invalid currency and timezone messages are generic.
+- Merchant, purpose, evidence, source reference, and destination text have bidi-override and control characters removed before validation and storage.
+- Unknown and revoked keys return the same 401 response. A valid key for a suspended agent returns 403 with `agent_suspended`.
 
 ### Dashboard authentication and approval API (built)
 
@@ -105,9 +132,15 @@ The OpenAPI schema is generated with drf-spectacular and used to generate the SD
 - An overdue approval is marked expired on decision and by `python manage.py expire_approvals`; run that command from cron (every minute is sufficient). The command is idempotent.
 - `GET /v1/audit/verify/` verifies only the organizations where the caller is an admin and returns 409 at the first broken event.
 
+### Demo mode (built)
+
+`DEMO_MODE=true` adds an anonymous dashboard principal for the seeded demo organization only. `python manage.py seed_demo` creates a passwordless `demo-viewer` user with the `approver` role; the authenticator refuses real accounts, staff/superusers, and users with memberships outside `DEMO_ORG_NAME`. Anonymous requests are limited by `THROTTLE_DEMO` (default 60/min per IP), can read spend requests and audit events in the demo organization, and can approve or deny its pending requests. Agent, policy, and admin surfaces stay unavailable. `DEMO_MODE` defaults off and must never point `DEMO_ORG_NAME` at a production organization.
+
+Approval creation emits `apps.approvals.notifications.approval_created`, so an SMS, email, or chat notifier can subscribe without changing the pipeline.
+
 ### Agent authentication and the spend request API (built)
 
-- Agents authenticate with `Authorization: Bearer <agent key>`. Keys look like `agk_...`. Lookup is by the stored prefix, then a constant-time hash comparison; suspended agents and revoked keys are rejected.
+- Agents authenticate with `Authorization: Bearer <agent key>`. Keys look like `agk_...`. Lookup is by the stored prefix, then a constant-time hash comparison. Unknown and revoked keys produce the same 401; a valid key for a suspended agent produces 403 `agent_suspended`.
 - Create an agent, its policy and merchant rules with `python manage.py create_agent NAME [--org ORG] --allow acme.com --block evil.com --cap 100 --threshold 50 --daily 500 --weekly 2000 --monthly 5000`. The key is printed once.
 - `POST /v1/spend-requests/` requires `Idempotency-Key` (1–255 printable characters) and takes `amount`, `currency`, `merchant`, optional `purpose`, `source_ref`, `evidence_excerpt`, `source`, and a paired `destination_type`/`destination_value`. Source values are `trusted`, `untrusted`, `web_page`, `email`, `invoice`, `tool_output` or `unknown`; missing means `untrusted`. Unknown body fields are rejected with 400. The response is HTTP 201 for every decision, so agents and SDKs must read `decision`, never just the status code.
 - Replaying the same key and body returns the stored request with `Idempotent-Replayed: true`; reusing the key with a different body or destination returns 409. The hash includes the normalized destination.
@@ -117,7 +150,7 @@ The OpenAPI schema is generated with drf-spectacular and used to generate the SD
 - The agent row is locked first (`select_for_update`), then the current policy row is locked, then the spend request is written, and only then does the audit append lock the organization. Every spend path uses that order, and approval decisions take the same locks in the same order. Concurrent requests for one agent therefore serialize and cannot both pass a budget. SQLite ignores the locks; PostgreSQL enforces them, a 20-way concurrency test covers the budget, and a query-order test covers agent-before-policy locking.
 - Audit events written per request: `request.received`, `decision.made`, and `approval.requested` when a human is needed.
 - A request from an agent with no policy returns 409.
-- `risk_score` stays 0 until the injection classifier lands.
+- `risk_score` is a capped 0–100 value computed from deterministic per-rule weights plus the advisory classifier score; it is stored with the decision and never overrides the allow/deny/needs_approval outcome.
 
 ## 6. Dashboard screens (planned)
 
@@ -188,13 +221,21 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [x] Data models, migrations and admin (split into accounts, agents, policies, payees, spend, approvals, payments, audit)
 - [x] Rule engine (pure function, unit-tested)
 - [x] Spend request API with agent key auth and audit trail
-- [x] Framework-free `engine/` package with R01–R10, R13, R14 and R16
-- [x] R08 velocity, R09 merchant-window and R16 weekly-budget rules
+- [x] Framework-free `engine/` package with R01–R16
+- [x] R08 velocity, R09 merchant-window, R11 new-payee, R12 payee-change and R16 weekly-budget rules
+- [x] Deterministic risk weights, advisory classifier integration, and property tests
 - [x] Idempotent spend requests, agent-row locking, audit hash chain and demo reset command
 - [x] Approval queue API with recheck, session auth, roles, and expiry command
 - [x] Read APIs for policies and audit, plus admin audit verification
-- [ ] PayPal sandbox payment execution and webhooks
-- [ ] Demo agent and injection classifier
+- [x] Stable API error envelope, request ids, strict spend input, and OpenAPI validation
+- [x] Spend pipeline with pre-lock screening and fail-closed engine errors
+- [x] Dashboard authentication, roles, GitHub OAuth, MFA, and password reset
+- [x] Agent and API-key management, policy CRUD, spend list, and audit read/verify APIs
+- [x] Procrastinate worker and periodic approval expiry
+- [x] PayPal sandbox payout client, executor, and compare-and-swap execution job
+- [x] PayPal webhook signature verification, deduplicating inbox, and forward-only status processing
+- [x] Ambiguous-payment reconciliation by provider reference
+- [ ] Demo agent and live classifier provider
 - [ ] Dashboard screens
 - [ ] Deploy on the Contabo VPS
 - [ ] SDK generated from the OpenAPI schema

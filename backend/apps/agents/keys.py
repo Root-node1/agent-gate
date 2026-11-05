@@ -6,6 +6,7 @@ import secrets
 
 KEY_PREFIX = "agk_"
 PREFIX_LENGTH = 12
+DUMMY_HASH = "0" * 64
 
 
 def hash_key(raw_key: str) -> str:

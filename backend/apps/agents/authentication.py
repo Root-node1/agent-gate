@@ -1,12 +1,15 @@
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 from rest_framework.authentication import SessionAuthentication
 
-from .keys import PREFIX_LENGTH, hash_matches
-from .models import ApiKey
+from apps.common.errors import AgentSuspended
+
+from .keys import DUMMY_HASH, PREFIX_LENGTH, hash_matches
+from .models import Agent, ApiKey
 
 
 class DashboardSessionAuthentication(SessionAuthentication):
@@ -36,6 +39,54 @@ class DashboardSessionScheme(OpenApiAuthenticationExtension):
         }
 
 
+class DemoModeAuthentication(authentication.BaseAuthentication):
+    """Anonymous dashboard principal for a seeded demo organization.
+
+    Disabled unless ``DEMO_MODE`` is on. A request with an Authorization header
+    or an existing session is left to the real authenticators.
+    """
+
+    def authenticate(self, request):
+        if not getattr(settings, "DEMO_MODE", False):
+            return None
+        if authentication.get_authorization_header(request):
+            return None
+        django_user = getattr(request._request, "user", None)
+        if django_user is not None and django_user.is_authenticated:
+            return None
+
+        from apps.accounts.models import OrgMembership, User
+
+        username = getattr(settings, "DEMO_USERNAME", "demo-viewer")
+        user = (
+            User.objects.filter(
+                username=username,
+                is_active=True,
+                is_staff=False,
+                is_superuser=False,
+                password__startswith="!",
+            )
+            .only("id", "username")
+            .first()
+        )
+        if user is None:
+            return None
+        memberships = user.memberships.all()
+        if memberships.exclude(organization__name=settings.DEMO_ORG_NAME).exists():
+            return None
+        if not memberships.filter(
+            organization__name=settings.DEMO_ORG_NAME,
+            role__in=(OrgMembership.Role.ADMIN, OrgMembership.Role.APPROVER),
+        ).exists():
+            return None
+
+        request.demo_mode = True
+        return (user, None)
+
+    def authenticate_header(self, request):
+        return "DemoMode"
+
+
 class AgentPrincipal:
     """A request principal backed by an agent, so DRF permission checks work unchanged."""
 
@@ -60,16 +111,20 @@ class AgentKeyAuthentication(authentication.BaseAuthentication):
         if len(parts) != 2 or parts[0] != self.keyword:
             raise exceptions.AuthenticationFailed("Use 'Authorization: Bearer <agent key>'.")
         raw_key = parts[1]
-        try:
-            api_key = ApiKey.objects.select_related("agent").get(
-                prefix=raw_key[:PREFIX_LENGTH],
-                revoked_at__isnull=True,
-                agent__status="active",
-            )
-        except ApiKey.DoesNotExist:
-            raise exceptions.AuthenticationFailed("Invalid or inactive agent key.") from None
+        api_key = (
+            ApiKey.objects.select_related("agent")
+            .filter(prefix=raw_key[:PREFIX_LENGTH])
+            .first()
+        )
+        if api_key is None:
+            hash_matches(raw_key, DUMMY_HASH)
+            raise exceptions.AuthenticationFailed("Invalid or inactive agent key.")
         if not hash_matches(raw_key, api_key.key_hash):
             raise exceptions.AuthenticationFailed("Invalid or inactive agent key.")
+        if api_key.revoked_at is not None:
+            raise exceptions.AuthenticationFailed("Invalid or inactive agent key.")
+        if api_key.agent.status != Agent.Status.ACTIVE:
+            raise AgentSuspended()
         self._mark_used(api_key)
         return (AgentPrincipal(api_key.agent), None)
 

@@ -1,9 +1,11 @@
 from io import StringIO
 
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase
 
+from apps.accounts.models import OrgMembership, User
 from apps.agents.keys import hash_key
 from apps.agents.models import Agent
 from apps.audit.models import AuditEvent
@@ -79,3 +81,16 @@ class SeedDemoCommandTests(TestCase):
         self.assertEqual(AuditEvent.objects.filter(event_type=AuditEvent.EventType.DEMO_RESET).count(), 2)
         latest = AuditEvent.objects.filter(event_type=AuditEvent.EventType.DEMO_RESET).first()
         self.assertEqual(latest.payload["previous_agent_id"], str(first.pk))
+
+    def test_creates_passwordless_approver_for_demo_mode(self):
+        call_command("seed_demo", stdout=StringIO())
+        user = User.objects.get(username=settings.DEMO_USERNAME)
+        self.assertFalse(user.has_usable_password())
+        membership = OrgMembership.objects.get(user=user)
+        self.assertEqual(membership.organization.name, settings.DEMO_ORG_NAME)
+        self.assertEqual(membership.role, OrgMembership.Role.APPROVER)
+
+    def test_refuses_to_impersonate_a_real_account(self):
+        User.objects.create_user(settings.DEMO_USERNAME, password="real-password")
+        with self.assertRaises(CommandError):
+            call_command("seed_demo", stdout=StringIO())

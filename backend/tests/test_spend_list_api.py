@@ -184,6 +184,60 @@ class SpendListPaginationTests(SpendListApiBase):
         self.assertNotEqual(first_id, all_body["results"][0]["id"])
 
 
+class SpendListFilteringTests(SpendListApiBase):
+    def test_status_decision_agent_and_date_filters(self):
+        older = self.create_request(
+            amount_minor=500,
+            decision=SpendRequest.Decision.DENY,
+            status=SpendRequest.Status.DENIED,
+        )
+        newer = self.create_request(
+            amount_minor=2_500,
+            decision=SpendRequest.Decision.NEEDS_APPROVAL,
+            status=SpendRequest.Status.PENDING_APPROVAL,
+        )
+        SpendRequest.objects.filter(pk=older.pk).update(
+            created_at=timezone.now() - timezone.timedelta(days=10)
+        )
+        self.authenticate(self.admin)
+
+        body = self.client.get(f"{URL}?status=denied").json()
+        self.assertEqual([row["id"] for row in body["results"]], [str(older.id)])
+
+        body = self.client.get(f"{URL}?decision=needs_approval").json()
+        self.assertEqual([row["id"] for row in body["results"]], [str(newer.id)])
+
+        body = self.client.get(f"{URL}?agent={self.agent.id}").json()
+        self.assertEqual(body["count"], 2)
+
+        body = self.client.get(f"{URL}?created_after={timezone.now().date()}").json()
+        self.assertEqual([row["id"] for row in body["results"]], [str(newer.id)])
+
+        body = self.client.get(f"{URL}?from={timezone.now().date()}&to={timezone.now().date()}").json()
+        self.assertEqual([row["id"] for row in body["results"]], [str(newer.id)])
+
+    def test_invalid_filters_and_ordering_are_rejected(self):
+        self.authenticate(self.admin)
+        for query in (
+            "status=made-up",
+            "decision=maybe",
+            "agent=nope",
+            "created_after=yesterday",
+            "ordering=amount",
+        ):
+            with self.subTest(query=query):
+                self.assertEqual(self.client.get(f"{URL}?{query}").status_code, 400)
+
+    def test_ordering_is_whitelisted(self):
+        small = self.create_request(amount_minor=100)
+        large = self.create_request(amount_minor=900)
+        self.authenticate(self.admin)
+        body = self.client.get(f"{URL}?ordering=amount_minor").json()
+        self.assertEqual([row["id"] for row in body["results"]], [str(small.id), str(large.id)])
+        body = self.client.get(f"{URL}?ordering=-amount_minor").json()
+        self.assertEqual([row["id"] for row in body["results"]], [str(large.id), str(small.id)])
+
+
 class SpendListOrderingTests(SpendListApiBase):
     def test_results_ordered_newest_first(self):
         first = self.create_request()
@@ -244,6 +298,41 @@ class SpendListSecurityTests(SpendListApiBase):
             self.assertTrue(set(result.keys()).issubset(allowed))
 
 
+class SpendDetailAccessTests(SpendListApiBase):
+    def test_dashboard_member_can_read_own_organization_detail(self):
+        spend_request = self.create_request()
+        self.authenticate(self.viewer)
+        response = self.client.get(f"{URL}{spend_request.id}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], str(spend_request.id))
+
+    def test_dashboard_member_cannot_read_another_organization_detail(self):
+        other_org = Organization.objects.create(name="other")
+        other_agent, _ = Agent.create_with_key("other-agent", other_org)
+        other_policy = Policy.objects.create(agent=other_agent)
+        other_request = SpendRequest.objects.create(
+            organization=other_org,
+            agent=other_agent,
+            policy=other_policy,
+            policy_version=other_policy.version,
+            amount_minor=100,
+            currency="USD",
+            merchant_ref="other.example",
+            decision=SpendRequest.Decision.ALLOW,
+            status=SpendRequest.Status.APPROVED,
+        )
+        self.authenticate(self.admin)
+        self.assertEqual(self.client.get(f"{URL}{other_request.id}/").status_code, 404)
+
+    def test_agent_cannot_read_another_agents_detail(self):
+        other_agent, _ = Agent.create_with_key("other-agent", self.organization)
+        Policy.objects.create(agent=other_agent)
+        spend_request = self.create_request(agent=other_agent)
+        self.client.force_authenticate(user=None)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.key}")
+        self.assertEqual(self.client.get(f"{URL}{spend_request.id}/").status_code, 404)
+
+
 class SpendListRegressionTests(SpendListApiBase):
     def test_post_still_works_with_agent_key(self):
         self.client.force_authenticate(user=None)
@@ -287,3 +376,18 @@ class SpendListSchemaTests(APITestCase):
         op = schema["paths"]["/v1/spend-requests/"]["get"]
         schema_ref = op["responses"]["200"]["content"]["application/json"]["schema"]
         self.assertEqual(schema_ref["$ref"], "#/components/schemas/PaginatedSpendRequestList")
+
+    def test_detail_advertises_agent_and_dashboard_auth(self):
+        schema = self._schema()
+        op = schema["paths"]["/v1/spend-requests/{id}/"]["get"]
+        self.assertIn({"AgentKey": []}, op["security"])
+        self.assertIn({"Session": []}, op["security"])
+
+    def test_list_advertises_supported_filters(self):
+        schema = self._schema()
+        op = schema["paths"]["/v1/spend-requests/"]["get"]
+        names = {parameter["name"] for parameter in op["parameters"]}
+        self.assertTrue(
+            {"status", "decision", "agent", "created_after", "created_before", "ordering"}
+            <= names
+        )

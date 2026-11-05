@@ -179,6 +179,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "agent": os.environ.get("THROTTLE_AGENT", "60/min"),
         "anon": os.environ.get("THROTTLE_ANON", "20/min"),
+        "demo": os.environ.get("THROTTLE_DEMO", "60/min"),
     },
 }
 
@@ -216,6 +217,13 @@ if not ADMIN_PATH:
 ADMIN_PATH = f"{ADMIN_PATH}/"
 
 DEMO_ORG_NAME = os.environ.get("DEMO_ORG_NAME", "demo")
+DEMO_USERNAME = os.environ.get("DEMO_USERNAME", "demo-viewer")
+DEMO_MODE = os.environ.get("DEMO_MODE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "AgentGate API",

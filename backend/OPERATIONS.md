@@ -48,6 +48,18 @@ python manage.py verify_audit
 
 If the reset happens after real audit events exist, stop and take a normal backup instead. Resetting destroys the chain.
 
+### Restricted audit-table grants
+
+The PostgreSQL trigger is the runtime guard. As defence in depth, restrict the
+application role on the audit table after migrations:
+
+```bash
+psql "$DATABASE_URL" -v app_role=agentgate_app -f deploy/audit-table-grants.sql
+```
+
+Run it as the table owner; ownership bypasses grants. The role keeps
+`SELECT`/`INSERT` on `audit_auditevent` and loses `UPDATE`/`DELETE`/`TRUNCATE`.
+
 ## Audit chain check
 
 ```bash
@@ -57,6 +69,55 @@ python manage.py verify_audit
 The command walks each organization's events in id order, recomputes every hash from the stored canonical payload, and exits non-zero at the first mismatch.
 
 Keep a periodic off-server `pg_dump` of the audit tables. The chain is tamper-evident, not tamper-proof, unless the head hash is anchored outside Neon.
+
+## Dashboard list filters
+
+Spend requests and audit events use `limit`/`offset` pagination and reject
+unknown filter or ordering fields with `400`.
+
+- Spend requests: `status`, `decision`, `agent`, `created_after`,
+  `created_before`, `ordering` (`id`, `created_at`, `updated_at`,
+  `amount_minor`, `merchant_ref`, `risk_score`, `status`, `decision`).
+  Date-only values cover the whole UTC day.
+- Audit events: `event_type`, `agent`, `spend_request`, `actor`
+  (`person`, `agent`, `system`), `actor_type`, `actor_id`, `created_after`,
+  `created_before`, `after`, `ordering` (`id`, `created_at`, `event_type`,
+  `actor_type`, `agent`, `spend_request`). `after` is the live-feed cursor and
+  orders newest results by ascending id.
+
+`GET /v1/spend-requests/{id}/` accepts either an agent key scoped to that
+agent or a dashboard session scoped to the caller's organizations.
+
+## Demo mode
+
+`DEMO_MODE=true` exposes anonymous, rate-limited dashboard reads and
+approval decisions for the seeded demo organization. It cannot create spend
+requests, agents, or policies, and it does not grant agent, policy, or admin
+surfaces.
+
+```bash
+python manage.py seed_demo
+# DEMO_MODE=true
+# DEMO_ORG_NAME=demo
+# DEMO_USERNAME=demo-viewer
+```
+
+`seed_demo` creates a passwordless `demo-viewer` user with the `approver` role
+in the demo organization. It refuses to reuse a real account or a username that
+belongs to another organization. Do not point `DEMO_ORG_NAME` at a production
+organization. Demo requests use `THROTTLE_DEMO` (default `60/min` per IP).
+
+## Sandbox smoke script
+
+From the repository root:
+
+```bash
+scripts/sandbox_smoke.py --receiver sandbox-buyer@example.com
+scripts/sandbox_smoke.py --receiver sandbox-buyer@example.com --confirm
+```
+
+The script delegates to `manage.py paypal_smoke`; see the sandbox payout smoke
+test section below.
 
 ## Procrastinate background jobs
 

@@ -104,11 +104,13 @@ Note: bulk operations like `QuerySet.update()` bypass model methods. Never use t
 - `GET /api/health/` (built): compatibility alias for liveness
 - `GET /api/schema/` and `/api/docs/` (built): OpenAPI schema and Swagger UI
 - `POST /v1/spend-requests/` (built): submit a request with an `Idempotency-Key`. Returns 201 with `decision` (allow, deny or needs_approval), reasons and matched rules in the body
-- `GET /v1/spend-requests/{id}/` (built): read one of the agent's own requests
+- `GET /v1/spend-requests/` (built): dashboard list with `status`, `decision`, `agent`, `created_after`, `created_before` and whitelisted `ordering` filters
+- `GET /v1/spend-requests/{id}/` (built): an agent may read its own request; dashboard members may read their organizations' requests
 - `GET /v1/approvals/` and `GET /v1/approvals/{id}/` (built): approver/admin queue, pending by default, paginated
 - `POST /v1/approvals/{id}/approve` and `/deny` (built): approve rechecks current policy and destination; a failed recheck returns 409 and leaves the request pending
 - `GET /v1/policies/` (built): policy versions and merchant rules for the caller's organizations; policy writes are still planned
-- `GET /v1/audit/` and `GET /v1/audit/verify/` (built): filterable log and admin-only chain verification
+- `GET /v1/audit/` (built): filterable log with `actor`, `actor_type`, `actor_id`, `created_after`, `created_before`, `after` and whitelisted `ordering`
+- `GET /v1/audit/verify/` (built): admin-only chain verification
 - `POST /webhooks/paypal` (built): signature-verified Payouts events, stored in a deduplicating inbox and applied by a background job
 
 The OpenAPI schema is generated with drf-spectacular and used to generate the SDK. Error responses declare the shared envelope and the machine-readable code enum; CI runs `python manage.py spectacular --file /tmp/schema.yaml --validate`.
@@ -129,6 +131,12 @@ The OpenAPI schema is generated with drf-spectacular and used to generate the SD
 - Approval locks follow the same order: agent, current policy, spend request, approval, then organization for audit. The recheck re-runs the current policy and budget. If a hard rule now denies or a known payee fingerprint changed, the API returns 409 with rule ids and leaves the approval pending.
 - An overdue approval is marked expired on decision and by `python manage.py expire_approvals`; run that command from cron (every minute is sufficient). The command is idempotent.
 - `GET /v1/audit/verify/` verifies only the organizations where the caller is an admin and returns 409 at the first broken event.
+
+### Demo mode (built)
+
+`DEMO_MODE=true` adds an anonymous dashboard principal for the seeded demo organization only. `python manage.py seed_demo` creates a passwordless `demo-viewer` user with the `approver` role; the authenticator refuses real accounts, staff/superusers, and users with memberships outside `DEMO_ORG_NAME`. Anonymous requests are limited by `THROTTLE_DEMO` (default 60/min per IP), can read spend requests and audit events in the demo organization, and can approve or deny its pending requests. Agent, policy, and admin surfaces stay unavailable. `DEMO_MODE` defaults off and must never point `DEMO_ORG_NAME` at a production organization.
+
+Approval creation emits `apps.approvals.notifications.approval_created`, so an SMS, email, or chat notifier can subscribe without changing the pipeline.
 
 ### Agent authentication and the spend request API (built)
 

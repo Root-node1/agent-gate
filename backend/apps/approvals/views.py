@@ -6,7 +6,11 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import OrgMembership
 from apps.accounts.permissions import IsApprover
-from apps.agents.authentication import DashboardSessionAuthentication
+from apps.agents.authentication import (
+    DashboardSessionAuthentication,
+    DemoModeAuthentication,
+)
+from apps.agents.throttling import DemoModeRateThrottle
 from apps.common.errors import ApiError, ErrorCode
 from apps.common.pagination import DashboardPagination
 from apps.common.schema import error_responses
@@ -27,10 +31,12 @@ def approval_queryset(user):
 
 
 class ApprovalListView(APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsApprover]
+    throttle_classes = [DemoModeRateThrottle]
 
     @extend_schema(
+        auth=[{"Session": []}],
         responses={200: ApprovalSerializer(many=True), **error_responses(400, 401, 403, 429)},
         summary="List approvals",
     )
@@ -51,10 +57,12 @@ class ApprovalListView(APIView):
 
 
 class ApprovalDetailView(APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsApprover]
+    throttle_classes = [DemoModeRateThrottle]
 
     @extend_schema(
+        auth=[{"Session": []}],
         responses={200: ApprovalSerializer, **error_responses(401, 403, 404, 429)},
         summary="Get an approval",
     )
@@ -104,10 +112,12 @@ class DecisionMixin:
 
 
 class ApprovalApproveView(DecisionMixin, APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsApprover]
+    throttle_classes = [DemoModeRateThrottle]
 
     @extend_schema(
+        auth=[{"Session": []}],
         request=DecisionSerializer,
         responses={200: ApprovalSerializer, **error_responses(400, 401, 403, 404, 409, 429)},
         summary="Approve a pending request after a recheck",
@@ -117,10 +127,12 @@ class ApprovalApproveView(DecisionMixin, APIView):
 
 
 class ApprovalDenyView(DecisionMixin, APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsApprover]
+    throttle_classes = [DemoModeRateThrottle]
 
     @extend_schema(
+        auth=[{"Session": []}],
         request=DecisionSerializer,
         responses={200: ApprovalSerializer, **error_responses(400, 401, 403, 404, 409, 429)},
         summary="Deny a pending request",

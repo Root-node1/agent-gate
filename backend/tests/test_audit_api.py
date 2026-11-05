@@ -3,6 +3,7 @@ from unittest import skipUnless
 
 from django.core.management import call_command
 from django.db import connection
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Organization, OrgMembership, User
@@ -43,6 +44,36 @@ class AuditApiTests(APITestCase):
         self.assertEqual(self.client.get("/v1/audit/?agent=nope").status_code, 400)
         self.assertEqual(self.client.get("/v1/audit/?spend_request=nope").status_code, 400)
         self.assertEqual(self.client.get("/v1/audit/?after=nope").status_code, 400)
+
+    def test_actor_and_date_filters(self):
+        agent_event = AuditEvent.objects.create(
+            organization=self.organization,
+            event_type=AuditEvent.EventType.REQUEST_RECEIVED,
+            actor_type=AuditEvent.ActorType.AGENT,
+            actor_id="agent-1",
+            created_at=timezone.now() - timezone.timedelta(days=5),
+        )
+        user_event = AuditEvent.objects.create(
+            organization=self.organization,
+            event_type=AuditEvent.EventType.APPROVAL_APPROVED,
+            actor_type=AuditEvent.ActorType.USER,
+            actor_id="user-1",
+        )
+        self.client.force_authenticate(user=self.viewer)
+
+        body = self.client.get("/v1/audit/?actor=person").json()
+        self.assertEqual([row["id"] for row in body["results"]], [user_event.pk])
+        body = self.client.get("/v1/audit/?actor=agent").json()
+        self.assertEqual([row["id"] for row in body["results"]], [agent_event.pk])
+        body = self.client.get("/v1/audit/?actor=agent&actor_id=agent-1").json()
+        self.assertEqual([row["id"] for row in body["results"]], [agent_event.pk])
+        body = self.client.get(f"/v1/audit/?from={timezone.now().date()}").json()
+        self.assertNotIn(agent_event.pk, [row["id"] for row in body["results"]])
+
+    def test_ordering_is_whitelisted(self):
+        self.client.force_authenticate(user=self.viewer)
+        self.assertEqual(self.client.get("/v1/audit/?ordering=event_type").status_code, 200)
+        self.assertEqual(self.client.get("/v1/audit/?ordering=payload").status_code, 400)
 
     def test_after_returns_newer_events_in_order(self):
         newer = AuditEvent.record(

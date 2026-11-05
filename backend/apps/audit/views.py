@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
 from rest_framework.response import Response
@@ -7,14 +5,31 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import Organization, OrgMembership
 from apps.accounts.permissions import IsDashboardUser, IsOrganizationAdmin
-from apps.agents.authentication import DashboardSessionAuthentication
+from apps.agents.authentication import (
+    DashboardSessionAuthentication,
+    DemoModeAuthentication,
+)
+from apps.agents.throttling import DemoModeRateThrottle
 from apps.common.errors import ApiError, ErrorCode
 from apps.common.pagination import DashboardPagination
+from apps.common.query_params import (
+    choice_param,
+    datetime_param,
+    ordering_param,
+    uuid_param,
+)
 from apps.common.schema import error_responses
 
 from .models import AuditEvent
 from .serializers import AuditEventSerializer
 from .services import AuditChainBroken, verify_organizations
+
+AUDIT_ORDERING = ("id", "created_at", "event_type", "actor_type", "agent", "spend_request")
+ACTOR_KINDS = {
+    "person": (AuditEvent.ActorType.USER,),
+    "agent": (AuditEvent.ActorType.AGENT,),
+    "system": (AuditEvent.ActorType.SYSTEM, AuditEvent.ActorType.PAYPAL),
+}
 
 
 def audit_queryset(user):
@@ -24,15 +39,25 @@ def audit_queryset(user):
 
 
 class AuditListView(APIView):
-    authentication_classes = [DashboardSessionAuthentication]
+    authentication_classes = [DemoModeAuthentication, DashboardSessionAuthentication]
     permission_classes = [IsDashboardUser]
+    throttle_classes = [DemoModeRateThrottle]
 
     @extend_schema(
+        auth=[{"Session": []}],
         parameters=[
             OpenApiParameter("event_type", str, required=False),
             OpenApiParameter("agent", str, required=False),
             OpenApiParameter("spend_request", str, required=False),
+            OpenApiParameter("actor", str, required=False),
+            OpenApiParameter("actor_type", str, required=False),
+            OpenApiParameter("actor_id", str, required=False),
+            OpenApiParameter("created_after", str, required=False),
+            OpenApiParameter("created_before", str, required=False),
+            OpenApiParameter("from", str, required=False, description="Alias for created_after."),
+            OpenApiParameter("to", str, required=False, description="Alias for created_before."),
             OpenApiParameter("after", int, required=False),
+            OpenApiParameter("ordering", str, required=False),
         ],
         responses={
             200: AuditEventSerializer(many=True),
@@ -42,28 +67,33 @@ class AuditListView(APIView):
     )
     def get(self, request):
         queryset = audit_queryset(request.user)
-        event_type = request.query_params.get("event_type")
+        event_type = choice_param(request, "event_type", AuditEvent.EventType)
         if event_type:
-            if event_type not in AuditEvent.EventType.values:
-                raise ApiError(
-                    "Unknown event_type.",
-                    code=ErrorCode.VALIDATION_ERROR,
-                    details={"event_type": ["Select a valid event type."]},
-                )
             queryset = queryset.filter(event_type=event_type)
         for field in ("agent", "spend_request"):
-            value = request.query_params.get(field)
-            if not value:
-                continue
-            try:
-                UUID(value)
-            except ValueError as exc:
-                raise ApiError(
-                    f"{field} must be a UUID.",
-                    code=ErrorCode.VALIDATION_ERROR,
-                    details={field: ["Enter a valid UUID."]},
-                ) from exc
-            queryset = queryset.filter(**{f"{field}_id": value})
+            value = uuid_param(request, field)
+            if value:
+                queryset = queryset.filter(**{f"{field}_id": value})
+        actor = choice_param(request, "actor", tuple(ACTOR_KINDS))
+        if actor:
+            queryset = queryset.filter(actor_type__in=ACTOR_KINDS[actor])
+        actor_type = choice_param(request, "actor_type", AuditEvent.ActorType)
+        if actor_type:
+            queryset = queryset.filter(actor_type=actor_type)
+        actor_id = request.query_params.get("actor_id")
+        if actor_id:
+            queryset = queryset.filter(actor_id=actor_id)
+        created_after = datetime_param(
+            request, "created_after"
+        ) or datetime_param(request, "from")
+        if created_after:
+            queryset = queryset.filter(created_at__gte=created_after)
+        created_before = datetime_param(
+            request, "created_before", end_of_day=True
+        ) or datetime_param(request, "to", end_of_day=True)
+        if created_before:
+            queryset = queryset.filter(created_at__lte=created_before)
+
         after = request.query_params.get("after")
         if after is not None:
             try:
@@ -75,6 +105,12 @@ class AuditListView(APIView):
                     details={"after": ["Enter an integer event id."]},
                 ) from exc
             queryset = queryset.filter(id__gt=after_id).order_by("id")
+        else:
+            ordering = ordering_param(request, AUDIT_ORDERING, ("-created_at", "-id"))
+            if not any(field.lstrip("-") == "id" for field in ordering):
+                ordering += ("-id",)
+            queryset = queryset.order_by(*ordering)
+
         paginator = DashboardPagination()
         page = paginator.paginate_queryset(queryset, request, view=self)
         return paginator.get_paginated_response(AuditEventSerializer(page, many=True).data)

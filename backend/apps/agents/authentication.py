@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
@@ -36,6 +37,54 @@ class DashboardSessionScheme(OpenApiAuthenticationExtension):
             "name": "sessionid",
             "description": "Django session cookie for dashboard users.",
         }
+
+
+class DemoModeAuthentication(authentication.BaseAuthentication):
+    """Anonymous dashboard principal for a seeded demo organization.
+
+    Disabled unless ``DEMO_MODE`` is on. A request with an Authorization header
+    or an existing session is left to the real authenticators.
+    """
+
+    def authenticate(self, request):
+        if not getattr(settings, "DEMO_MODE", False):
+            return None
+        if authentication.get_authorization_header(request):
+            return None
+        django_user = getattr(request._request, "user", None)
+        if django_user is not None and django_user.is_authenticated:
+            return None
+
+        from apps.accounts.models import OrgMembership, User
+
+        username = getattr(settings, "DEMO_USERNAME", "demo-viewer")
+        user = (
+            User.objects.filter(
+                username=username,
+                is_active=True,
+                is_staff=False,
+                is_superuser=False,
+                password__startswith="!",
+            )
+            .only("id", "username")
+            .first()
+        )
+        if user is None:
+            return None
+        memberships = user.memberships.all()
+        if memberships.exclude(organization__name=settings.DEMO_ORG_NAME).exists():
+            return None
+        if not memberships.filter(
+            organization__name=settings.DEMO_ORG_NAME,
+            role__in=(OrgMembership.Role.ADMIN, OrgMembership.Role.APPROVER),
+        ).exists():
+            return None
+
+        request.demo_mode = True
+        return (user, None)
+
+    def authenticate_header(self, request):
+        return "DemoMode"
 
 
 class AgentPrincipal:

@@ -76,6 +76,14 @@ class PipelineTests(TestCase):
         self.assertEqual(second.pk, first.pk)
         screen.assert_not_called()
 
+    def test_pipeline_persists_consistent_tenancy(self):
+        spend_request, replayed = self.submit(amount=Decimal("75.00"))
+
+        self.assertFalse(replayed)
+        self.assertEqual(spend_request.organization_id, self.agent.organization_id)
+        approval = Approval.objects.get(spend_request=spend_request)
+        self.assertEqual(approval.organization_id, self.agent.organization_id)
+
     def test_engine_failure_is_recorded_as_a_deny(self):
         with self.assertLogs("apps.spend.pipeline", level="ERROR"):
             with patch(

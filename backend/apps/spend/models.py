@@ -1,5 +1,6 @@
 import uuid
 
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import Q
@@ -114,6 +115,29 @@ class SpendRequest(models.Model):
         return instance
 
     def save(self, *args, **kwargs):
+        if self.agent_id is None:
+            raise ValidationError({"agent": "A spend request requires an agent."})
+        agent_organization_id = self.agent.organization_id
+        if (
+            self.organization_id is not None
+            and self.organization_id != agent_organization_id
+        ):
+            raise ValidationError(
+                {
+                    "organization": (
+                        "The spend request organization must match its agent's organization."
+                    )
+                }
+            )
+        self.organization_id = agent_organization_id
+
+        if self.policy_id is None:
+            raise ValidationError({"policy": "A spend request requires a policy."})
+        if self.policy.agent_id != self.agent_id:
+            raise ValidationError(
+                {"policy": "The spend request policy must belong to its agent."}
+            )
+
         self.currency = normalize_currency(self.currency)
         original = getattr(self, "_original_decision", None)
         if not self._state.adding and original is not None and original != self.decision:

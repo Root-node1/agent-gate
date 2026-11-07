@@ -51,6 +51,7 @@ def build_limits(policy: Policy) -> engine.PolicyLimits:
         blocked_merchants=frozenset(
             r.merchant_ref for r in merchant_rules if r.kind == MerchantRule.Kind.BLOCK
         ),
+        merchant_mode=policy.merchant_mode,
         untrusted_source_action=policy.untrusted_source_action,
         new_payee_cooldown_hours=policy.new_payee_cooldown_hours,
         injection_escalate_threshold=policy.injection_escalate_threshold,

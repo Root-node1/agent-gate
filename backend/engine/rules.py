@@ -60,7 +60,7 @@ def evaluate_context(context: EvaluationContext) -> Decision:
         deny("R02_CURRENCY", "The request currency does not match the policy currency.")
     if merchant in blocked:
         deny("R03_MERCHANT_BLOCK", "The merchant is blocked.")
-    if allowed and merchant not in allowed:
+    if limits.merchant_mode != "blocklist" and merchant not in allowed:
         deny("R04_MERCHANT_ALLOW", "The merchant is not on the allow list.")
     if spend.amount <= 0:
         deny("R05_PER_TX_CAP", "The amount must be greater than zero.")

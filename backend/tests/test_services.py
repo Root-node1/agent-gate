@@ -4,11 +4,57 @@ from decimal import Decimal
 from django.test import TestCase
 from django.utils import timezone
 
+import engine
 from apps.accounts.models import Organization
 from apps.agents.models import Agent
-from apps.policies.models import Policy
+from apps.policies.models import MerchantRule, Policy
 from apps.spend import services
 from apps.spend.models import SpendRequest
+
+
+class BuildLimitsMerchantModeTests(TestCase):
+    def setUp(self):
+        organization = Organization.objects.create(name="default")
+        self.agent, _ = Agent.create_with_key("shopper", organization)
+
+    def decide_against(self, policy, merchant):
+        return engine.evaluate(
+            engine.SpendInput(
+                amount=Decimal("10"),
+                currency="USD",
+                merchant=merchant,
+                source=engine.SOURCE_TRUSTED,
+            ),
+            services.build_limits(policy),
+            engine.Spent(today=Decimal("0"), this_month=Decimal("0")),
+        )
+
+    def test_policy_version_change_switches_merchant_behavior(self):
+        blocklist_policy = Policy.objects.create(
+            agent=self.agent,
+            version=1,
+            merchant_mode=Policy.MerchantMode.BLOCKLIST,
+        )
+        MerchantRule.objects.create(
+            policy=blocklist_policy,
+            merchant_ref="acme.com",
+            kind=MerchantRule.Kind.ALLOW,
+        )
+        self.assertEqual(self.decide_against(blocklist_policy, "other.com").outcome, engine.ALLOW)
+
+        allowlist_policy = Policy.objects.create(
+            agent=self.agent,
+            version=2,
+            merchant_mode=Policy.MerchantMode.ALLOWLIST_ONLY,
+        )
+        MerchantRule.objects.create(
+            policy=allowlist_policy,
+            merchant_ref="acme.com",
+            kind=MerchantRule.Kind.ALLOW,
+        )
+        decision = self.decide_against(allowlist_policy, "other.com")
+        self.assertEqual(decision.outcome, engine.DENY)
+        self.assertIn("R04_MERCHANT_ALLOW", decision.matched_rules)
 
 
 class CountedSpendTests(TestCase):

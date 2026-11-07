@@ -88,18 +88,27 @@ class DenyTests(TestCase):
         self.assertIn("R03_MERCHANT_BLOCK", decision.matched_rules)
 
     def test_merchant_not_on_allow_list(self):
-        limits = make_limits(allowed_merchants=frozenset({"acme.com"}))
+        limits = make_limits(
+            merchant_mode="allowlist_only",
+            allowed_merchants=frozenset({"acme.com"}),
+        )
         decision = evaluate(make_spend(merchant="other.com"), limits, NOTHING_SPENT)
         self.assertEqual(decision.outcome, DENY)
         self.assertIn("R04_MERCHANT_ALLOW", decision.matched_rules)
 
     def test_lookalike_domain_is_not_on_allow_list(self):
-        limits = make_limits(allowed_merchants=frozenset({"acme.com"}))
+        limits = make_limits(
+            merchant_mode="allowlist_only",
+            allowed_merchants=frozenset({"acme.com"}),
+        )
         decision = evaluate(make_spend(merchant="acme.com.evil.net"), limits, NOTHING_SPENT)
         self.assertEqual(decision.outcome, DENY)
 
     def test_listed_merchant_passes_allow_list(self):
-        limits = make_limits(allowed_merchants=frozenset({"acme.com"}))
+        limits = make_limits(
+            merchant_mode="allowlist_only",
+            allowed_merchants=frozenset({"acme.com"}),
+        )
         decision = evaluate(make_spend(merchant="https://acme.com/checkout"), limits, NOTHING_SPENT)
         self.assertEqual(decision.outcome, ALLOW)
 
@@ -224,6 +233,49 @@ class DenyTests(TestCase):
             NOTHING_SPENT,
         )
         self.assertEqual(decision.outcome, ALLOW)
+
+
+class MerchantModeTests(TestCase):
+    def test_empty_allowlist_denies_every_merchant(self):
+        limits = make_limits(merchant_mode="allowlist_only")
+        decision = evaluate(make_spend(merchant="acme.com"), limits, NOTHING_SPENT)
+        self.assertEqual(decision.outcome, DENY)
+        self.assertIn("R04_MERCHANT_ALLOW", decision.matched_rules)
+
+    def test_allowlisted_merchant_passes(self):
+        limits = make_limits(
+            merchant_mode="allowlist_only",
+            allowed_merchants=frozenset({"acme.com"}),
+        )
+        decision = evaluate(make_spend(merchant="acme.com"), limits, NOTHING_SPENT)
+        self.assertEqual(decision.outcome, ALLOW)
+
+    def test_allowlist_mode_still_denies_a_blocked_merchant(self):
+        limits = make_limits(
+            merchant_mode="allowlist_only",
+            allowed_merchants=frozenset({"evil.com"}),
+            blocked_merchants=frozenset({"evil.com"}),
+        )
+        decision = evaluate(make_spend(merchant="evil.com"), limits, NOTHING_SPENT)
+        self.assertEqual(decision.outcome, DENY)
+        self.assertIn("R03_MERCHANT_BLOCK", decision.matched_rules)
+
+    def test_blocklist_mode_allows_an_unlisted_merchant(self):
+        limits = make_limits(
+            merchant_mode="blocklist",
+            allowed_merchants=frozenset({"acme.com"}),
+        )
+        decision = evaluate(make_spend(merchant="other.com"), limits, NOTHING_SPENT)
+        self.assertEqual(decision.outcome, ALLOW)
+
+    def test_blocklist_mode_denies_a_blocked_merchant(self):
+        limits = make_limits(
+            merchant_mode="blocklist",
+            blocked_merchants=frozenset({"evil.com"}),
+        )
+        decision = evaluate(make_spend(merchant="evil.com"), limits, NOTHING_SPENT)
+        self.assertEqual(decision.outcome, DENY)
+        self.assertIn("R03_MERCHANT_BLOCK", decision.matched_rules)
 
 
 class WindowRuleTests(TestCase):

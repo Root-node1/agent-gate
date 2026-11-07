@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from apps.accounts.models import Organization
 from apps.accounts.permissions import IsDashboardUser, IsOrganizationAdmin
 from apps.audit.models import AuditEvent
+from apps.common.errors import ApiError, ErrorCode
 from apps.common.pagination import DashboardPagination
 
 from .authentication import DashboardSessionAuthentication
@@ -54,18 +55,18 @@ class AgentListView(APIView):
 
         with transaction.atomic():
             if Agent.objects.filter(name=name, organization_id=org_id).exists():
-                return Response(
-                    {"detail": "An agent with this name already exists in this organization."},
-                    status=status.HTTP_400_BAD_REQUEST,
+                raise ApiError(
+                    "An agent with this name already exists in this organization.",
+                    code=ErrorCode.BAD_REQUEST,
                 )
 
             try:
                 agent, raw_key = Agent.create_with_key(name, organization)
-            except IntegrityError:
-                return Response(
-                    {"detail": "An agent with this name already exists in this organization."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            except IntegrityError as exc:
+                raise ApiError(
+                    "An agent with this name already exists in this organization.",
+                    code=ErrorCode.BAD_REQUEST,
+                ) from exc
 
             key = agent.current_key
             AuditEvent.record(
@@ -218,10 +219,7 @@ class AgentRevokeKeyView(APIView):
         revoked_key = agent.revoke_current_key()
 
         if revoked_key is None:
-            return Response(
-                {"detail": "No active API key to revoke."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ApiError("No active API key to revoke.", code=ErrorCode.BAD_REQUEST)
 
         with transaction.atomic():
             AuditEvent.record(

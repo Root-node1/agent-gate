@@ -293,7 +293,9 @@ class AgentRevokeKeyTests(AgentApiTestBase):
         self.client.post(f"/v1/agents/{self.agent.id}/revoke-key/")
         response = self.client.post(f"/v1/agents/{self.agent.id}/revoke-key/")
         self.assertEqual(response.status_code, 400)
-        self.assertIn("No active API key", response.json()["detail"])
+        body = response.json()
+        self.assertIn("No active API key", body["error"]["message"])
+        self.assertNotIn("detail", body)
 
     def test_revoke_requires_admin(self):
         self.client.force_authenticate(user=self.viewer)

@@ -90,14 +90,16 @@ agent or a dashboard session scoped to the caller's organizations.
 
 ## Demo mode
 
-`DEMO_MODE=true` exposes anonymous, rate-limited dashboard reads and
-approval decisions for the seeded demo organization. It cannot create spend
-requests, agents, or policies, and it does not grant agent, policy, or admin
-surfaces.
+`DEMO_MODE=true` exposes anonymous, rate-limited dashboard reads for the
+seeded demo organization. The anonymous demo principal is read-only by
+default: it cannot approve or deny requests, create spend requests, agents, or
+policies, and it does not grant agent, policy, or admin surfaces.
 
 ```bash
 python manage.py seed_demo
 # DEMO_MODE=true
+# DEMO_MODE_ALLOW_WRITES=false
+# DEMO_MODE_ALLOW_PRODUCTION=false
 # DEMO_ORG_NAME=demo
 # DEMO_USERNAME=demo-viewer
 ```
@@ -106,6 +108,12 @@ python manage.py seed_demo
 in the demo organization. It refuses to reuse a real account or a username that
 belongs to another organization. Do not point `DEMO_ORG_NAME` at a production
 organization. Demo requests use `THROTTLE_DEMO` (default `60/min` per IP).
+
+To allow anonymous demo approvals, set `DEMO_MODE_ALLOW_WRITES=true`. That path
+intentionally skips MFA and CSRF for the anonymous demo principal, so use it
+only for a disposable demo. A separately provisioned dashboard session remains
+subject to MFA and CSRF. In production (`DEBUG=false`), startup refuses
+`DEMO_MODE=true` unless `DEMO_MODE_ALLOW_PRODUCTION=true` is also set.
 
 ## Sandbox smoke script
 

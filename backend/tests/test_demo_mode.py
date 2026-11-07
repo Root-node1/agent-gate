@@ -3,7 +3,7 @@ from io import StringIO
 from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from apps.accounts.models import Organization
 from apps.approvals.models import Approval
@@ -64,6 +64,20 @@ class DemoModeApiTests(APITestCase):
         self.assertEqual(self.client.get(f"/v1/spend-requests/{other_request.id}/").status_code, 404)
         self.assertEqual(self.client.get("/v1/audit/").json()["count"], 1)
 
+    def test_anonymous_writes_are_rejected_by_default(self):
+        approval = Approval.objects.create(
+            organization=self.organization,
+            spend_request=self.spend_request,
+            expires_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+        client = APIClient(enforce_csrf_checks=True)
+        for action in ("approve", "deny"):
+            response = client.post(f"/v1/approvals/{approval.id}/{action}/", {}, format="json")
+            self.assertEqual(response.status_code, 401)
+        approval.refresh_from_db()
+        self.assertEqual(approval.outcome, Approval.Outcome.PENDING)
+
+    @override_settings(DEMO_MODE_ALLOW_WRITES=True)
     def test_anonymous_can_approve_only_inside_demo_org(self):
         approval = Approval.objects.create(
             organization=self.organization,

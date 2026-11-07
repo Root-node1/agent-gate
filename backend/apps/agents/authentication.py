@@ -5,6 +5,7 @@ from django.utils import timezone
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 from rest_framework import authentication, exceptions
 from rest_framework.authentication import SessionAuthentication
+from rest_framework.permissions import SAFE_METHODS
 
 from apps.common.errors import AgentSuspended
 
@@ -42,12 +43,18 @@ class DashboardSessionScheme(OpenApiAuthenticationExtension):
 class DemoModeAuthentication(authentication.BaseAuthentication):
     """Anonymous dashboard principal for a seeded demo organization.
 
-    Disabled unless ``DEMO_MODE`` is on. A request with an Authorization header
-    or an existing session is left to the real authenticators.
+    Disabled unless ``DEMO_MODE`` is on. Reads are always allowed for the demo
+    organization; writes require ``DEMO_MODE_ALLOW_WRITES``. A request with an
+    Authorization header or an existing session is left to the real
+    authenticators.
     """
 
     def authenticate(self, request):
         if not getattr(settings, "DEMO_MODE", False):
+            return None
+        if request.method not in SAFE_METHODS and not getattr(
+            settings, "DEMO_MODE_ALLOW_WRITES", False
+        ):
             return None
         if authentication.get_authorization_header(request):
             return None

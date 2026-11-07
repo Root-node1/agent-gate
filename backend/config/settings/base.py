@@ -224,6 +224,20 @@ DEMO_MODE = os.environ.get("DEMO_MODE", "").strip().lower() in {
     "yes",
     "on",
 }
+DEMO_MODE_ALLOW_PRODUCTION = os.environ.get(
+    "DEMO_MODE_ALLOW_PRODUCTION", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DEMO_MODE_ALLOW_WRITES = os.environ.get("DEMO_MODE_ALLOW_WRITES", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "AgentGate API",

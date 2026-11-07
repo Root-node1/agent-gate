@@ -9,6 +9,7 @@ from apps.accounts.models import Organization, OrgMembership, User
 from apps.agents.keys import hash_key
 from apps.agents.models import Agent, ApiKey
 from apps.audit.models import AuditEvent
+from apps.common.currency import minor_unit
 from apps.common.money import to_major, to_minor
 from apps.payees.models import DestinationType, Payee, fingerprint
 from apps.payments.executors import FakeExecutor
@@ -65,6 +66,30 @@ class MoneyTests(TestCase):
     def test_zero_decimal_currency(self):
         self.assertEqual(to_minor(Decimal("1200"), "JPY"), 1200)
         self.assertEqual(to_major(1200, "JPY"), Decimal("1200"))
+
+    def test_minor_unit_exponents_for_supported_scales(self):
+        expected = {
+            "USD": 2,
+            "JPY": 0,
+            "KWD": 3,
+            "BHD": 3,
+            "JOD": 3,
+            "OMR": 3,
+            "TND": 3,
+            "CLF": 4,
+            "UYW": 4,
+        }
+        for currency, exponent in expected.items():
+            with self.subTest(currency=currency):
+                self.assertEqual(minor_unit(currency), exponent)
+
+    def test_three_decimal_currency_round_trip(self):
+        self.assertEqual(to_minor(Decimal("1.234"), "KWD"), 1234)
+        self.assertEqual(to_major(1234, "KWD"), Decimal("1.234"))
+
+    def test_four_decimal_currency_round_trip(self):
+        self.assertEqual(to_minor(Decimal("1.2345"), "CLF"), 12345)
+        self.assertEqual(to_major(12345, "CLF"), Decimal("1.2345"))
 
 
 class PolicyTests(TestCase):

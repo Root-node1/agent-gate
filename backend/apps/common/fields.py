@@ -1,7 +1,10 @@
 """Serializer fields that reject ambiguous or unsafe input."""
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
+from rest_framework.fields import empty
 
+from .currency import minor_unit, normalize_currency
 from .money import AMOUNT_ERROR, AMOUNT_PATTERN
 from .text import neutralize_text
 
@@ -21,6 +24,47 @@ class DecimalStringField(serializers.CharField):
         if not isinstance(data, str) or AMOUNT_PATTERN.fullmatch(data) is None:
             self.fail("invalid")
         return super().to_internal_value(data)
+
+
+class CurrencyDecimalField(serializers.DecimalField):
+    """Decimal field that rejects precision the currency cannot represent."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("max_digits", 14)
+        kwargs.setdefault("decimal_places", 4)
+        super().__init__(**kwargs)
+
+    def _currency(self) -> str | None:
+        parent = self.parent
+        if parent is None:
+            return None
+
+        raw = None
+        data = getattr(parent, "initial_data", None)
+        if isinstance(data, dict):
+            raw = data.get("currency")
+        if raw is None:
+            raw = parent.context.get("currency")
+        if raw is None:
+            currency_field = parent.fields.get("currency")
+            if currency_field is not None and currency_field.default is not empty:
+                raw = currency_field.get_default()
+        if not raw:
+            return None
+
+        try:
+            return normalize_currency(str(raw))
+        except DjangoValidationError:
+            return None
+
+    def validate_precision(self, value):
+        currency = self._currency()
+        if currency is not None:
+            exponent = minor_unit(currency)
+            fractional_digits = max(0, -value.as_tuple().exponent)
+            if fractional_digits > exponent:
+                self.fail("max_decimal_places", max_decimal_places=exponent)
+        return super().validate_precision(value)
 
 
 class NeutralizedCharField(serializers.CharField):

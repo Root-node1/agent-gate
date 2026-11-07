@@ -27,8 +27,26 @@ ISO_4217 = frozenset(
 )
 
 ZERO_DECIMAL = frozenset(
-    {"BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF"}
+    {
+        "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF",
+        "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF",
+    }
 )
+THREE_DECIMAL = frozenset({"BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"})
+FOUR_DECIMAL = frozenset({"CLF", "UYW"})
+
+MINOR_UNIT_EXPONENTS = {
+    code: (
+        0
+        if code in ZERO_DECIMAL
+        else 3
+        if code in THREE_DECIMAL
+        else 4
+        if code in FOUR_DECIMAL
+        else 2
+    )
+    for code in ISO_4217
+}
 
 
 def normalize_currency(value: str) -> str:
@@ -40,8 +58,8 @@ def normalize_currency(value: str) -> str:
 
 
 def minor_unit(currency: str) -> int:
-    """Return the decimal exponent for a currency: 0 for JPY, 2 for USD."""
-    return 0 if currency.upper() in ZERO_DECIMAL else 2
+    """Return the ISO-4217 decimal exponent for a currency."""
+    return MINOR_UNIT_EXPONENTS.get(currency.upper(), 2)
 
 
 def validate_currency(value: str) -> None:

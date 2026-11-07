@@ -107,7 +107,10 @@ class PolicyDetailView(APIView):
         request=PolicyUpdateSerializer, responses={200: PolicySerializer}, summary="Update a policy (new version)"
     )
     def patch(self, request, pk):
-        serializer = PolicyUpdateSerializer(data=request.data)
+        policy = get_object_or_404(self.get_queryset(request.user), pk=pk)
+        serializer = PolicyUpdateSerializer(
+            data=request.data, context={"currency": policy.currency}
+        )
         serializer.is_valid(raise_exception=True)
         try:
             policy = create_policy_update(

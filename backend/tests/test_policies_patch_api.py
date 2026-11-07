@@ -198,6 +198,97 @@ class PolicyPatchSuccessTests(PolicyPatchTestBase):
         self.assertEqual(new_rules, [("acme.com", MerchantRule.Kind.ALLOW, ""), ("evil.com", MerchantRule.Kind.BLOCK, "")])
 
 
+class PolicyPatchCurrencyPrecisionTests(PolicyPatchTestBase):
+    CASES = [
+        ("USD", "12.34", 1234),
+        ("JPY", "1200", 1200),
+        ("KWD", "1.234", 1234),
+        ("BHD", "1.234", 1234),
+        ("JOD", "1.234", 1234),
+        ("OMR", "1.234", 1234),
+        ("TND", "1.234", 1234),
+        ("CLF", "1.2345", 12345),
+        ("UYW", "1.2345", 12345),
+    ]
+
+    def _policy_for(self, currency, suffix=""):
+        name = f"currency-{currency}{suffix}"
+        agent, _ = Agent.create_with_key(name, self.organization)
+        return Policy.objects.create(agent=agent, currency=currency)
+
+    def test_exact_minor_units_with_inherited_currency(self):
+        for currency, amount, expected in self.CASES:
+            with self.subTest(currency=currency):
+                policy = self._policy_for(currency)
+                response = self.client.patch(
+                    f"/v1/policies/{policy.id}/",
+                    data={
+                        "expected_version": 1,
+                        "per_transaction_cap": amount,
+                        "approval_threshold": "0",
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 200, response.content)
+                new = Policy.objects.get(agent=policy.agent, version=2)
+                self.assertEqual(new.per_transaction_cap_minor, expected)
+
+    def test_fractional_digits_beyond_currency_scale_are_rejected(self):
+        cases = [
+            ("JPY", "1200.1"),
+            ("JPY", "1200.0"),
+            ("USD", "1.234"),
+            ("KWD", "1.2345"),
+            ("BHD", "1.2345"),
+            ("CLF", "1.23456"),
+        ]
+        for index, (currency, amount) in enumerate(cases):
+            with self.subTest(currency=currency, amount=amount):
+                policy = self._policy_for(currency, suffix=f"-{index}")
+                response = self.client.patch(
+                    f"/v1/policies/{policy.id}/",
+                    data={
+                        "expected_version": 1,
+                        "per_transaction_cap": amount,
+                        "approval_threshold": "0",
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 400, response.content)
+                self.assertFalse(
+                    Policy.objects.filter(agent=policy.agent, version=2).exists()
+                )
+
+    def test_supplied_currency_controls_precision(self):
+        response = self.client.patch(
+            self.url,
+            data={
+                "expected_version": 1,
+                "currency": "KWD",
+                "per_transaction_cap": "1.234",
+                "approval_threshold": "0",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        new = Policy.objects.get(agent=self.agent, version=2)
+        self.assertEqual(new.currency, "KWD")
+        self.assertEqual(new.per_transaction_cap_minor, 1234)
+
+        response = self.client.patch(
+            self._latest_url(),
+            data={
+                "expected_version": 2,
+                "currency": "JPY",
+                "per_transaction_cap": "100.5",
+                "approval_threshold": "0",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertFalse(Policy.objects.filter(agent=self.agent, version=3).exists())
+
+
 class PolicyPatchValidationTests(PolicyPatchTestBase):
     def test_invalid_money_returns_400(self):
         response = self.client.patch(

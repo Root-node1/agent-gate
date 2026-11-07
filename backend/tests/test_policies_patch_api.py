@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock, skipUnless
 
-from django.db import close_old_connections, connection
+from django.db import IntegrityError, close_old_connections, connection
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Organization, OrgMembership, User
@@ -9,7 +9,11 @@ from apps.agents.models import Agent
 from apps.audit.models import AuditEvent
 from apps.policies.models import MerchantRule, Policy
 from apps.policies.serializers import PolicyUpdateSerializer
-from apps.policies.services import PolicyConflictError, create_policy_update
+from apps.policies.services import (
+    PolicyConflictError,
+    PolicyValidationError,
+    create_policy_update,
+)
 from tests.base import PostgresTransactionTestCase, force_mfa
 
 
@@ -324,6 +328,81 @@ class PolicyPatchValidationTests(PolicyPatchTestBase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_duplicate_same_kind_rules_return_400_without_version_or_audit(self):
+        before_policies = Policy.objects.count()
+        before_rules = MerchantRule.objects.count()
+        before_events = self._policy_events().count()
+        for kind in ("allow", "block"):
+            with self.subTest(kind=kind):
+                response = self.client.patch(
+                    self.url,
+                    data=self._payload(
+                        merchant_rules=[
+                            {"merchant_ref": "newvendor.com", "kind": kind},
+                            {
+                                "merchant_ref": "https://www.newvendor.com/checkout",
+                                "kind": kind,
+                            },
+                        ]
+                    ),
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(Policy.objects.count(), before_policies)
+                self.assertEqual(MerchantRule.objects.count(), before_rules)
+                self.assertEqual(self._policy_events().count(), before_events)
+
+    def test_rule_insert_integrity_error_returns_400_without_version_or_audit(self):
+        with mock.patch.object(
+            MerchantRule.objects, "create", side_effect=IntegrityError("duplicate")
+        ):
+            response = self.client.patch(
+                self.url,
+                data=self._payload(
+                    merchant_rules=[{"merchant_ref": "newvendor.com", "kind": "allow"}]
+                ),
+                format="json",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Policy.objects.filter(agent=self.agent, version=2).exists())
+        self.assertEqual(MerchantRule.objects.filter(policy__version=2).count(), 0)
+        self.assertEqual(self._policy_events().count(), 0)
+
+    def test_service_maps_duplicate_rule_integrity_error_to_validation_error(self):
+        before_policies = Policy.objects.count()
+        before_rules = MerchantRule.objects.count()
+        before_events = self._policy_events().count()
+        validated = {
+            "expected_version": 1,
+            "merchant_rules": [
+                {"merchant_ref": "duplicate.example", "kind": "allow"},
+                {"merchant_ref": "duplicate.example", "kind": "block"},
+            ],
+        }
+        with self.assertRaises(PolicyValidationError):
+            create_policy_update(
+                user=self.admin, policy_id=self.policy.id, validated=validated
+            )
+        self.assertEqual(Policy.objects.count(), before_policies)
+        self.assertEqual(MerchantRule.objects.count(), before_rules)
+        self.assertEqual(self._policy_events().count(), before_events)
+
+    def test_service_maps_policy_integrity_error_to_conflict(self):
+        before_policies = Policy.objects.count()
+        before_events = self._policy_events().count()
+        with mock.patch(
+            "apps.policies.services.Policy.objects.create",
+            side_effect=IntegrityError("duplicate policy version"),
+        ):
+            with self.assertRaises(PolicyConflictError):
+                create_policy_update(
+                    user=self.admin,
+                    policy_id=self.policy.id,
+                    validated={"expected_version": 1},
+                )
+        self.assertEqual(Policy.objects.count(), before_policies)
+        self.assertEqual(self._policy_events().count(), before_events)
 
     def test_inherited_threshold_exceeds_cap_returns_400(self):
         # per_transaction_cap inherited as 10_000 minor; threshold above it is invalid.

@@ -239,11 +239,19 @@ class PolicyUpdateSerializer(serializers.Serializer):
                     raise serializers.ValidationError(
                         {"merchant_rules": f"Merchant {ref!r} cannot be both allowed and blocked."}
                     )
+                if ref in allowed:
+                    raise serializers.ValidationError(
+                        {"merchant_rules": f"Duplicate merchant rule for {ref!r}."}
+                    )
                 allowed.add(ref)
             else:
                 if ref in allowed:
                     raise serializers.ValidationError(
                         {"merchant_rules": f"Merchant {ref!r} cannot be both allowed and blocked."}
+                    )
+                if ref in blocked:
+                    raise serializers.ValidationError(
+                        {"merchant_rules": f"Duplicate merchant rule for {ref!r}."}
                     )
                 blocked.add(ref)
 

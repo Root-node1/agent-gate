@@ -276,6 +276,32 @@ class PolicyCreateValidationTests(PolicyCreateTestBase):
         response = self.client.post("/v1/policies/", data=payload, format="json")
         self.assertEqual(response.status_code, 400)
 
+    def test_duplicate_same_kind_rules_after_normalization_leave_no_rows_or_audit(self):
+        before_policies = Policy.objects.count()
+        before_rules = MerchantRule.objects.count()
+        before_events = AuditEvent.objects.filter(
+            event_type=AuditEvent.EventType.POLICY_CHANGED
+        ).count()
+        for kind in ("allow", "block"):
+            with self.subTest(kind=kind):
+                payload = {
+                    **self.valid,
+                    "merchant_rules": [
+                        {"merchant_ref": "https://www.acme.com/checkout", "kind": kind},
+                        {"merchant_ref": "ACME.com", "kind": kind},
+                    ],
+                }
+                response = self.client.post("/v1/policies/", data=payload, format="json")
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(Policy.objects.count(), before_policies)
+                self.assertEqual(MerchantRule.objects.count(), before_rules)
+                self.assertEqual(
+                    AuditEvent.objects.filter(
+                        event_type=AuditEvent.EventType.POLICY_CHANGED
+                    ).count(),
+                    before_events,
+                )
+
     def test_invalid_merchant_kind_rejected(self):
         payload = {**self.valid, "merchant_rules": [{"merchant_ref": "acme.com", "kind": "mirror"}]}
         response = self.client.post("/v1/policies/", data=payload, format="json")

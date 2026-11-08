@@ -30,6 +30,16 @@ cd agent-gate
 
 `run.sh` creates the Python venv, installs dependencies on first run, applies migrations, and starts both servers. Press Ctrl+C to stop both.
 
+The landing page is public. The dashboard at `/app` requires a Django account. Create the first account from another terminal:
+
+```bash
+cd backend
+source venv/bin/activate
+python manage.py createsuperuser
+```
+
+Sign in at http://localhost:5173/login. Additional dashboard accounts can be managed in Django admin at http://localhost:8000/admin/. There is no public registration. Agent API keys continue to authenticate `/v1/` requests independently of dashboard sessions.
+
 When dependencies change later, install them once:
 
 ```bash
@@ -88,9 +98,11 @@ cp backend/.env.example backend/.env
 
 Then set `DJANGO_SECRET_KEY` to your own random value. Never commit `.env`. PayPal sandbox credentials go in this file when the integration lands.
 
+For HTTPS deployments, set `DJANGO_SESSION_COOKIE_SECURE=True` and `DJANGO_CSRF_COOKIE_SECURE=True`, and set `DJANGO_CSRF_TRUSTED_ORIGINS` to a comma-separated list of trusted origins including the scheme (for example `https://dashboard.example.com`). Keep the frontend and API same-origin or configure a deliberate proxy; credentialed cross-origin access is not enabled.
+
 ## PayPal Postman collection
 
-PayPal's Postman collection (Cart API for agentic commerce) is for validating a merchant implementation. Notes on how it relates to this project are in [Doc.md](Doc.md), section 13. Never commit private keys, and use the sandbox only.
+PayPal's Postman collection (Cart API for agentic commerce) is for validating a merchant implementation. Notes on how it relates to this project are in [Doc.md](Doc.md), section 14. Never commit private keys, and use the sandbox only.
 
 ## Data model and admin
 

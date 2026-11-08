@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { signIn, signOut } from '../api/auth'
 import type { SpendRequest } from '../api/spendRequests'
 import { SessionContext } from './context'
 
@@ -7,6 +8,14 @@ const MAX_RECENT = 20
 export default function SessionProvider({ children }: { children: ReactNode }) {
   const [agentKey, setAgentKey] = useState('')
   const [recent, setRecent] = useState<SpendRequest[]>([])
+
+  const login = useCallback(async (username: string, password: string) => {
+    await signIn(username, password)
+  }, [])
+
+  const logout = useCallback(async () => {
+    await signOut()
+  }, [])
 
   const remember = useCallback((request: SpendRequest) => {
     setRecent((prev) => {
@@ -17,8 +26,15 @@ export default function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ agentKey, setAgentKey, recent, remember }),
-    [agentKey, recent, remember],
+    () => ({
+      login,
+      logout,
+      agentKey,
+      setAgentKey,
+      recent,
+      remember,
+    }),
+    [login, logout, agentKey, recent, remember],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

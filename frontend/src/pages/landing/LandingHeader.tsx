@@ -43,6 +43,9 @@ export default function LandingHeader() {
 
         <div className="lp-header-actions">
           <DisplayButton className="icon-button lp-display-btn" />
+          <Link to="/login" className="btn btn-secondary lp-header-cta">
+            Sign in
+          </Link>
           <Link to={LINKS.demo} className="btn btn-primary lp-header-cta">
             Explore demo
             <ArrowRight size={16} aria-hidden="true" />

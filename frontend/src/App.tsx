@@ -1,5 +1,13 @@
 import type { ComponentType } from 'react'
-import { createBrowserRouter, createRoutesFromElements, Route, RouterProvider } from 'react-router'
+import {
+  createBrowserRouter,
+  createRoutesFromElements,
+  Navigate,
+  Route,
+  RouterProvider,
+  useLoaderData,
+} from 'react-router'
+import { getAuthStatus, type AuthStatus } from './api/auth'
 import SessionProvider from './session/SessionProvider'
 import AppLayout from './ui/AppLayout'
 import ToastProvider from './ui/ToastProvider'
@@ -9,12 +17,44 @@ function page(load: () => Promise<{ default: ComponentType }>) {
   return async () => ({ Component: (await load()).default })
 }
 
+async function loadDashboardSession() {
+  try {
+    return await getAuthStatus()
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Could not verify the dashboard session.',
+    }
+  }
+}
+
+function ProtectedAppLayout() {
+  const session = useLoaderData() as AuthStatus | { error: string }
+
+  if ('error' in session) {
+    return (
+      <main className="auth-loading" role="alert">
+        <p>{session.error}</p>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => window.location.reload()}
+        >
+          Try again
+        </button>
+      </main>
+    )
+  }
+  if (!session.authenticated) return <Navigate to="/login" replace />
+  return <AppLayout user={session.user} />
+}
+
 // A data router (not BrowserRouter) so pages can use useBlocker to guard unsaved edits.
 const router = createBrowserRouter(
   createRoutesFromElements(
     <Route hydrateFallbackElement={<p className="visually-hidden">Loading…</p>}>
       <Route index lazy={page(() => import('./pages/LandingPage'))} />
-      <Route path="app" element={<AppLayout />}>
+      <Route path="login" lazy={page(() => import('./pages/LoginPage'))} />
+      <Route path="app" loader={loadDashboardSession} element={<ProtectedAppLayout />}>
         <Route index lazy={page(() => import('./pages/app/OverviewPage'))} />
         <Route path="approvals" lazy={page(() => import('./pages/app/ApprovalsPage'))} />
         <Route path="approvals/:id" lazy={page(() => import('./pages/app/ApprovalDetailPage'))} />
@@ -32,9 +72,7 @@ const router = createBrowserRouter(
         <Route path="live/requests/:id" lazy={page(() => import('./pages/live/RequestDetailPage'))} />
         <Route path="*" lazy={page(() => import('./pages/NotFoundPage'))} />
       </Route>
-      <Route path="*" element={<AppLayout />}>
-        <Route path="*" lazy={page(() => import('./pages/NotFoundPage'))} />
-      </Route>
+      <Route path="*" lazy={page(() => import('./pages/NotFoundPage'))} />
     </Route>,
   ),
 )

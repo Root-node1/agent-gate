@@ -102,7 +102,7 @@ export default function LandingPage() {
                 View Documentation
               </a>
             </div>
-            <p className="lp-hero-note">No sign-up. Runs on sample data.</p>
+            <p className="lp-hero-note">Sign in with a dashboard account to explore the sample workspace.</p>
           </div>
           <div className="lp-container lp-hero-visual">
             <GateDiagram />

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router'
 import {
   Bot,
   CircleCheckBig,
@@ -12,15 +12,17 @@ import {
   Settings,
   SlidersHorizontal,
   Terminal,
+  LogOut,
   X,
   type LucideIcon,
 } from 'lucide-react'
 import DisplayButton from '../a11y/DisplayButton'
+import type { AuthUser } from '../api/auth'
 import Logo from '../components/Logo'
 import { resetDemo, useDemoState } from '../demo/store'
 import { pendingApprovals } from '../demo/selectors'
+import { useSession } from '../session/context'
 import Modal from './Modal'
-import { ROLE } from './labels'
 import { useToast } from './toast-context'
 
 interface NavItem {
@@ -31,9 +33,11 @@ interface NavItem {
   count?: number
 }
 
-export default function AppLayout() {
+export default function AppLayout({ user }: { user: AuthUser }) {
   const state = useDemoState()
   const toast = useToast()
+  const { logout } = useSession()
+  const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const waiting = pendingApprovals(state).length
@@ -96,11 +100,11 @@ export default function AppLayout() {
           </ul>
           <div className="user-chip">
             <span className="avatar" aria-hidden="true">
-              {state.currentUser.name.slice(0, 1)}
+              {user?.username.slice(0, 1).toUpperCase()}
             </span>
             <span>
-              <strong>{state.currentUser.name}</strong>
-              <span className="user-role">{ROLE[state.currentUser.role].label}</span>
+              <strong>{user?.username}</strong>
+              <span className="user-role">Dashboard account</span>
             </span>
           </div>
         </div>
@@ -123,6 +127,23 @@ export default function AppLayout() {
             Demo workspace <span className="demo-pill-detail">· sample data, no real money</span>
           </div>
           <DisplayButton />
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => {
+              void logout().then(
+                () => {
+                  toast.show('Signed out.')
+                  navigate('/login', { replace: true })
+                },
+                (error: unknown) =>
+                  toast.show(error instanceof Error ? error.message : 'Could not sign out.', 'error'),
+              )
+            }}
+          >
+            <LogOut size={16} aria-hidden="true" />
+            Sign out
+          </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmReset(true)}>
             <RotateCcw size={16} aria-hidden="true" />
             Reset demo

@@ -125,13 +125,21 @@ Run locally before pushing:
 
 GitHub Actions runs the same checks on every push and pull request. Every rule in the policy engine gets a unit test. Lint settings live in `backend/ruff.toml` (generated migrations are excluded; RUF012 is ignored because Django's `Meta` and admin options are plain class attributes). Keeping the config in the repo makes local runs and CI identical.
 
-## 10. Deployment (planned)
+## 10. Dashboard authentication
+
+- The public landing page remains available without signing in. The dashboard routes under `/app` require a Django user session.
+- Sign in with a Django username and password at `/login`. There is no public account registration; create the first operator using `python manage.py createsuperuser`, then manage other accounts in Django admin.
+- Session login and logout are CSRF-protected. Session cookies are HttpOnly and SameSite=Lax. For HTTPS deployments, set both `DJANGO_SESSION_COOKIE_SECURE=True` and `DJANGO_CSRF_COOKIE_SECURE=True`; configure `DJANGO_CSRF_TRUSTED_ORIGINS` for the deployed origin.
+- Human dashboard sessions do not replace agent API keys. Requests to `/v1/` continue to use agent-key authentication.
+- The current dashboard workspace uses browser-side sample data. Any future backend management endpoints must independently require authenticated human sessions and enforce authorization; the frontend route guard is not an API access control.
+
+## 11. Deployment (planned)
 
 - Hosted on Render. Backend and dashboard deployed from `main`.
 - Environment variables are set in Render, not in the repo.
-- The demo URL must open without a login.
+- The landing page opens without a login; dashboard pages require a dashboard account.
 
-## 11. Decisions log
+## 12. Decisions log
 
 - **Django over Spring Boot**: the PayPal AI Toolkit supports Python and TypeScript, so the agent layer lives inside the Django service as one backend.
 - **Deterministic rules over model judgment**: limits cannot be argued away by text.
@@ -145,7 +153,7 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - **Fail closed**: only requests from a trusted source can be auto-allowed; unknown or untrusted sources always need a human.
 - **Allow list means deny-by-default**: when a policy has an allow list, any other merchant is denied.
 
-## 12. Status
+## 13. Status
 
 - [x] Repo, MIT license, .gitignore
 - [x] Django skeleton with health endpoint
@@ -156,6 +164,7 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [x] Data models, migrations and admin
 - [x] Rule engine (pure function, unit-tested)
 - [x] Spend request API with agent key auth and audit trail
+- [x] Dashboard sign-in with Django session authentication
 - [ ] Approval endpoints (approve and deny)
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier
@@ -163,7 +172,7 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [ ] Deploy on Render
 - [ ] SDK generated from the OpenAPI schema
 
-## 13. PayPal Cart API (agentic commerce) notes
+## 14. PayPal Cart API (agentic commerce) notes
 
 Source: PayPal's Postman collection for validating the merchant Cart API. Summary only; the collection and its linked OpenAPI spec are the reference.
 

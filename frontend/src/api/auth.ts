@@ -283,6 +283,19 @@ export async function generateRecoveryCodes(): Promise<string[]> {
   return response.data.unused_codes.filter((code): code is string => typeof code === 'string')
 }
 
+export async function getRecoveryCodes(): Promise<string[] | null> {
+  const response = await headlessRequest(
+    'account/authenticators/recovery-codes',
+    'GET',
+    undefined,
+    {},
+    [404],
+  )
+  if (response.status === 404) return null
+  if (!isRecord(response.data) || !Array.isArray(response.data.unused_codes)) return []
+  return response.data.unused_codes.filter((code): code is string => typeof code === 'string')
+}
+
 export async function signOut(): Promise<void> {
   const token = await csrfToken()
   const response = await fetch('/api/auth/logout/', {

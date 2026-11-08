@@ -5,6 +5,7 @@ import {
   activateTotp,
   generateRecoveryCodes,
   getAuthenticators,
+  getRecoveryCodes,
   getTotpSetup,
   reauthenticate,
   removeTotp,
@@ -38,6 +39,7 @@ export default function SecuritySection() {
   const [totpUrl, setTotpUrl] = useState<string | null>(null)
   const [recoveryCount, setRecoveryCount] = useState(0)
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
+  const [recoveryAlreadyViewed, setRecoveryAlreadyViewed] = useState(false)
   const [code, setCode] = useState<string[]>(Array(6).fill(''))
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -127,6 +129,7 @@ export default function SecuritySection() {
       setCode(Array(6).fill(''))
       setNotice('Authenticator app verification is now enabled.')
       await refresh()
+      await viewRecoveryCodes()
     } catch (cause) {
       handleActionError(cause, enableTotp)
     } finally {
@@ -141,10 +144,31 @@ export default function SecuritySection() {
     try {
       const codes = await generateRecoveryCodes()
       setRecoveryCodes(codes)
+      setRecoveryAlreadyViewed(false)
       setRecoveryCount(codes.length)
       setConfirmAction(null)
     } catch (cause) {
       handleActionError(cause, createRecoveryCodes)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function viewRecoveryCodes() {
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const codes = await getRecoveryCodes()
+      if (codes?.length) {
+        setRecoveryCodes(codes)
+        setRecoveryAlreadyViewed(false)
+      } else {
+        setRecoveryAlreadyViewed(true)
+        setNotice('Recovery codes were already viewed. Generate a new set to save them again.')
+      }
+    } catch (cause) {
+      handleActionError(cause, viewRecoveryCodes)
     } finally {
       setBusy(false)
     }
@@ -313,15 +337,20 @@ export default function SecuritySection() {
               type="button"
               className="btn btn-secondary"
               onClick={() => {
-                if (recoveryCount) setConfirmAction('regenerate')
+                if (recoveryCount && !recoveryAlreadyViewed) void viewRecoveryCodes()
+                else if (recoveryCount) setConfirmAction('regenerate')
                 else void createRecoveryCodes()
               }}
               disabled={busy || !totpActive}
             >
               <ShieldCheck size={16} aria-hidden="true" />
-              {recoveryCount ? 'Replace recovery codes' : 'Generate recovery codes'}
+              {recoveryCount && !recoveryAlreadyViewed
+                ? 'View recovery codes'
+                : recoveryCount
+                  ? 'Generate new recovery codes'
+                  : 'Generate recovery codes'}
             </button>
-            {recoveryCount ? (
+            {recoveryCount && !recoveryAlreadyViewed ? (
               <span className="hint">Generating a new set invalidates the current codes.</span>
             ) : !totpActive ? (
               <span className="hint">Enable an authenticator app first.</span>

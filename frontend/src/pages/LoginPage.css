@@ -45,6 +45,45 @@
   margin-top: var(--space-6);
 }
 
+.auth-card .auth-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block: var(--space-5);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-subtle);
+}
+
+.auth-card .auth-divider + form {
+  margin-top: 0;
+}
+
+.auth-google {
+  position: relative;
+}
+
+.auth-google-mark {
+  position: absolute;
+  left: var(--space-4);
+  color: #4285f4;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.auth-provider-note {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
 .auth-error {
   margin-bottom: var(--space-4);
   color: var(--color-deny);

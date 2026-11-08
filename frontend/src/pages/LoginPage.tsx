@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
+import { getAuthOptions } from '../api/auth'
 import Logo from '../components/Logo'
 import { useSession } from '../session/context'
 import './LoginPage.css'
@@ -11,6 +12,22 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [googleOptions, setGoogleOptions] = useState<
+    { csrfToken: string; enabled: boolean } | null
+  >(null)
+  const [googleOptionsError, setGoogleOptionsError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void getAuthOptions()
+      .then(({ csrfToken, googleOAuthEnabled }) => {
+        setGoogleOptions({ csrfToken, enabled: googleOAuthEnabled })
+      })
+      .catch((cause: unknown) => {
+        setGoogleOptionsError(
+          cause instanceof Error ? cause.message : 'Could not load Google sign-in options.',
+        )
+      })
+  }, [])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -65,8 +82,26 @@ export default function LoginPage() {
           </button>
         </form>
 
+        <div className="auth-divider" aria-hidden="true">
+          <span>or</span>
+        </div>
+        {googleOptions?.enabled ? (
+          <form method="post" action="/accounts/google/login/">
+            <input type="hidden" name="csrfmiddlewaretoken" value={googleOptions.csrfToken} />
+            <input type="hidden" name="process" value="login" />
+            <button type="submit" className="btn btn-secondary btn-block auth-google">
+              <span className="auth-google-mark" aria-hidden="true">G</span>
+              Continue with Google
+            </button>
+          </form>
+        ) : googleOptionsError ? (
+          <p className="auth-provider-note" role="status">{googleOptionsError}</p>
+        ) : googleOptions ? (
+          <p className="auth-provider-note">Google sign-in is not configured for this installation.</p>
+        ) : null}
+
         <p className="auth-footnote">
-          Dashboard accounts are created by an administrator. There is no public sign-up.
+          You can sign in with a dashboard account or create one with Google.
         </p>
       </section>
     </main>

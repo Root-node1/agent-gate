@@ -128,8 +128,10 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 ## 10. Dashboard authentication
 
 - The public landing page remains available without signing in. The dashboard routes under `/app` require a Django user session.
-- Sign in with a Django username and password at `/login`. There is no public account registration; create the first operator using `python manage.py createsuperuser`, then manage other accounts in Django admin.
+- Sign in with a Django username and password or Google at `/login`. Create the first local operator using `python manage.py createsuperuser`, then manage local accounts in Django admin. Google sign-in can create accounts; local allauth registration is disabled.
 - Session login and logout are CSRF-protected. Session cookies are HttpOnly and SameSite=Lax. For HTTPS deployments, set both `DJANGO_SESSION_COOKIE_SECURE=True` and `DJANGO_CSRF_COOKIE_SECURE=True`; configure `DJANGO_CSRF_TRUSTED_ORIGINS` for the deployed origin.
+- Google OAuth uses django-allauth. Configure `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` on the backend only. Register `/accounts/google/login/callback/` as the OAuth redirect URI, and route `/accounts/` through the same-origin frontend proxy. OAuth initiation uses a CSRF-protected POST and PKCE.
+- When TLS terminates at a trusted reverse proxy, enable `DJANGO_SECURE_PROXY_SSL_HEADER=True` only if the proxy overwrites `X-Forwarded-Proto` and preserves `Host`; Django uses these headers to build the OAuth callback URI.
 - Human dashboard sessions do not replace agent API keys. Requests to `/v1/` continue to use agent-key authentication.
 - The current dashboard workspace uses browser-side sample data. Any future backend management endpoints must independently require authenticated human sessions and enforce authorization; the frontend route guard is not an API access control.
 
@@ -165,6 +167,7 @@ GitHub Actions runs the same checks on every push and pull request. Every rule i
 - [x] Rule engine (pure function, unit-tested)
 - [x] Spend request API with agent key auth and audit trail
 - [x] Dashboard sign-in with Django session authentication
+- [x] Optional Google OAuth sign-in and account creation
 - [ ] Approval endpoints (approve and deny)
 - [ ] PayPal sandbox payment execution and webhooks
 - [ ] Demo agent and injection classifier

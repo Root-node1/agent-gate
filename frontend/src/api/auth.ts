@@ -6,6 +6,11 @@ export type AuthStatus =
   | { authenticated: false }
   | { authenticated: true; user: AuthUser }
 
+export interface AuthOptions {
+  csrfToken: string
+  googleOAuthEnabled: boolean
+}
+
 export class AuthError extends Error {
   readonly status: number
 
@@ -22,6 +27,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function responseBody(response: Response): Promise<Record<string, unknown>> {
   const body: unknown = await response.json().catch(() => ({}))
   return isRecord(body) ? body : {}
+}
+
+export async function getAuthOptions(): Promise<AuthOptions> {
+  const response = await fetch('/api/auth/options/', { credentials: 'same-origin' })
+  const body = await responseBody(response)
+  if (
+    response.ok &&
+    typeof body.csrfToken === 'string' &&
+    typeof body.googleOAuthEnabled === 'boolean'
+  ) {
+    return {
+      csrfToken: body.csrfToken,
+      googleOAuthEnabled: body.googleOAuthEnabled,
+    }
+  }
+  throw new AuthError(
+    typeof body.detail === 'string' ? body.detail : 'Could not load sign-in options.',
+    response.status,
+  )
 }
 
 async function csrfToken(): Promise<string> {

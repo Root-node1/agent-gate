@@ -38,7 +38,7 @@ source venv/bin/activate
 python manage.py createsuperuser
 ```
 
-Sign in at http://localhost:5173/login with an email account, Google, or GitHub. New email accounts must verify their address before signing in. The browser authentication API supports TOTP MFA and recovery codes. Email sign-in is available by default; each OAuth provider appears only when its client credentials are configured. Agent API keys continue to authenticate `/v1/` requests independently of dashboard sessions.
+Sign in at http://localhost:5173/login with an email account, Google, or GitHub. New email accounts must verify their address with a time-limited code before signing in. The browser authentication API supports TOTP MFA and recovery codes. Email sign-in is available by default; each OAuth provider appears only when its client credentials are configured. Agent API keys continue to authenticate `/v1/` requests independently of dashboard sessions.
 
 Development email is printed to the backend console. Configure SMTP for production verification and password-reset delivery using the `DJANGO_EMAIL_*` settings in `backend/.env`; never commit SMTP credentials.
 

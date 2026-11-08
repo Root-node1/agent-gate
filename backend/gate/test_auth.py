@@ -105,6 +105,78 @@ class DashboardAuthTests(TestCase):
         self.assertTrue(mfa_response.json()["meta"]["is_authenticated"])
         self.assertTrue(client.get("/api/auth/session/").json()["authenticated"])
 
+    def test_authenticated_user_can_enroll_totp_and_generate_recovery_codes(self):
+        client = Client(enforce_csrf_checks=True)
+        self.post_json(
+            client,
+            f"{HEADLESS}/auth/login",
+            {"email": "operator@example.com", "password": "strong-password"},
+        )
+
+        setup = client.get(f"{HEADLESS}/account/authenticators/totp")
+        self.assertEqual(setup.status_code, 404)
+        secret = setup.json()["meta"]["secret"]
+        code = format_hotp_value(hotp_value(secret, int(time.time()) // 30))
+        activated = self.post_json(
+            client,
+            f"{HEADLESS}/account/authenticators/totp",
+            {"code": code},
+        )
+        self.assertEqual(activated.status_code, 401)
+        self.assertIn(
+            "reauthenticate",
+            [flow["id"] for flow in activated.json()["data"]["flows"]],
+        )
+        reauthenticated = self.post_json(
+            client,
+            f"{HEADLESS}/auth/reauthenticate",
+            {"password": "strong-password"},
+        )
+        self.assertEqual(reauthenticated.status_code, 200)
+        activated = self.post_json(
+            client,
+            f"{HEADLESS}/account/authenticators/totp",
+            {"code": code},
+        )
+        self.assertEqual(activated.status_code, 200)
+        self.assertEqual(activated.json()["data"]["type"], "totp")
+
+        generated = self.post_json(
+            client,
+            f"{HEADLESS}/account/authenticators/recovery-codes",
+            {},
+        )
+        self.assertEqual(generated.status_code, 200)
+        self.assertEqual(len(generated.json()["data"]["unused_codes"]), 10)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_password_reset_email_uses_frontend_route_and_key(self):
+        client = Client(enforce_csrf_checks=True)
+        requested = self.post_json(
+            client,
+            f"{HEADLESS}/auth/password/request",
+            {"email": "operator@example.com"},
+        )
+        self.assertEqual(requested.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        link = re.search(r"/reset-password/([^\s]+)", mail.outbox[0].body)
+        self.assertIsNotNone(link, mail.outbox[0].body)
+        key = link.group(1).rstrip(".")
+
+        checked = client.get(
+            f"{HEADLESS}/auth/password/reset",
+            HTTP_X_PASSWORD_RESET_KEY=key,
+        )
+        self.assertEqual(checked.status_code, 200)
+        reset = self.post_json(
+            client,
+            f"{HEADLESS}/auth/password/reset",
+            {"key": key, "password": "Even-stronger-Passphrase-2030!"},
+        )
+        self.assertEqual(reset.status_code, 401)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("Even-stronger-Passphrase-2030!"))
+
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
     def test_headless_signup_persists_profile_and_sends_verification(self):
         client = Client(enforce_csrf_checks=True)
@@ -170,7 +242,7 @@ class DashboardAuthTests(TestCase):
             f"{HEADLESS}/account/email",
             {"email": "updated@example.com"},
         )
-        self.assertEqual(changed.status_code, 202)
+        self.assertEqual(changed.status_code, 200)
         self.assertTrue(
             EmailAddress.objects.filter(email="updated@example.com").exists()
         )

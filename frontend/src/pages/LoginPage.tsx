@@ -1,30 +1,28 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { getAuthOptions } from '../api/auth'
-import Logo from '../components/Logo'
+import { getAuthOptions, setRememberSession, type AuthOptions } from '../api/auth'
 import { useSession } from '../session/context'
-import './LoginPage.css'
+import { PasswordField } from './AuthFields'
+import AuthProviders from './AuthProviders'
+import AuthShell from './AuthShell'
 
 export default function LoginPage() {
   const { login } = useSession()
   const navigate = useNavigate()
-  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [googleOptions, setGoogleOptions] = useState<
-    { csrfToken: string; enabled: boolean } | null
-  >(null)
-  const [googleOptionsError, setGoogleOptionsError] = useState<string | null>(null)
+  const [options, setOptions] = useState<AuthOptions | null>(null)
+  const [optionsError, setOptionsError] = useState<string | null>(null)
 
   useEffect(() => {
     void getAuthOptions()
-      .then(({ csrfToken, googleOAuthEnabled }) => {
-        setGoogleOptions({ csrfToken, enabled: googleOAuthEnabled })
-      })
+      .then(setOptions)
       .catch((cause: unknown) => {
-        setGoogleOptionsError(
-          cause instanceof Error ? cause.message : 'Could not load Google sign-in options.',
+        setOptionsError(
+          cause instanceof Error ? cause.message : 'Could not load sign-in options.',
         )
       })
   }, [])
@@ -34,8 +32,15 @@ export default function LoginPage() {
     setSubmitting(true)
     setError(null)
     try {
-      await login(username, password)
-      navigate('/app', { replace: true })
+      const result = await login(email.trim(), password)
+      if (result.kind === 'authenticated') {
+        await setRememberSession(remember)
+        navigate('/app', { replace: true })
+      } else if (result.kind === 'mfa') {
+        navigate('/mfa', { state: { email, remember, types: result.types } })
+      } else {
+        navigate('/verify-email', { state: { email } })
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Sign-in failed.')
       setSubmitting(false)
@@ -43,67 +48,61 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="auth-page">
-      <section className="auth-card" aria-labelledby="auth-title">
-        <Link to="/" className="auth-brand" aria-label="AgentGate home">
-          <Logo />
-        </Link>
-        <p className="auth-eyebrow">Dashboard access</p>
-        <h1 id="auth-title">Sign in</h1>
-        <p className="auth-intro">Use your dashboard account to continue to the sample workspace.</p>
-
-        <form onSubmit={submit}>
-          <div className="field">
-            <label htmlFor="username">Username</label>
-            <input
-              id="username"
-              name="username"
-              autoComplete="username"
-              required
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </div>
-          {error ? <p className="auth-error" role="alert">{error}</p> : null}
-          <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
-            {submitting ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
-
-        <div className="auth-divider" aria-hidden="true">
-          <span>or</span>
+    <AuthShell
+      eyebrow="Dashboard access"
+      title="Sign in"
+      description="Sign in to review and govern your AI agents’ spending."
+    >
+      <form onSubmit={submit}>
+        <div className="field">
+          <label htmlFor="email">Work email</label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            aria-invalid={Boolean(error)}
+          />
         </div>
-        {googleOptions?.enabled ? (
-          <form method="post" action="/accounts/google/login/">
-            <input type="hidden" name="csrfmiddlewaretoken" value={googleOptions.csrfToken} />
-            <input type="hidden" name="process" value="login" />
-            <button type="submit" className="btn btn-secondary btn-block auth-google">
-              <span className="auth-google-mark" aria-hidden="true">G</span>
-              Continue with Google
-            </button>
-          </form>
-        ) : googleOptionsError ? (
-          <p className="auth-provider-note" role="status">{googleOptionsError}</p>
-        ) : googleOptions ? (
-          <p className="auth-provider-note">Google sign-in is not configured for this installation.</p>
-        ) : null}
+        <PasswordField
+          id="password"
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+        />
+        <div className="auth-form-options">
+          <label className="auth-check-row">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(event) => setRemember(event.target.checked)}
+            />
+            <span>Remember me</span>
+          </label>
+          <Link to="/forgot-password">Forgot password?</Link>
+        </div>
+        {error ? <p className="auth-error" role="alert">{error}</p> : null}
+        <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
+          {submitting ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
 
-        <p className="auth-footnote">
-          You can sign in with a dashboard account or create one with Google.
-        </p>
-      </section>
-    </main>
+      <div className="auth-divider" aria-hidden="true">
+        <span>or continue with</span>
+      </div>
+      {options ? <AuthProviders options={options} /> : optionsError ? (
+        <p className="auth-error" role="alert">{optionsError}</p>
+      ) : (
+        <p className="auth-provider-note" role="status">Loading sign-in options…</p>
+      )}
+
+      <p className="auth-form-footer">
+        New to AgentGate? <Link to="/register">Create an account</Link>
+      </p>
+    </AuthShell>
   )
 }

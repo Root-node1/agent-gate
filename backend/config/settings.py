@@ -165,11 +165,10 @@ if GITHUB_OAUTH_ENABLED:
         ],
     }
 
-EMAIL_BACKEND = os.environ.get(
-    "DJANGO_EMAIL_BACKEND",
+EMAIL_BACKEND = os.environ.get("DJANGO_EMAIL_BACKEND", "").strip() or (
     "django.core.mail.backends.console.EmailBackend"
     if DEBUG
-    else "django.core.mail.backends.smtp.EmailBackend",
+    else "django.core.mail.backends.smtp.EmailBackend"
 )
 EMAIL_HOST = os.environ.get("DJANGO_EMAIL_HOST", "")
 EMAIL_PORT = int(os.environ.get("DJANGO_EMAIL_PORT", "587"))

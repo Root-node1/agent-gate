@@ -1,8 +1,9 @@
 import { createContext, useContext } from 'react'
+import type { LoginResult } from '../api/auth'
 import type { SpendRequest } from '../api/spendRequests'
 
 export interface Session {
-  login: (username: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<LoginResult>
   logout: () => Promise<void>
   /** Kept in memory only: never written to storage or the URL. */
   agentKey: string

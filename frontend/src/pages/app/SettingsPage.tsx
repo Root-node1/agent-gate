@@ -7,6 +7,7 @@ import ApiKeysSection from './settings/ApiKeysSection'
 import AppearanceSection from './settings/AppearanceSection'
 import DevelopersSection from './settings/DevelopersSection'
 import PaypalSection from './settings/PaypalSection'
+import SecuritySection from './settings/SecuritySection'
 import TeamSection from './settings/TeamSection'
 import WorkspaceSection from './settings/WorkspaceSection'
 import { SETTINGS_TABS, defaultWorkspace, isSettingsTab, type SettingsTab } from './settings/settingsData'
@@ -47,7 +48,7 @@ export default function SettingsPage() {
     <div className="stack-lg">
       <PageHeader
         title="Settings"
-        description="Workspace defaults, the PayPal connection, API keys, your team, developer resources and display options."
+        description="Workspace defaults, integrations, account security, API keys, team access and display options."
       />
 
       <div className="st-tabs-scroll">
@@ -84,6 +85,7 @@ export default function SettingsPage() {
         {active === 'workspace' && <WorkspaceSection saved={workspace} onSave={setWorkspace} />}
         {active === 'paypal' && <PaypalSection />}
         {active === 'keys' && <ApiKeysSection state={state} loading={loading} />}
+        {active === 'security' && <SecuritySection />}
         {active === 'team' && <TeamSection state={state} loading={loading} />}
         {active === 'developers' && <DevelopersSection />}
         {active === 'appearance' && <AppearanceSection />}

@@ -9,8 +9,8 @@ export default function SessionProvider({ children }: { children: ReactNode }) {
   const [agentKey, setAgentKey] = useState('')
   const [recent, setRecent] = useState<SpendRequest[]>([])
 
-  const login = useCallback(async (username: string, password: string) => {
-    await signIn(username, password)
+  const login = useCallback(async (email: string, password: string) => {
+    return await signIn(email, password)
   }, [])
 
   const logout = useCallback(async () => {

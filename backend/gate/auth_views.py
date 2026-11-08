@@ -1,3 +1,6 @@
+import json
+from json import JSONDecodeError
+
 from django.conf import settings
 from django.contrib.auth import logout
 from django.http import JsonResponse
@@ -49,3 +52,23 @@ def session_status(request):
 def session_logout(request):
     logout(request)
     return JsonResponse({"authenticated": False})
+
+
+@require_POST
+def session_remember(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"detail": "Authentication is required."}, status=401)
+
+    try:
+        data = json.loads(request.body)
+    except (JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"detail": "Request body must be valid JSON."}, status=400)
+
+    if not isinstance(data, dict) or not isinstance(data.get("remember"), bool):
+        return JsonResponse({"detail": "A boolean remember value is required."}, status=400)
+
+    if data["remember"]:
+        request.session.set_expiry(60 * 60 * 24 * 30)
+    else:
+        request.session.set_expiry(0)
+    return JsonResponse({"remember": data["remember"]})

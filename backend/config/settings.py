@@ -114,7 +114,18 @@ ACCOUNT_LOGIN_METHODS = {"email"}
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
 ACCOUNT_SIGNUP_FORM_CLASS = "gate.signup_forms.AgentGateSignupForm"
 ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED = True
+ACCOUNT_EMAIL_VERIFICATION_BY_CODE_TIMEOUT = 15 * 60
+ACCOUNT_EMAIL_VERIFICATION_SUPPORTS_CHANGE = 2
+ACCOUNT_EMAIL_VERIFICATION_SUPPORTS_RESEND = 2
 HEADLESS_CLIENTS = ("browser",)
+HEADLESS_FRONTEND_URLS = {
+    "account_confirm_email": "/verify-email",
+    "account_login": "/login",
+    "account_reset_password": "/forgot-password",
+    "account_reset_password_from_key": "/reset-password/{key}",
+    "account_signup": "/register",
+}
 SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_LOGIN_ON_GET = False
 SOCIALACCOUNT_PROVIDERS = {

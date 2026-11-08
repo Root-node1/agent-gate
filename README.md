@@ -38,7 +38,9 @@ source venv/bin/activate
 python manage.py createsuperuser
 ```
 
-Sign in at http://localhost:5173/login with a Django account or Google. Google sign-in can create a dashboard account; Google OAuth is optional and appears only when both credentials are configured. Agent API keys continue to authenticate `/v1/` requests independently of dashboard sessions.
+Sign in at http://localhost:5173/login with an email account, Google, or GitHub. New email accounts must verify their address before signing in. The browser authentication API supports TOTP MFA and recovery codes. Email sign-in is available by default; each OAuth provider appears only when its client credentials are configured. Agent API keys continue to authenticate `/v1/` requests independently of dashboard sessions.
+
+Development email is printed to the backend console. Configure SMTP for production verification and password-reset delivery using the `DJANGO_EMAIL_*` settings in `backend/.env`; never commit SMTP credentials.
 
 To enable Google sign-in:
 
@@ -46,7 +48,9 @@ To enable Google sign-in:
 2. Set `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in `backend/.env` (or your deployment's environment settings).
 3. Add the dashboard origin to Authorized JavaScript origins and its callback URL to Authorized redirect URIs. For local Vite development, the callback is `http://localhost:5173/accounts/google/login/callback/` or `http://127.0.0.1:5173/accounts/google/login/callback/`, matching the host used in the browser. The Vite proxy forwards `/accounts/` to Django.
 
-In production, serve the frontend and backend on one origin through a reverse proxy, route `/accounts/` to Django, and register `https://YOUR-DASHBOARD-DOMAIN/accounts/google/login/callback/` as the callback. Keep OAuth client secrets server-side; never add them to frontend environment variables or commit them.
+To enable GitHub sign-in, create an OAuth app, set `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`, and register the matching callback URL (`/accounts/github/login/callback/`).
+
+In production, serve the frontend and backend on one origin through a reverse proxy, route `/accounts/` and `/api/auth/_allauth/` to Django, and register `https://YOUR-DASHBOARD-DOMAIN/accounts/google/login/callback/` (and GitHub's callback when enabled). Keep OAuth client secrets server-side; never add them to frontend environment variables or commit them.
 
 When dependencies change later, install them once:
 

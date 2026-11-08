@@ -17,6 +17,7 @@ urlpatterns = [
     path("api/auth/csrf/", auth_views.csrf_token, name="auth-csrf"),
     path("api/auth/options/", auth_views.auth_options, name="auth-options"),
     path("api/auth/session/", auth_views.session_status, name="auth-session"),
+    path("api/auth/session/remember/", auth_views.session_remember, name="auth-remember"),
     path("api/auth/logout/", auth_views.session_logout, name="auth-logout"),
     path("api/auth/_allauth/", include("allauth.headless.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

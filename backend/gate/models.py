@@ -8,6 +8,20 @@ from django.db import models
 from django.db.models import F, Q
 
 
+class AccountProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="account_profile",
+    )
+    full_name = models.CharField(max_length=150)
+    organization = models.CharField(max_length=150)
+    terms_accepted_at = models.DateTimeField()
+
+    def __str__(self):
+        return self.organization
+
+
 def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 

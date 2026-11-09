@@ -66,9 +66,34 @@ Run it as the table owner; ownership bypasses grants. The role keeps
 python manage.py verify_audit
 ```
 
-The command walks each organization's events in id order, recomputes every hash from the stored canonical payload, and exits non-zero at the first mismatch.
+The command walks each organization's events in id order, recomputes every hash from the stored canonical payload, and checks the latest external anchor. It exits non-zero at the first mismatch.
 
-Keep a periodic off-server `pg_dump` of the audit tables. The chain is tamper-evident, not tamper-proof, unless the head hash is anchored outside Neon.
+Keep a periodic off-server `pg_dump` of the audit tables. The chain is tamper-evident, not tamper-proof, unless the head hash is anchored outside the database.
+
+## Audit head anchoring
+
+Every organization's head event id, head hash, and anchor timestamp are appended to an append-only JSON Lines file. Set `AUDIT_ANCHOR_PATH` to a file on storage that the database host cannot rewrite:
+
+```bash
+export AUDIT_ANCHOR_PATH=/srv/agentgate/audit-anchor.jsonl
+```
+
+If the variable is unset, anchoring is disabled and `verify_audit` checks only the database chain. When it is set, an organization with audit events but no anchor, a missing anchored event, or an anchor hash that differs from the stored event fails verification with `audit_chain_broken`.
+
+Record an anchor immediately after deployment and on demand:
+
+```bash
+python manage.py anchor_audit
+python manage.py anchor_audit --organization <uuid>
+```
+
+The worker records all organization heads hourly through `anchor_audit_periodic` on the `audit` queue. If the worker is not used, add this crontab entry instead:
+
+```cron
+0 * * * * cd /srv/agentgate/backend && /srv/agentgate/backend/venv/bin/python manage.py anchor_audit >> /var/log/agentgate/anchor.log 2>&1
+```
+
+Keep the anchor file on a different host or volume from PostgreSQL/Neon. If an attacker can rewrite both the database and the anchor file, the chain is no longer tamper-evident.
 
 ## Dashboard list filters
 
@@ -152,14 +177,14 @@ No separate schema bootstrap step is required. The core tables in 3.10.0 are:
 ```bash
 DJANGO_SETTINGS_MODULE=config.settings.prod \
 python manage.py procrastinate worker \
-  -q smoke,approvals,payments --listen-notify --delete-jobs=SUCCESSFUL
+  -q smoke,approvals,payments,audit --listen-notify --delete-jobs=SUCCESSFUL
 ```
 
 For one-shot mode (process all current jobs then exit, useful in CI):
 
 ```bash
 python manage.py procrastinate worker \
-  -q smoke,approvals,payments --no-listen-notify
+  -q smoke,approvals,payments,audit --no-listen-notify
 ```
 
 `apps.payments.tasks.execute_payment` runs on the `payments` queue. Payment

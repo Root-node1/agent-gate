@@ -68,7 +68,7 @@ TODO: list only what is actually used (for example Render, APIMatic, AG Grid, Po
 ## Security notes
 
 - `source=trusted` is self-reported by the caller. The API cannot prove that a request came from a trusted origin; the SDK or MCP wrapper must set it from the instruction's actual provenance. Missing provenance defaults to `untrusted` and needs approval.
-- The audit log is append-only and hash-chained per organization. It is tamper-evident, not tamper-proof, unless the head hash is anchored outside the database.
+- The audit log is append-only and hash-chained per organization. When `AUDIT_ANCHOR_PATH` points at storage outside the database host, the head hash is anchored hourly and verification checks the anchor; otherwise it is tamper-evident, not tamper-proof.
 - Spend requests require an `Idempotency-Key`. Replaying the same key and body returns the stored response with `Idempotent-Replayed: true`; reusing a key with a different body or destination returns 409.
 - Agent responses carry rule IDs and short messages only. Budgets, caps and spent amounts stay in the dashboard and audit log.
 - Writes are throttled per agent key and request bodies are capped at 64 KiB.

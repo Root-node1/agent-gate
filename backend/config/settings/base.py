@@ -187,6 +187,10 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
 CSRF_FAILURE_VIEW = "apps.common.errors.csrf_failure"
 
+# External audit-head anchoring. Point this at an append-only file on storage
+# that the database host cannot rewrite. Empty disables anchoring.
+AUDIT_ANCHOR_PATH = os.environ.get("AUDIT_ANCHOR_PATH", "").strip()
+
 # Payment execution. The fake executor is the zero-credential default; set
 # PAYMENT_EXECUTOR=paypal to move real sandbox money. Execution jobs are
 # enqueued after an allow decision or an approval commits.

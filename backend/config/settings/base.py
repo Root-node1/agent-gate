@@ -229,6 +229,9 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "AgentGate API",
     "DESCRIPTION": "Spending firewall between AI agents and PayPal.",
     "VERSION": "0.1.0",
+    "ENUM_NAME_OVERRIDES": {
+        "AgentStatusEnum": "apps.agents.models.Agent.Status",
+    },
 }
 
 SESSION_COOKIE_HTTPONLY = True

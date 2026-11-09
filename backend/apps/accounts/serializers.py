@@ -23,6 +23,10 @@ class AccountProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ["user"]
 
 
+class SessionRememberSerializer(serializers.Serializer):
+    remember = serializers.BooleanField(required=True)
+
+
 class CurrentUserSerializer(serializers.ModelSerializer):
     is_email_verified = serializers.SerializerMethodField()
     memberships = MembershipSerializer(many=True, read_only=True)
@@ -42,7 +46,7 @@ class CurrentUserSerializer(serializers.ModelSerializer):
             "profile",
         ]
 
-    def get_is_email_verified(self, user):
+    def get_is_email_verified(self, user) -> bool:
         if not user.email:
             return False
         return EmailAddress.objects.filter(

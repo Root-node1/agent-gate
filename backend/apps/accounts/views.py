@@ -9,7 +9,11 @@ from rest_framework.response import Response
 
 from .models import AccountProfile
 from .permissions import IsAuthenticatedOr401
-from .serializers import AccountProfileSerializer, CurrentUserSerializer
+from .serializers import (
+    AccountProfileSerializer,
+    CurrentUserSerializer,
+    SessionRememberSerializer,
+)
 
 
 class CsrfTokenView(views.APIView):
@@ -99,7 +103,7 @@ class SessionRememberView(views.APIView):
         return super().handle_exception(exc)
 
     @extend_schema(
-        request={"type": "object", "properties": {"remember": {"type": "boolean"}}},
+        request=SessionRememberSerializer,
         responses={200: {"type": "object", "properties": {"remember": {"type": "boolean"}}}},
     )
     def post(self, request):
@@ -184,7 +188,7 @@ class LogoutView(views.APIView):
             )
         return super().handle_exception(exc)
 
-    @extend_schema(responses={status.HTTP_204_NO_CONTENT: None})
+    @extend_schema(request=None, responses={status.HTTP_204_NO_CONTENT: None})
     def post(self, request):
         django_logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)

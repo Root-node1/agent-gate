@@ -8,6 +8,40 @@ from apps.accounts.models import OrgMembership
 from .models import Agent
 
 
+class CurrentKeySerializer(serializers.Serializer):
+    prefix = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    last_used_at = serializers.DateTimeField(allow_null=True)
+
+
+class AgentPolicySerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    version = serializers.IntegerField()
+    name = serializers.CharField()
+    currency = serializers.CharField()
+
+
+class RevokedKeySerializer(serializers.Serializer):
+    prefix = serializers.CharField()
+    revoked_at = serializers.DateTimeField()
+
+
+class AgentRotateKeyResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    status = serializers.ChoiceField(choices=Agent.Status.choices)
+    current_key = CurrentKeySerializer(allow_null=True)
+    api_key = serializers.CharField(help_text="New raw API key. Returned only once.")
+
+
+class AgentRevokeKeyResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    status = serializers.ChoiceField(choices=Agent.Status.choices)
+    current_key = serializers.CharField(allow_null=True)
+    revoked_key = RevokedKeySerializer()
+
+
 class AgentSerializer(serializers.ModelSerializer):
     """Full detail serializer. Returns a lightweight list shape when
     ``context['list_view']`` is true."""
@@ -52,6 +86,7 @@ class AgentSerializer(serializers.ModelSerializer):
             }
         return data
 
+    @extend_schema_field(CurrentKeySerializer(allow_null=True))
     def get_current_key(self, obj):
         key = obj.current_key
         if key is None:
@@ -62,10 +97,12 @@ class AgentSerializer(serializers.ModelSerializer):
             "last_used_at": key.last_used_at,
         }
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_current_key_prefix(self, obj):
         key = obj.current_key
         return key.prefix if key else None
 
+    @extend_schema_field(AgentPolicySerializer(many=True))
     def get_policies(self, obj):
         return [
             {
@@ -77,9 +114,11 @@ class AgentSerializer(serializers.ModelSerializer):
             for p in obj.policies.all()[:5]
         ]
 
+    @extend_schema_field(serializers.IntegerField)
     def get_recent_spend_requests(self, obj):
         return obj.spend_requests.count()
 
+    @extend_schema_field(serializers.IntegerField)
     def get_today_spend_minor(self, obj):
         from django.db.models import Sum
         from django.utils import timezone

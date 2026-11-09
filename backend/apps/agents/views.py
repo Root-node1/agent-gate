@@ -14,7 +14,13 @@ from apps.common.pagination import DashboardPagination
 
 from .authentication import DashboardSessionAuthentication
 from .models import Agent
-from .serializers import AgentCreateSerializer, AgentSerializer, AgentUpdateSerializer
+from .serializers import (
+    AgentCreateSerializer,
+    AgentRevokeKeyResponseSerializer,
+    AgentRotateKeyResponseSerializer,
+    AgentSerializer,
+    AgentUpdateSerializer,
+)
 
 
 def agent_queryset(user):
@@ -161,7 +167,10 @@ class AgentRotateKeyView(APIView):
     authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsOrganizationAdmin]
 
-    @extend_schema(responses={200: dict, 400: dict})
+    @extend_schema(
+        request=None,
+        responses={200: AgentRotateKeyResponseSerializer},
+    )
     def post(self, request, pk):
         agent = get_object_or_404(agent_queryset(request.user), pk=pk)
         old_key = agent.current_key
@@ -212,7 +221,16 @@ class AgentRevokeKeyView(APIView):
     authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsOrganizationAdmin]
 
-    @extend_schema(responses={200: dict, 400: dict})
+    @extend_schema(
+        request=None,
+        responses={
+            200: AgentRevokeKeyResponseSerializer,
+            400: {
+                "type": "object",
+                "properties": {"detail": {"type": "string"}},
+            },
+        },
+    )
     def post(self, request, pk):
         agent = get_object_or_404(agent_queryset(request.user), pk=pk)
         revoked_key = agent.revoke_current_key()

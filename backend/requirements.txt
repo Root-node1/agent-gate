@@ -20,6 +20,7 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 markdown-it-py==4.2.0
 mdurl==0.1.2
+mypy==2.4.1
 packaging==26.3
 psycopg[binary,pool]==3.3.6
 procrastinate[django]==3.10.0

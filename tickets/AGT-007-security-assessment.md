@@ -37,7 +37,7 @@ Anthony is the DevSecOps contributor. The security review covers authentication,
 | VULN-003 | Medium | Backups | Backup encryption key storage undecided | Open |
 | VULN-004 | Medium | Monitoring | No security monitoring, IDS, or alerting | Open |
 | VULN-005 | Low | Authentication | `MFA_BYPASS_CODE` usage procedure undocumented | Open |
-| VULN-006 | Info | Authorization | IDOR/BOLA testing not yet performed on spend/approval/agent endpoints | In progress |
+| VULN-006 | Info | Authorization | IDOR/BOLA testing not yet performed on spend/approval/agent endpoints | Resolved — tests/test_idor_bola_authorization.py added with 5 tests |
 
 ## Dependencies
 - AGT-001 through AGT-006 (integration must be complete before security review)

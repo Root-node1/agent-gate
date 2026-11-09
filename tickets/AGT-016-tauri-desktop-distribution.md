@@ -4,7 +4,13 @@
 **Title:** Complete internal-testing Tauri desktop release
 **Objective:** Validate existing `.deb` and `.rpm` artifacts, investigate AppImage packaging, and document internal-testing desktop release.
 **Priority:** High (presentation deadline)
-**Status:** Not started
+**Status:** Blocked — AGT-013 (VPS deployment) depends on AGT-012 (SSH access). Desktop connectivity testing cannot complete without a deployed backend.
+
+**CSP issue:** `frontend/src-tauri/tauri.conf.json` contains `connect-src 'self' http://127.0.0.1:8000 http://localhost:8000`. Acceptance criterion #29 requires no localhost URLs in release build CSP. Production backend URL (from `AGENTGATE_BACKEND_URL`) must be configured before release.
+
+**Artifacts:** `.deb` (4.5MB) and `.rpm` (4.5MB) exist but are unsigned. AppImage not yet packaged.
+
+**Platforms:** macOS not supported. ARM64 builds not available.
 **Assigned owner:** Del, with Winstone handling release/infrastructure
 
 ## Context

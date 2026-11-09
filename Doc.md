@@ -250,6 +250,9 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 - [ ] Dashboard screens
 - [ ] Deploy on the Contabo VPS (AGT-013) — blocked by AGT-012 (SSH access)
 - [ ] SDK generated from the OpenAPI schema
+- [~] Integrate backend commits from origin/main (AGT-018) — not started, Isaac + Anthony
+- [~] Integrate frontend/dashboard commits from origin/feat/dashboard (AGT-019) — not started, Del + Isaac
+- [~] Integrate PayPal sandbox commits from feat/paypal-sandbox (AGT-020) — not started, Isaac + Anthony
 
 ### Active Tickets (AGT-012 through AGT-017)
 
@@ -261,6 +264,9 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 | AGT-015 | Team VPS Access and Environment Setup | Winstone | Not started |
 | AGT-016 | Tauri Desktop Distribution | Del + Winstone | Not started (.deb/.rpm built, unsigned) |
 | AGT-017 | Presentation and Demonstration Readiness | Ian + Winstone | In Progress |
+| AGT-018 | Integrate Backend Commits from origin/main | Isaac + Anthony | Not started — 17 commits require review |
+| AGT-019 | Integrate Frontend/Dashboard Commits from origin/feat/dashboard | Del + Isaac | Not started — 6 commits require review |
+| AGT-020 | Integrate PayPal Sandbox Commits from feat/paypal-sandbox | Isaac + Anthony | Not started — 19 commits require review |
 
 All tickets are individual Markdown files under `/tickets/`.
 

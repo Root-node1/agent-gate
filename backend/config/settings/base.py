@@ -49,7 +49,6 @@ INSTALLED_APPS = [
     "apps.payments",
     "apps.audit",
     "apps.background",
-    "gate",
 ]
 
 AUTH_USER_MODEL = "accounts.User"

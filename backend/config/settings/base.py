@@ -49,7 +49,6 @@ INSTALLED_APPS = [
     "apps.payments",
     "apps.audit",
     "apps.background",
-    "gate",
 ]
 
 AUTH_USER_MODEL = "accounts.User"
@@ -187,6 +186,10 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 100
 CSRF_FAILURE_VIEW = "apps.common.errors.csrf_failure"
 
+# External audit-head anchoring. Point this at an append-only file on storage
+# that the database host cannot rewrite. Empty disables anchoring.
+AUDIT_ANCHOR_PATH = os.environ.get("AUDIT_ANCHOR_PATH", "").strip()
+
 # Payment execution. The fake executor is the zero-credential default; set
 # PAYMENT_EXECUTOR=paypal to move real sandbox money. Execution jobs are
 # enqueued after an allow decision or an approval commits.
@@ -210,6 +213,7 @@ PAYPAL_ALLOW_LIVE = os.environ.get("PAYPAL_ALLOW_LIVE", "").strip().lower() in {
     "yes",
     "on",
 }
+WEBHOOK_RETENTION_DAYS = env_int("WEBHOOK_RETENTION_DAYS", 30)
 
 ADMIN_PATH = os.environ.get("DJANGO_ADMIN_PATH", "admin").strip("/")
 if not ADMIN_PATH:
@@ -219,6 +223,20 @@ ADMIN_PATH = f"{ADMIN_PATH}/"
 DEMO_ORG_NAME = os.environ.get("DEMO_ORG_NAME", "demo")
 DEMO_USERNAME = os.environ.get("DEMO_USERNAME", "demo-viewer")
 DEMO_MODE = os.environ.get("DEMO_MODE", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DEMO_MODE_ALLOW_PRODUCTION = os.environ.get(
+    "DEMO_MODE_ALLOW_PRODUCTION", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DEMO_MODE_ALLOW_WRITES = os.environ.get("DEMO_MODE_ALLOW_WRITES", "").strip().lower() in {
     "1",
     "true",
     "yes",

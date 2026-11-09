@@ -42,3 +42,25 @@ def reconcile_payments_periodic(timestamp: int) -> dict:
     from .reconciliation import reconcile_payments
 
     return asdict(reconcile_payments())
+
+
+WEBHOOK_RETENTION_CRON = "30 3 * * *"
+WEBHOOK_RETENTION_PERIODIC_ID = "webhook_retention"
+WEBHOOK_RETENTION_QUEUEING_LOCK = "webhook_retention"
+
+
+@app.periodic(
+    cron=WEBHOOK_RETENTION_CRON,
+    periodic_id=WEBHOOK_RETENTION_PERIODIC_ID,
+)
+@app.task(
+    queue="payments",
+    name="apps.payments.tasks.purge_webhook_payloads_periodic",
+    retry=RetryStrategy(max_attempts=3, wait=2),
+    queueing_lock=WEBHOOK_RETENTION_QUEUEING_LOCK,
+)
+def purge_webhook_payloads_periodic(timestamp: int) -> int:
+    """Clear payloads for processed webhook events past the retention window."""
+    from .retention import purge_processed_webhook_payloads
+
+    return purge_processed_webhook_payloads()

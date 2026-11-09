@@ -135,7 +135,11 @@ class MerchantRuleCreateSuccessTests(MerchantRuleTestBase):
         )
         self.assertEqual(response.status_code, 400)
         body = response.json()
-        self.assertEqual(body["detail"], "Merchant 'acme.com' cannot be both allowed and blocked.")
+        self.assertEqual(
+            body["error"]["message"],
+            "Merchant 'acme.com' cannot be both allowed and blocked.",
+        )
+        self.assertNotIn("detail", body)
 
     def test_note_optional_on_add(self):
         response = self.client.post(
@@ -412,9 +416,12 @@ class MerchantRuleDeleteValidationTests(MerchantRuleTestBase):
         self.rule_acme = self.policy.merchant_rules.get(merchant_ref="acme.com")
         self.delete_url = f"/v1/policies/{self.policy.id}/merchant-rules/{self.rule_acme.id}/"
 
-    def test_missing_if_match_returns_400(self):
+    def test_missing_if_match_returns_428(self):
         response = self.client.delete(self.delete_url)
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 428)
+        body = response.json()
+        self.assertEqual(body["error"]["code"], "precondition_required")
+        self.assertNotIn("detail", body)
 
     def test_invalid_if_match_returns_400(self):
         response = self.client.delete(self.delete_url, HTTP_IF_MATCH="not-a-number")

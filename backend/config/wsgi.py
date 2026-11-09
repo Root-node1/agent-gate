@@ -48,9 +48,15 @@ if not settings.DEBUG:
         check_mfa_encryption_key,
         check_redis_cache_connection,
     )
+    from apps.agents.checks import check_demo_mode_safety
 
     startup_errors = []
-    for check_func in [check_mfa_encryption_key, check_mfa_bypass_code, check_redis_cache_connection]:
+    for check_func in [
+        check_mfa_encryption_key,
+        check_mfa_bypass_code,
+        check_redis_cache_connection,
+        check_demo_mode_safety,
+    ]:
         errors = [e for e in check_func(None) if isinstance(e, Error)]
         startup_errors.extend(errors)
     if startup_errors:

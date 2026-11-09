@@ -9,12 +9,30 @@ from .models import Agent
 
 
 class CurrentKeySerializer(serializers.Serializer):
+    """Schema shape for the current API key summary."""
+    prefix = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    last_used_at = serializers.DateTimeField(allow_null=True)
+
+
+class AgentKeySummarySerializer(serializers.Serializer):
+    """Schema shape for the current API key summary (alias)."""
+
     prefix = serializers.CharField()
     created_at = serializers.DateTimeField()
     last_used_at = serializers.DateTimeField(allow_null=True)
 
 
 class AgentPolicySerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    version = serializers.IntegerField()
+    name = serializers.CharField()
+    currency = serializers.CharField()
+
+
+class AgentPolicySummarySerializer(serializers.Serializer):
+    """Schema shape for the five most recent agent policies (alias)."""
+
     id = serializers.UUIDField()
     version = serializers.IntegerField()
     name = serializers.CharField()
@@ -43,8 +61,7 @@ class AgentRevokeKeyResponseSerializer(serializers.Serializer):
 
 
 class AgentSerializer(serializers.ModelSerializer):
-    """Full detail serializer. Returns a lightweight list shape when
-    ``context['list_view']`` is true."""
+    """Full detail serializer for a single agent."""
 
     organization_name = serializers.CharField(source="organization.name", read_only=True)
     current_key = serializers.SerializerMethodField()
@@ -114,11 +131,11 @@ class AgentSerializer(serializers.ModelSerializer):
             for p in obj.policies.all()[:5]
         ]
 
-    @extend_schema_field(serializers.IntegerField)
+    @extend_schema_field(serializers.IntegerField())
     def get_recent_spend_requests(self, obj):
         return obj.spend_requests.count()
 
-    @extend_schema_field(serializers.IntegerField)
+    @extend_schema_field(serializers.IntegerField())
     def get_today_spend_minor(self, obj):
         from django.db.models import Sum
         from django.utils import timezone
@@ -133,6 +150,37 @@ class AgentSerializer(serializers.ModelSerializer):
     def get_currency(self, obj):
         policy = obj.policies.first()
         return policy.currency if policy else "USD"
+
+
+class AgentListSerializer(serializers.ModelSerializer):
+    """List serializer exposing only the fields the dashboard table needs.
+
+    Expects the queryset to prefetch active keys into ``active_keys`` so the
+    prefix comes from the prefetch cache instead of a query per row.
+    """
+
+    current_key_prefix = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Agent
+        fields = [
+            "id",
+            "name",
+            "status",
+            "created_at",
+            "updated_at",
+            "current_key_prefix",
+        ]
+        read_only_fields = fields
+
+    @extend_schema_field(serializers.CharField)
+    def get_current_key_prefix(self, obj):
+        keys = getattr(obj, "active_keys", None)
+        if keys is None:
+            key = obj.current_key
+        else:
+            key = keys[0] if keys else None
+        return key.prefix if key else None
 
 
 class AgentCreateSerializer(serializers.Serializer):

@@ -58,4 +58,12 @@ def check_paypal_configuration(app_configs, **kwargs):
                 )
             )
 
+    if getattr(settings, "WEBHOOK_RETENTION_DAYS", 0) < 1:
+        errors.append(
+            Error(
+                "WEBHOOK_RETENTION_DAYS must be at least 1.",
+                id="payments.E006",
+            )
+        )
+
     return errors

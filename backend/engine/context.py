@@ -18,6 +18,7 @@ class PolicyLimits:
     weekly_budget: Decimal | None = None
     allowed_merchants: frozenset[str] = frozenset()
     blocked_merchants: frozenset[str] = frozenset()
+    merchant_mode: str = "blocklist"
     untrusted_source_action: str = "needs_approval"
     velocity_max_count: int = 0
     merchant_window_cap: Decimal = Decimal("0")

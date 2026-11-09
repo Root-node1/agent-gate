@@ -27,12 +27,16 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = True
 SECURE_REDIRECT_EXEMPT = [r"^healthz$", r"^readyz$"]
 SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "31536000"))
+# IncludeSubDomains and preload require every subdomain to be HTTPS. Keep them
+# off until that is verified, and keep the matching deployment checks silenced.
 SECURE_HSTS_INCLUDE_SUBDOMAINS = False
 SECURE_HSTS_PRELOAD = False
+SILENCED_SYSTEM_CHECKS = ["security.W005", "security.W021"]
 
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 X_FRAME_OPTIONS = "DENY"
 
 CSRF_TRUSTED_ORIGINS = [

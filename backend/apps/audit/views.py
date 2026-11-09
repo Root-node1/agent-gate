@@ -20,6 +20,7 @@ from apps.common.query_params import (
 )
 from apps.common.schema import error_responses
 
+from .anchors import get_anchor_store
 from .models import AuditEvent
 from .serializers import AuditEventSerializer
 from .services import AuditChainBroken, verify_organizations
@@ -130,7 +131,9 @@ class AuditVerifyView(APIView):
             memberships__role=OrgMembership.Role.ADMIN,
         ).distinct()
         try:
-            checked = verify_organizations(organizations)
+            checked = verify_organizations(
+                organizations, anchor_store=get_anchor_store()
+            )
         except AuditChainBroken as exc:
             raise ApiError(
                 str(exc),

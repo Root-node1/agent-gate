@@ -1,5 +1,6 @@
 import uuid
 
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import F, Q
@@ -84,8 +85,17 @@ class Policy(models.Model):
         return f"{self.name} v{self.version} for {self.agent}"
 
     def save(self, *args, **kwargs):
-        if self.agent_id and not self.organization_id:
-            self.organization_id = self.agent.organization_id
+        if self.agent_id is None:
+            raise ValidationError({"agent": "A policy requires an agent."})
+        agent_organization_id = self.agent.organization_id
+        if (
+            self.organization_id is not None
+            and self.organization_id != agent_organization_id
+        ):
+            raise ValidationError(
+                {"organization": "The policy organization must match its agent's organization."}
+            )
+        self.organization_id = agent_organization_id
         self.currency = normalize_currency(self.currency)
         validate_timezone(self.timezone)
         super().save(*args, **kwargs)

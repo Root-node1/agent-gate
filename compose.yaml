@@ -74,10 +74,10 @@ services:
       - .env.production
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.prod
-      PROCRASTINATE_WORKER_QUEUES: smoke,approvals,payments
+      PROCRASTINATE_WORKER_QUEUES: smoke,approvals,payments,audit
     command: >
       python manage.py procrastinate worker
-      -q smoke,approvals,payments
+      -q smoke,approvals,payments,audit
       --listen-notify
       --delete-jobs=SUCCESSFUL
     networks:

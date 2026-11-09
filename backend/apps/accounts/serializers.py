@@ -1,4 +1,5 @@
 from allauth.account.models import EmailAddress
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import AccountProfile, OrgMembership, User
@@ -46,6 +47,7 @@ class CurrentUserSerializer(serializers.ModelSerializer):
             "profile",
         ]
 
+    @extend_schema_field(serializers.BooleanField())
     def get_is_email_verified(self, user) -> bool:
         if not user.email:
             return False

@@ -10,7 +10,7 @@ class ClassifierResult:
     score: int | None = None
     reasons: tuple[str, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.score is not None and not 0 <= self.score <= 100:
             raise ValueError("Classifier score must be between 0 and 100.")
 

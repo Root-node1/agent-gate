@@ -8,6 +8,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .models import AccountProfile
+from apps.common.errors import ApiError, ErrorCode, api_exception_handler
 from .permissions import IsAuthenticatedOr401
 from .serializers import (
     AccountProfileSerializer,
@@ -120,6 +121,18 @@ class SessionRememberView(views.APIView):
         return Response({"remember": remember})
 
 
+def _unauthenticated(request):
+    """Return the shared 401 envelope without DRF's header-dependent 403 coercion."""
+    return api_exception_handler(
+        ApiError(
+            "Authentication failed.",
+            code=ErrorCode.AUTHENTICATION_FAILED,
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        ),
+        {"request": request},
+    )
+
+
 class CurrentUserView(views.APIView):
     """Authenticated dashboard user. Reads only the session; agent API keys are rejected."""
 
@@ -130,10 +143,7 @@ class CurrentUserView(views.APIView):
         # Don't coerce NotAuthenticated to 403 when there's no WWW-Authenticate header.
         # We want 401 for unauthenticated API requests.
         if isinstance(exc, exceptions.NotAuthenticated):
-            return Response(
-                {"detail": exc.detail},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return _unauthenticated(self.request)
         return super().handle_exception(exc)
 
     @extend_schema(responses=CurrentUserSerializer)
@@ -182,10 +192,7 @@ class LogoutView(views.APIView):
 
     def handle_exception(self, exc):
         if isinstance(exc, exceptions.NotAuthenticated):
-            return Response(
-                {"detail": exc.detail},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return _unauthenticated(self.request)
         return super().handle_exception(exc)
 
     @extend_schema(request=None, responses={status.HTTP_204_NO_CONTENT: None})

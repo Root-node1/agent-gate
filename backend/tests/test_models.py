@@ -1,14 +1,18 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import ProtectedError
 from django.test import TestCase
+from django.utils import timezone
 
 from apps.accounts.models import Organization, OrgMembership, User
 from apps.agents.keys import hash_key
 from apps.agents.models import Agent, ApiKey
+from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
+from apps.common.currency import minor_unit
 from apps.common.money import to_major, to_minor
 from apps.payees.models import DestinationType, Payee, fingerprint
 from apps.payments.executors import FakeExecutor
@@ -65,6 +69,30 @@ class MoneyTests(TestCase):
     def test_zero_decimal_currency(self):
         self.assertEqual(to_minor(Decimal("1200"), "JPY"), 1200)
         self.assertEqual(to_major(1200, "JPY"), Decimal("1200"))
+
+    def test_minor_unit_exponents_for_supported_scales(self):
+        expected = {
+            "USD": 2,
+            "JPY": 0,
+            "KWD": 3,
+            "BHD": 3,
+            "JOD": 3,
+            "OMR": 3,
+            "TND": 3,
+            "CLF": 4,
+            "UYW": 4,
+        }
+        for currency, exponent in expected.items():
+            with self.subTest(currency=currency):
+                self.assertEqual(minor_unit(currency), exponent)
+
+    def test_three_decimal_currency_round_trip(self):
+        self.assertEqual(to_minor(Decimal("1.234"), "KWD"), 1234)
+        self.assertEqual(to_major(1234, "KWD"), Decimal("1.234"))
+
+    def test_four_decimal_currency_round_trip(self):
+        self.assertEqual(to_minor(Decimal("1.2345"), "CLF"), 12345)
+        self.assertEqual(to_major(12345, "CLF"), Decimal("1.2345"))
 
 
 class PolicyTests(TestCase):
@@ -127,6 +155,17 @@ class PolicyTests(TestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             Policy.objects.create(agent=agent, version=1)
 
+    def test_organization_must_match_agent(self):
+        agent, _ = make_agent("tenant")
+        other_org = Organization.objects.create(name="other-tenant")
+        with self.assertRaises(ValidationError):
+            Policy.objects.create(agent=agent, organization=other_org)
+
+    def test_organization_is_derived_from_agent(self):
+        agent, _ = make_agent("derived")
+        policy = Policy.objects.create(agent=agent)
+        self.assertEqual(policy.organization_id, agent.organization_id)
+
 
 class PayeeTests(TestCase):
     def test_fingerprint_normalizes_the_destination(self):
@@ -170,6 +209,19 @@ class OrganizationTests(TestCase):
         OrgMembership.objects.create(user=user, organization=organization, role="admin")
         with self.assertRaises(IntegrityError), transaction.atomic():
             OrgMembership.objects.create(user=user, organization=organization, role="viewer")
+
+
+class UserTimestampTests(TestCase):
+    def test_user_updated_at_is_set_and_refreshed(self):
+        user = User.objects.create_user(username="timestamped", password="x")
+        self.assertIsNotNone(user.updated_at)
+
+        user.updated_at = timezone.now() - timedelta(days=1)
+        user.first_name = "Changed"
+        user.save()
+        user.refresh_from_db()
+
+        self.assertGreater(user.updated_at, timezone.now() - timedelta(hours=1))
 
 
 class WebhookEventTests(TestCase):
@@ -229,6 +281,64 @@ class SpendRequestTests(TestCase):
         spend = self.make_spend(save=False, evidence_excerpt="x" * 4_097)
         with self.assertRaises(ValidationError):
             spend.full_clean()
+
+    def test_organization_must_match_agent(self):
+        other_org = Organization.objects.create(name="other-tenant")
+        with self.assertRaises(ValidationError):
+            self.make_spend(organization=other_org)
+
+    def test_policy_must_belong_to_agent(self):
+        other_agent, _ = make_agent("other-shopper", "other-tenant")
+        other_policy = Policy.objects.create(agent=other_agent)
+        with self.assertRaises(ValidationError):
+            self.make_spend(policy=other_policy)
+
+    def test_organization_is_derived_from_agent(self):
+        spend = SpendRequest.objects.create(
+            agent=self.agent,
+            policy=self.policy,
+            policy_version=self.policy.version,
+            amount_minor=1_000,
+            currency="USD",
+            merchant_ref="acme.com",
+            decision=SpendRequest.Decision.ALLOW,
+            status=SpendRequest.Status.APPROVED,
+        )
+        self.assertEqual(spend.organization_id, self.agent.organization_id)
+
+
+class ApprovalTests(TestCase):
+    def setUp(self):
+        self.agent, _ = make_agent("approval-shopper")
+        self.policy = Policy.objects.create(agent=self.agent)
+        self.spend = SpendRequest.objects.create(
+            organization=self.agent.organization,
+            agent=self.agent,
+            policy=self.policy,
+            policy_version=self.policy.version,
+            amount_minor=1_000,
+            currency="USD",
+            merchant_ref="acme.com",
+            decision=SpendRequest.Decision.NEEDS_APPROVAL,
+            status=SpendRequest.Status.PENDING_APPROVAL,
+        )
+
+    def make_approval(self, **overrides):
+        values = {
+            "spend_request": self.spend,
+            "expires_at": timezone.now() + timedelta(hours=1),
+        }
+        values.update(overrides)
+        return Approval.objects.create(**values)
+
+    def test_organization_must_match_spend_request(self):
+        other_org = Organization.objects.create(name="other-tenant")
+        with self.assertRaises(ValidationError):
+            self.make_approval(organization=other_org)
+
+    def test_organization_is_derived_from_spend_request(self):
+        approval = self.make_approval()
+        self.assertEqual(approval.organization_id, self.spend.organization_id)
 
 
 class AuditEventTests(TestCase):

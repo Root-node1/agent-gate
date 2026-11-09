@@ -1,16 +1,17 @@
-"""Verify the audit hash chain for every organization."""
+"""Verify the audit hash chain and its external head anchors for every organization."""
 
 from django.core.management.base import BaseCommand, CommandError
 
+from apps.audit.anchors import get_anchor_store
 from apps.audit.services import AuditChainBroken, verify_all
 
 
 class Command(BaseCommand):
-    help = "Recompute the audit hash chain and report the first broken event."
+    help = "Recompute the audit hash chain and check the latest external anchor."
 
     def handle(self, *args, **options):
         try:
-            checked = verify_all()
+            checked = verify_all(anchor_store=get_anchor_store())
         except AuditChainBroken as exc:
             raise CommandError(
                 f"Audit chain broken at event {exc.event_id} for "

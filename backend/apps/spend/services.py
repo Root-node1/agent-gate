@@ -1,6 +1,9 @@
 """State queries used by the spend pipeline and approval rechecks."""
 
+from datetime import timedelta
+from datetime import timezone as datetime_timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
@@ -51,6 +54,7 @@ def build_limits(policy: Policy) -> engine.PolicyLimits:
         blocked_merchants=frozenset(
             r.merchant_ref for r in merchant_rules if r.kind == MerchantRule.Kind.BLOCK
         ),
+        merchant_mode=policy.merchant_mode,
         untrusted_source_action=policy.untrusted_source_action,
         new_payee_cooldown_hours=policy.new_payee_cooldown_hours,
         injection_escalate_threshold=policy.injection_escalate_threshold,
@@ -86,16 +90,28 @@ def window_usage(agent, currency: str, merchant_ref: str, since) -> tuple[int, D
     return usage["velocity_count"] or 0, to_major(usage["merchant_total"] or 0, currency)
 
 
+def budget_period_starts(policy: Policy, now) -> tuple:
+    """Return the UTC day, Monday-start week, and month cutoffs in the policy timezone."""
+    zone = ZoneInfo(policy.timezone)
+    local_now = now.astimezone(zone)
+    local_day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_week_start = local_day_start - timedelta(days=local_day_start.weekday())
+    local_month_start = local_day_start.replace(day=1)
+    return (
+        local_day_start.astimezone(datetime_timezone.utc),
+        local_week_start.astimezone(datetime_timezone.utc),
+        local_month_start.astimezone(datetime_timezone.utc),
+    )
+
+
 def build_spent(agent, policy: Policy, currency: str, merchant_ref: str, now=None) -> engine.Spent:
     """Collect the budget and window usage used by both submission and recheck."""
     now = now or timezone.now()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = day_start - timezone.timedelta(days=day_start.weekday())
-    month_start = day_start.replace(day=1)
+    day_start, week_start, month_start = budget_period_starts(policy, now)
     velocity_count = 0
     merchant_window_spend = Decimal("0")
     if policy.velocity_max_count or policy.merchant_window_cap_minor:
-        window_start = now - timezone.timedelta(seconds=policy.velocity_window_seconds)
+        window_start = now - timedelta(seconds=policy.velocity_window_seconds)
         velocity_count, merchant_window_spend = window_usage(
             agent, currency, merchant_ref, window_start
         )

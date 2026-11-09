@@ -270,6 +270,28 @@ _github_url = os.environ.get("GITHUB_OAUTH_URL", "").strip()
 if _github_url:
     _github_provider["GITHUB_URL"] = _github_url
 SOCIALACCOUNT_PROVIDERS = {"github": _github_provider}
+
+# OAuth enablement flags, derived from environment. Kept explicit so the
+# frontend can query which providers are available without leaking secrets.
+GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+GOOGLE_OAUTH_ENABLED = bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
+if GOOGLE_OAUTH_ENABLED:
+    SOCIALACCOUNT_PROVIDERS["google"] = {
+        "SCOPE": ["profile", "email"],
+        "OAUTH_PKCE_ENABLED": True,
+        "APPS": [
+            {
+                "client_id": GOOGLE_OAUTH_CLIENT_ID,
+                "secret": GOOGLE_OAUTH_CLIENT_SECRET,
+                "key": "",
+            }
+        ],
+    }
+GITHUB_OAUTH_ENABLED = bool(
+    os.environ.get("GITHUB_OAUTH_CLIENT_ID", "").strip()
+    and os.environ.get("GITHUB_OAUTH_SECRET", "").strip()
+)
 LOGIN_REDIRECT_URL = os.environ.get("LOGIN_REDIRECT_URL", "/app/")
 LOGOUT_REDIRECT_URL = os.environ.get("LOGOUT_REDIRECT_URL", "/login/")
 

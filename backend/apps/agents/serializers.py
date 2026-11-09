@@ -9,8 +9,7 @@ from .models import Agent
 
 
 class AgentSerializer(serializers.ModelSerializer):
-    """Full detail serializer. Returns a lightweight list shape when
-    ``context['list_view']`` is true."""
+    """Full detail serializer for a single agent."""
 
     organization_name = serializers.CharField(source="organization.name", read_only=True)
     current_key = serializers.SerializerMethodField()
@@ -38,19 +37,6 @@ class AgentSerializer(serializers.ModelSerializer):
             "currency",
         ]
         read_only_fields = fields
-
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        if self.context.get("list_view"):
-            return {
-                "id": data["id"],
-                "name": data["name"],
-                "status": data["status"],
-                "created_at": data["created_at"],
-                "updated_at": data["updated_at"],
-                "current_key_prefix": data["current_key_prefix"],
-            }
-        return data
 
     def get_current_key(self, obj):
         key = obj.current_key
@@ -94,6 +80,37 @@ class AgentSerializer(serializers.ModelSerializer):
     def get_currency(self, obj):
         policy = obj.policies.first()
         return policy.currency if policy else "USD"
+
+
+class AgentListSerializer(serializers.ModelSerializer):
+    """List serializer exposing only the fields the dashboard table needs.
+
+    Expects the queryset to prefetch active keys into ``active_keys`` so the
+    prefix comes from the prefetch cache instead of a query per row.
+    """
+
+    current_key_prefix = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Agent
+        fields = [
+            "id",
+            "name",
+            "status",
+            "created_at",
+            "updated_at",
+            "current_key_prefix",
+        ]
+        read_only_fields = fields
+
+    @extend_schema_field(serializers.CharField)
+    def get_current_key_prefix(self, obj):
+        keys = getattr(obj, "active_keys", None)
+        if keys is None:
+            key = obj.current_key
+        else:
+            key = keys[0] if keys else None
+        return key.prefix if key else None
 
 
 class AgentCreateSerializer(serializers.Serializer):

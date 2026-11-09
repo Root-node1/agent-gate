@@ -66,6 +66,18 @@ class AgentListTests(AgentApiTestBase):
         self.assertEqual(self.client.get("/v1/agents/").status_code, 403)
 
 
+class AgentListQueryCountTests(AgentApiTestBase):
+    def test_list_query_count_is_constant_in_agent_count(self):
+        for index in range(25):
+            Agent.create_with_key(f"agent-{index:02d}", self.organization)
+
+        with self.assertNumQueries(4):
+            response = self.client.get("/v1/agents/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["count"], 26)
+
+
 class AgentCreateTests(AgentApiTestBase):
     def test_create_returns_raw_key_once(self):
         response = self.client.post(

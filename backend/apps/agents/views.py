@@ -1,6 +1,7 @@
 """Agent management views for the dashboard."""
 
 from django.db import IntegrityError, transaction
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
@@ -14,8 +15,13 @@ from apps.common.errors import ApiError, ErrorCode
 from apps.common.pagination import DashboardPagination
 
 from .authentication import DashboardSessionAuthentication
-from .models import Agent
-from .serializers import AgentCreateSerializer, AgentSerializer, AgentUpdateSerializer
+from .models import Agent, ApiKey
+from .serializers import (
+    AgentCreateSerializer,
+    AgentListSerializer,
+    AgentSerializer,
+    AgentUpdateSerializer,
+)
 
 
 def agent_queryset(user):
@@ -23,6 +29,17 @@ def agent_queryset(user):
     return Agent.objects.filter(
         organization__memberships__user=user
     ).select_related("organization").prefetch_related("api_keys", "policies")
+
+
+def agent_list_queryset(user):
+    """Agents for the list view with the active key prefetched once per page."""
+    return Agent.objects.filter(organization__memberships__user=user).prefetch_related(
+        Prefetch(
+            "api_keys",
+            queryset=ApiKey.objects.filter(revoked_at__isnull=True).order_by("-created_at"),
+            to_attr="active_keys",
+        )
+    )
 
 
 @extend_schema(tags=["agents"])
@@ -36,12 +53,12 @@ class AgentListView(APIView):
             return [IsOrganizationAdmin()]
         return [IsDashboardUser()]
 
-    @extend_schema(responses={200: AgentSerializer(many=True)})
+    @extend_schema(responses={200: AgentListSerializer(many=True)})
     def get(self, request):
-        queryset = agent_queryset(request.user)
+        queryset = agent_list_queryset(request.user)
         paginator = DashboardPagination()
         page = paginator.paginate_queryset(queryset, request, view=self)
-        serializer = AgentSerializer(page, many=True, context={"list_view": True})
+        serializer = AgentListSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
     @extend_schema(request=AgentCreateSerializer, responses={201: AgentSerializer})

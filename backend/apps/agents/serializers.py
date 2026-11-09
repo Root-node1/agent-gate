@@ -8,6 +8,23 @@ from apps.accounts.models import OrgMembership
 from .models import Agent
 
 
+class AgentKeySummarySerializer(serializers.Serializer):
+    """Schema shape for the current API key summary."""
+
+    prefix = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    last_used_at = serializers.DateTimeField(allow_null=True)
+
+
+class AgentPolicySummarySerializer(serializers.Serializer):
+    """Schema shape for the five most recent agent policies."""
+
+    id = serializers.UUIDField()
+    version = serializers.IntegerField()
+    name = serializers.CharField()
+    currency = serializers.CharField()
+
+
 class AgentSerializer(serializers.ModelSerializer):
     """Full detail serializer for a single agent."""
 
@@ -38,6 +55,7 @@ class AgentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    @extend_schema_field(AgentKeySummarySerializer(allow_null=True))
     def get_current_key(self, obj):
         key = obj.current_key
         if key is None:
@@ -48,10 +66,12 @@ class AgentSerializer(serializers.ModelSerializer):
             "last_used_at": key.last_used_at,
         }
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_current_key_prefix(self, obj):
         key = obj.current_key
         return key.prefix if key else None
 
+    @extend_schema_field(AgentPolicySummarySerializer(many=True))
     def get_policies(self, obj):
         return [
             {
@@ -63,9 +83,11 @@ class AgentSerializer(serializers.ModelSerializer):
             for p in obj.policies.all()[:5]
         ]
 
+    @extend_schema_field(serializers.IntegerField())
     def get_recent_spend_requests(self, obj):
         return obj.spend_requests.count()
 
+    @extend_schema_field(serializers.IntegerField())
     def get_today_spend_minor(self, obj):
         from django.db.models import Sum
         from django.utils import timezone

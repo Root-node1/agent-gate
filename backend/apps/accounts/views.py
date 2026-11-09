@@ -51,7 +51,7 @@ class LogoutView(views.APIView):
             return _unauthenticated(self.request)
         return super().handle_exception(exc)
 
-    @extend_schema(responses={status.HTTP_204_NO_CONTENT: None})
+    @extend_schema(request=None, responses={status.HTTP_204_NO_CONTENT: None})
     def post(self, request):
         django_logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)

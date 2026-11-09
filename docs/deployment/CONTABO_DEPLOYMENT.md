@@ -105,11 +105,37 @@ docker compose run --rm web python manage.py createcachetable
 docker compose run --rm web python manage.py collectstatic --noinput
 ```
 
-## 9. HTTPS Verification
+## 9. HTTPS and Browser Security Verification
 
 - Caddy provisions certificates automatically via Let's Encrypt.
-- Verify: `curl -vI https://app.example.com` (check TLS, HSTS header).
 - Check Caddy logs: `docker compose logs caddy`.
+- Run the production header probe from the repository root:
+
+```bash
+python3 scripts/check_production_headers.py "$DOMAIN"
+```
+
+The probe checks `/healthz` on the public hostname for HSTS with a one-year
+`max-age`, the Content-Security-Policy, `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff`, and the referrer policy.
+
+HSTS applies to the configured host only. `SECURE_HSTS_INCLUDE_SUBDOMAINS` and
+`SECURE_HSTS_PRELOAD` stay disabled because this deployment does not guarantee
+that every subdomain is served over HTTPS. Enable them only after auditing every
+subdomain, remove `security.W005` and `security.W021` from
+`SILENCED_SYSTEM_CHECKS` in `backend/config/settings/prod.py`, and rerun
+`python manage.py check --deploy`.
+
+Caddy emits the Content-Security-Policy. API responses use the strict policy;
+the Swagger UI, Django admin, and account pages allow their inline bootstrap
+code and Swagger's jsDelivr assets. If Caddy begins serving the dashboard HTML,
+include those document paths in the relaxed matcher or replace the inline
+bootstrap script with a hashed external asset.
+
+The dashboard is served same-origin with session cookies and CSRF protection.
+No CORS middleware or allowlist is configured. If the dashboard is ever served
+cross-origin, add an explicit origin allowlist with credentialed access; never
+use a wildcard origin with credentials.
 
 ## 10. Health Checks
 
@@ -230,8 +256,7 @@ ports 80 and 443.
 **PayPal exclusion:** This deployment is based on `intergration`, which contains no PayPal routes, services, or configuration. PayPal sandbox remains a separate local development environment on `feat/paypal-sandbox`. Do not add PayPal credentials or configuration to this deployment.
 
 **STOP. Awaiting Tech Lead review.**
-filePath">
-/home/winst/agent-gate/.kilo/worktrees/intergration/docs/deployment/CONTABO_DEPLOYMENT.md
+
 ## 16. Redis role and eviction (AG-07 review)
 
 - Redis is used as Django's cache backend only (`CACHES["default"] = RedisCache`).
@@ -248,18 +273,22 @@ GitHub Actions job `deployment-config` (in `.github/workflows/ci.yml`) validates
 1. Checks out the repository.
 2. Creates a placeholder `.env.production` from `.env.production.example` (no real secrets).
 3. Runs `docker compose --env-file .env.production config --quiet`.
-4. Runs static Python assertions on `compose.yaml` (services, networks, membership, ports, no PayPal).
-5. Builds the core backend Docker image (`docker build -t agentgate-web:ci .`).
-6. Removes the placeholder `.env.production` (runs even on failure).
+4. Runs static Python assertions on `compose.yaml` (services, networks, membership, ports, no PayPal) and on `deploy/Caddyfile` (CSP and browser security headers, no wildcard CORS).
+5. Compiles `scripts/check_production_headers.py`.
+6. Builds the core backend Docker image (`docker build -t agentgate-web:ci .`).
+7. Removes the placeholder `.env.production` (runs even on failure).
 
 ### What CI validates
 - Compose YAML validity and service/network/volume/port topology.
 - AG-10 network segmentation (edge/backend, dual-homed web).
 - Only Caddy publishes ports 80/443.
+- Caddy's CSP and browser security headers are present; no wildcard CORS header is declared.
+- The production header probe script compiles.
 - Dockerfile builds successfully (dependencies install, image assembles).
 
 ### What CI does NOT validate
 - Actual container startup or health checks (no Docker daemon runtime in CI build step beyond build).
+- Security headers on the live public hostname; run `scripts/check_production_headers.py` after deploy.
 - Neon connectivity (no database provisioned).
 - Caddy certificate provisioning (requires real DNS).
 - End-to-end request flow.

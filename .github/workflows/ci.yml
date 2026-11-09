@@ -149,8 +149,19 @@ jobs:
               lines = [ln for ln in pathlib.Path(p).read_text().splitlines() if not ln.lstrip().startswith("#")]
               txt = "\n".join(lines).lower()
               assert "paypal" not in txt, f"PayPal found in {p}"
+          # Browser security headers are declared at the public edge.
+          caddy = pathlib.Path("deploy/Caddyfile").read_text()
+          assert "Content-Security-Policy" in caddy
+          assert "default-src 'self'" in caddy
+          assert "frame-ancestors 'none'" in caddy
+          assert "X-Frame-Options DENY" in caddy
+          assert "X-Content-Type-Options nosniff" in caddy
+          assert "Access-Control-Allow-Origin" not in caddy
           print("All static deployment assertions passed.")
           PY
+
+      - name: Compile production header probe
+        run: python3 -m py_compile scripts/check_production_headers.py
 
       - name: Build core backend Docker image
         run: docker build -t agentgate-web:ci .

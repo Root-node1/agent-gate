@@ -403,7 +403,7 @@ Procrastinate does not ship a CLI re-defer command in 3.10.0.
 2. Run `python manage.py migrate` and `python manage.py createcachetable`.
 3. Run `python manage.py collectstatic --noinput`; Caddy serves `backend/staticfiles` and proxies `/healthz` and `/readyz` over plain HTTP to gunicorn.
 4. Keep `/admin/` off the public route or behind an IP allowlist.
-5. Configure Caddy with a 64 KiB request body limit and HTTPS. `SECURE_SSL_REDIRECT` is on; the health endpoints are exempt. Caddy's health check must send a `Host` header that is listed in `DJANGO_ALLOWED_HOSTS`.
+5. Configure Caddy with a 64 KiB request body limit and HTTPS. `SECURE_SSL_REDIRECT` is on; the health endpoints are exempt. Caddy's health check must send a `Host` header that is listed in `DJANGO_ALLOWED_HOSTS`. After deploy, run `python3 scripts/check_production_headers.py "$DOMAIN"` from the repository root to verify HSTS, CSP, frame, content-type, and referrer headers.
 6. Set `TRUSTED_PROXY_COUNT` to the number of trusted reverse proxies in front of Django: `1` for Caddy only, `2` for a CDN plus Caddy, `0` when Django is reached directly. `NUM_PROXIES` uses the same value so throttling reads the correct client address from `X-Forwarded-For`.
 7. Use the direct Neon URL for the Procrastinate worker. Use the pooled URL for web only after testing it with server-side cursors disabled.
 8. On Neon's free tier, disable scale-to-zero before a demo and expect a cold start after idle periods.

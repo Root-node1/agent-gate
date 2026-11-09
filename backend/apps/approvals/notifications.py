@@ -2,6 +2,7 @@
 
 import logging
 
+from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import Signal, receiver
 
@@ -12,14 +13,18 @@ logger = logging.getLogger(__name__)
 approval_created = Signal()
 
 
-@receiver(post_save, sender=Approval, dispatch_uid="approvals.notify_created")
-def notify_approval_created(sender, instance, created, **kwargs):
-    """Emit the public signal once per new approval without touching the request row."""
-    if not created:
-        return
+def _emit_approval_created(approval):
     logger.info(
         "Approval %s created for spend request %s.",
-        instance.pk,
-        instance.spend_request_id,
+        approval.pk,
+        approval.spend_request_id,
     )
-    approval_created.send(sender=Approval, approval=instance)
+    approval_created.send(sender=Approval, approval=approval)
+
+
+@receiver(post_save, sender=Approval, dispatch_uid="approvals.notify_created")
+def notify_approval_created(sender, instance, created, **kwargs):
+    """Emit the public signal once per new approval after its transaction commits."""
+    if not created:
+        return
+    transaction.on_commit(lambda: _emit_approval_created(instance))

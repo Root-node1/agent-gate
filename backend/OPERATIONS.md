@@ -201,6 +201,19 @@ endpoint writes a deduplicated inbox row and enqueues
 enqueue fails, the event remains unprocessed in `payments_webhookevent` and can
 be re-enqueued by id.
 
+Processed webhook payloads are cleared after `WEBHOOK_RETENTION_DAYS` (default
+30). The inbox row is retained for provider retry deduplication; the payload is
+replaced with an empty object and `payload_purged_at` records when it happened.
+Unprocessed events are never purged. Audit events are separate append-only rows
+and are never affected. The daily `apps.payments.tasks.purge_webhook_payloads_periodic`
+task runs on the `payments` queue. To purge manually or inspect the backlog:
+
+```bash
+python manage.py purge_webhook_payloads --dry-run
+python manage.py purge_webhook_payloads
+python manage.py purge_webhook_payloads --days 30 --batch-size 1000
+```
+
 ### Payment reconciliation
 
 A payment whose execution response was ambiguous stays `executing`. The worker

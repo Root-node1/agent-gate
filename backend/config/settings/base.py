@@ -213,6 +213,7 @@ PAYPAL_ALLOW_LIVE = os.environ.get("PAYPAL_ALLOW_LIVE", "").strip().lower() in {
     "yes",
     "on",
 }
+WEBHOOK_RETENTION_DAYS = env_int("WEBHOOK_RETENTION_DAYS", 30)
 
 ADMIN_PATH = os.environ.get("DJANGO_ADMIN_PATH", "admin").strip("/")
 if not ADMIN_PATH:

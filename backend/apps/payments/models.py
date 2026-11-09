@@ -13,11 +13,22 @@ class WebhookEvent(models.Model):
     signature_verified = models.BooleanField(default=False)
     received_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)
+    payload_purged_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-received_at"]
+        indexes = [
+            models.Index(
+                fields=["processed_at"],
+                name="webhook_retention_idx",
+                condition=models.Q(
+                    processed_at__isnull=False,
+                    payload_purged_at__isnull=True,
+                ),
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.event_type} ({self.paypal_event_id})"

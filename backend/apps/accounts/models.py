@@ -8,6 +8,7 @@ class User(AbstractUser):
     """Dashboard user. Authentication is session or token based."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:
         return self.username

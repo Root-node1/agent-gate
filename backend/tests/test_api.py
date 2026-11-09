@@ -76,6 +76,8 @@ class DecisionTests(ApiTestBase):
         self.assertIn("R03_MERCHANT_BLOCK", response.json()["matched_rules"])
 
     def test_injected_payment_to_unknown_merchant_is_denied(self):
+        self.policy.merchant_mode = Policy.MerchantMode.ALLOWLIST_ONLY
+        self.policy.save()
         MerchantRule.objects.create(policy=self.policy, merchant_ref="acme.com", kind="allow")
         response = self.post(merchant="pay-now.example", source="web_page")
         body = response.json()

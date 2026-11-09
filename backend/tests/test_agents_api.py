@@ -66,6 +66,18 @@ class AgentListTests(AgentApiTestBase):
         self.assertEqual(self.client.get("/v1/agents/").status_code, 403)
 
 
+class AgentListQueryCountTests(AgentApiTestBase):
+    def test_list_query_count_is_constant_in_agent_count(self):
+        for index in range(25):
+            Agent.create_with_key(f"agent-{index:02d}", self.organization)
+
+        with self.assertNumQueries(4):
+            response = self.client.get("/v1/agents/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["count"], 26)
+
+
 class AgentCreateTests(AgentApiTestBase):
     def test_create_returns_raw_key_once(self):
         response = self.client.post(
@@ -293,7 +305,9 @@ class AgentRevokeKeyTests(AgentApiTestBase):
         self.client.post(f"/v1/agents/{self.agent.id}/revoke-key/")
         response = self.client.post(f"/v1/agents/{self.agent.id}/revoke-key/")
         self.assertEqual(response.status_code, 400)
-        self.assertIn("No active API key", response.json()["detail"])
+        body = response.json()
+        self.assertIn("No active API key", body["error"]["message"])
+        self.assertNotIn("detail", body)
 
     def test_revoke_requires_admin(self):
         self.client.force_authenticate(user=self.viewer)
@@ -336,7 +350,7 @@ class AgentAuditTests(AgentApiTestBase):
         events = self._audit_events()
         self.assertEqual(events.count(), before + 1)
         event = events.last()
-        self.assertEqual(event.event_type, AuditEvent.EventType.AGENT_SUSPENDED)
+        self.assertEqual(event.event_type, AuditEvent.EventType.AGENT_ACTIVATED)
         self.assertEqual(event.payload["from_status"], Agent.Status.SUSPENDED)
         self.assertEqual(event.payload["to_status"], Agent.Status.ACTIVE)
 

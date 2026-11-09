@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from unittest import mock
 
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
@@ -165,6 +166,19 @@ class ApprovalDecisionTests(ApprovalApiBase):
         self.client.post(self.url(spend_request.approval) + "approve/", {}, format="json")
         response = self.client.post(self.url(spend_request.approval) + "deny/", {}, format="json")
         self.assertEqual(response.status_code, 409)
+
+    def test_recheck_uses_the_shared_budget_period_helper(self):
+        spend_request = self.pending()
+        self.authenticate(self.approver)
+        with mock.patch(
+            "apps.spend.services.budget_period_starts",
+            wraps=approval_services.spend_services.budget_period_starts,
+        ) as period_starts:
+            response = self.client.post(
+                self.url(spend_request.approval) + "approve/", {}, format="json"
+            )
+        self.assertEqual(response.status_code, 200)
+        period_starts.assert_called_once()
 
     def test_recheck_denies_when_the_budget_is_now_too_low(self):
         spend_request = self.pending()

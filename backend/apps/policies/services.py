@@ -224,26 +224,34 @@ def create_policy_update(*, user, policy_id, validated, action="updated", **extr
                 "Approval threshold cannot exceed the per-transaction cap."
             )
 
-        new_policy = Policy.objects.create(
-            agent=agent, version=next_version, **field_values
-        )
+        try:
+            new_policy = Policy.objects.create(
+                agent=agent, version=next_version, **field_values
+            )
+        except IntegrityError as exc:
+            raise PolicyConflictError("Policy could not be created.") from exc
 
-        if merchant_rules_supplied:
-            for rule in supplied_rules or []:
-                MerchantRule.objects.create(
-                    policy=new_policy,
-                    merchant_ref=normalize_merchant(rule["merchant_ref"]),
-                    kind=rule["kind"],
-                    note=rule.get("note", ""),
-                )
-        else:
-            for rule in latest.merchant_rules.all():
-                MerchantRule.objects.create(
-                    policy=new_policy,
-                    merchant_ref=rule.merchant_ref,
-                    kind=rule.kind,
-                    note=rule.note,
-                )
+        try:
+            if merchant_rules_supplied:
+                for rule in supplied_rules or []:
+                    MerchantRule.objects.create(
+                        policy=new_policy,
+                        merchant_ref=normalize_merchant(rule["merchant_ref"]),
+                        kind=rule["kind"],
+                        note=rule.get("note", ""),
+                    )
+            else:
+                for rule in latest.merchant_rules.all():
+                    MerchantRule.objects.create(
+                        policy=new_policy,
+                        merchant_ref=rule.merchant_ref,
+                        kind=rule.kind,
+                        note=rule.note,
+                    )
+        except IntegrityError as exc:
+            raise PolicyValidationError(
+                "Merchant rules contain a duplicate reference."
+            ) from exc
 
         fields_changed = sorted(overrides.keys())
         if merchant_rules_supplied:

@@ -5,7 +5,14 @@ from .models import WebhookEvent
 
 @admin.register(WebhookEvent)
 class WebhookEventAdmin(admin.ModelAdmin):
-    list_display = ("paypal_event_id", "event_type", "signature_verified", "received_at", "processed_at")
+    list_display = (
+        "paypal_event_id",
+        "event_type",
+        "signature_verified",
+        "received_at",
+        "processed_at",
+        "payload_purged_at",
+    )
     list_filter = ("event_type", "signature_verified")
     readonly_fields = (
         "paypal_event_id",
@@ -14,6 +21,7 @@ class WebhookEventAdmin(admin.ModelAdmin):
         "signature_verified",
         "received_at",
         "processed_at",
+        "payload_purged_at",
         "created_at",
         "updated_at",
     )

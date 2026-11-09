@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.common.currency import normalize_currency
+from apps.common.fields import CurrencyDecimalField
 from engine import normalize_merchant
 
 from .models import MerchantRule, Policy
@@ -94,24 +95,12 @@ class PolicyCreateSerializer(serializers.Serializer):
     agent = serializers.UUIDField()
     currency = serializers.CharField(min_length=3, max_length=3, default="USD")
     name = serializers.CharField(max_length=200, default="Default policy")
-    per_transaction_cap = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    daily_budget = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    weekly_budget = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    monthly_budget = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    approval_threshold = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    merchant_window_cap = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
+    per_transaction_cap = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    daily_budget = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    weekly_budget = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    monthly_budget = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    approval_threshold = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    merchant_window_cap = CurrencyDecimalField(min_value=Decimal("0"), required=False)
     merchant_mode = serializers.ChoiceField(
         choices=Policy.MerchantMode.choices, default=Policy.MerchantMode.BLOCKLIST
     )
@@ -203,24 +192,12 @@ class PolicyUpdateSerializer(serializers.Serializer):
     expected_version = serializers.IntegerField(min_value=1, required=True)
     name = serializers.CharField(max_length=200, required=False)
     currency = serializers.CharField(min_length=3, max_length=3, required=False)
-    per_transaction_cap = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    daily_budget = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    weekly_budget = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    monthly_budget = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    approval_threshold = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
-    merchant_window_cap = serializers.DecimalField(
-        max_digits=12, decimal_places=2, min_value=Decimal("0"), required=False
-    )
+    per_transaction_cap = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    daily_budget = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    weekly_budget = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    monthly_budget = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    approval_threshold = CurrencyDecimalField(min_value=Decimal("0"), required=False)
+    merchant_window_cap = CurrencyDecimalField(min_value=Decimal("0"), required=False)
     merchant_mode = serializers.ChoiceField(
         choices=Policy.MerchantMode.choices, required=False
     )
@@ -262,11 +239,19 @@ class PolicyUpdateSerializer(serializers.Serializer):
                     raise serializers.ValidationError(
                         {"merchant_rules": f"Merchant {ref!r} cannot be both allowed and blocked."}
                     )
+                if ref in allowed:
+                    raise serializers.ValidationError(
+                        {"merchant_rules": f"Duplicate merchant rule for {ref!r}."}
+                    )
                 allowed.add(ref)
             else:
                 if ref in allowed:
                     raise serializers.ValidationError(
                         {"merchant_rules": f"Merchant {ref!r} cannot be both allowed and blocked."}
+                    )
+                if ref in blocked:
+                    raise serializers.ValidationError(
+                        {"merchant_rules": f"Duplicate merchant rule for {ref!r}."}
                     )
                 blocked.add(ref)
 

@@ -1,6 +1,7 @@
 """Agent management views for the dashboard."""
 
 from django.db import IntegrityError, transaction
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
@@ -10,11 +11,17 @@ from rest_framework.views import APIView
 from apps.accounts.models import Organization
 from apps.accounts.permissions import IsDashboardUser, IsOrganizationAdmin
 from apps.audit.models import AuditEvent
+from apps.common.errors import ApiError, ErrorCode
 from apps.common.pagination import DashboardPagination
 
 from .authentication import DashboardSessionAuthentication
-from .models import Agent
-from .serializers import AgentCreateSerializer, AgentSerializer, AgentUpdateSerializer
+from .models import Agent, ApiKey
+from .serializers import (
+    AgentCreateSerializer,
+    AgentListSerializer,
+    AgentSerializer,
+    AgentUpdateSerializer,
+)
 
 
 def agent_queryset(user):
@@ -22,6 +29,17 @@ def agent_queryset(user):
     return Agent.objects.filter(
         organization__memberships__user=user
     ).select_related("organization").prefetch_related("api_keys", "policies")
+
+
+def agent_list_queryset(user):
+    """Agents for the list view with the active key prefetched once per page."""
+    return Agent.objects.filter(organization__memberships__user=user).prefetch_related(
+        Prefetch(
+            "api_keys",
+            queryset=ApiKey.objects.filter(revoked_at__isnull=True).order_by("-created_at"),
+            to_attr="active_keys",
+        )
+    )
 
 
 @extend_schema(tags=["agents"])
@@ -35,12 +53,12 @@ class AgentListView(APIView):
             return [IsOrganizationAdmin()]
         return [IsDashboardUser()]
 
-    @extend_schema(responses={200: AgentSerializer(many=True)})
+    @extend_schema(responses={200: AgentListSerializer(many=True)})
     def get(self, request):
-        queryset = agent_queryset(request.user)
+        queryset = agent_list_queryset(request.user)
         paginator = DashboardPagination()
         page = paginator.paginate_queryset(queryset, request, view=self)
-        serializer = AgentSerializer(page, many=True, context={"list_view": True})
+        serializer = AgentListSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
     @extend_schema(request=AgentCreateSerializer, responses={201: AgentSerializer})
@@ -54,18 +72,18 @@ class AgentListView(APIView):
 
         with transaction.atomic():
             if Agent.objects.filter(name=name, organization_id=org_id).exists():
-                return Response(
-                    {"detail": "An agent with this name already exists in this organization."},
-                    status=status.HTTP_400_BAD_REQUEST,
+                raise ApiError(
+                    "An agent with this name already exists in this organization.",
+                    code=ErrorCode.BAD_REQUEST,
                 )
 
             try:
                 agent, raw_key = Agent.create_with_key(name, organization)
-            except IntegrityError:
-                return Response(
-                    {"detail": "An agent with this name already exists in this organization."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            except IntegrityError as exc:
+                raise ApiError(
+                    "An agent with this name already exists in this organization.",
+                    code=ErrorCode.BAD_REQUEST,
+                ) from exc
 
             key = agent.current_key
             AuditEvent.record(
@@ -142,8 +160,13 @@ class AgentDetailView(APIView):
                 )
 
             if "status" in validated and validated["status"] != old_status:
+                event_type = (
+                    AuditEvent.EventType.AGENT_ACTIVATED
+                    if validated["status"] == Agent.Status.ACTIVE
+                    else AuditEvent.EventType.AGENT_SUSPENDED
+                )
                 AuditEvent.record(
-                    AuditEvent.EventType.AGENT_SUSPENDED,
+                    event_type,
                     organization=agent.organization,
                     agent=agent,
                     actor_type=AuditEvent.ActorType.USER,
@@ -161,7 +184,7 @@ class AgentRotateKeyView(APIView):
     authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsOrganizationAdmin]
 
-    @extend_schema(responses={200: dict, 400: dict})
+    @extend_schema(request=None, responses={200: dict, 400: dict})
     def post(self, request, pk):
         agent = get_object_or_404(agent_queryset(request.user), pk=pk)
         old_key = agent.current_key
@@ -212,16 +235,13 @@ class AgentRevokeKeyView(APIView):
     authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsOrganizationAdmin]
 
-    @extend_schema(responses={200: dict, 400: dict})
+    @extend_schema(request=None, responses={200: dict, 400: dict})
     def post(self, request, pk):
         agent = get_object_or_404(agent_queryset(request.user), pk=pk)
         revoked_key = agent.revoke_current_key()
 
         if revoked_key is None:
-            return Response(
-                {"detail": "No active API key to revoke."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ApiError("No active API key to revoke.", code=ErrorCode.BAD_REQUEST)
 
         with transaction.atomic():
             AuditEvent.record(

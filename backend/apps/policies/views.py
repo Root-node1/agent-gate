@@ -70,10 +70,18 @@ class PolicyListView(APIView):
             policy = create_policy_version(
                 user=request.user, validated=serializer.validated_data
             )
-        except PolicyConflictError:
-            return Response(
-                {"detail": "Policy could not be created."}, status=status.HTTP_400_BAD_REQUEST
-            )
+        except PolicyConflictError as exc:
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
+            ) from exc
+        except PolicyValidationError as exc:
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.VALIDATION_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            ) from exc
         return Response(
             PolicySerializer(policy).data, status=status.HTTP_201_CREATED
         )
@@ -107,16 +115,27 @@ class PolicyDetailView(APIView):
         request=PolicyUpdateSerializer, responses={200: PolicySerializer}, summary="Update a policy (new version)"
     )
     def patch(self, request, pk):
-        serializer = PolicyUpdateSerializer(data=request.data)
+        policy = get_object_or_404(self.get_queryset(request.user), pk=pk)
+        serializer = PolicyUpdateSerializer(
+            data=request.data, context={"currency": policy.currency}
+        )
         serializer.is_valid(raise_exception=True)
         try:
             policy = create_policy_update(
                 user=request.user, policy_id=pk, validated=serializer.validated_data
             )
         except PolicyConflictError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
+            ) from exc
         except PolicyValidationError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.VALIDATION_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            ) from exc
         return Response(PolicySerializer(policy).data, status=status.HTTP_200_OK)
 
 
@@ -140,9 +159,17 @@ class MerchantRuleCreateView(APIView):
                 user=request.user, policy_id=pk, validated=serializer.validated_data
             )
         except PolicyConflictError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
+            ) from exc
         except PolicyValidationError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.VALIDATION_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            ) from exc
         return Response(
             PolicySerializer(policy).data, status=status.HTTP_201_CREATED
         )
@@ -160,14 +187,20 @@ class MerchantRuleDeleteView(APIView):
         summary="Remove a merchant rule (new policy version)",
     )
     def delete(self, request, pk, rule_id):
+        if not request.META.get("HTTP_IF_MATCH", "").strip():
+            raise ApiError(
+                "Missing expected-version concurrency token; send the latest "
+                "policy version in the If-Match header.",
+                code=ErrorCode.PRECONDITION_REQUIRED,
+                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            )
         expected_version = _parse_if_match(request)
         if expected_version is None:
-            return Response(
-                {
-                    "detail": "Missing expected-version concurrency token; "
-                    "send the latest policy version in the If-Match header."
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            raise ApiError(
+                "If-Match must contain the latest policy version as a positive integer.",
+                code=ErrorCode.VALIDATION_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
+                details={"If-Match": ["Enter a positive integer."]},
             )
         try:
             policy = remove_merchant_rule(
@@ -177,9 +210,17 @@ class MerchantRuleDeleteView(APIView):
                 expected_version=expected_version,
             )
         except PolicyConflictError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
+            ) from exc
         except PolicyValidationError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            raise ApiError(
+                str(exc),
+                code=ErrorCode.VALIDATION_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            ) from exc
         return Response(
             PolicySerializer(policy).data, status=status.HTTP_200_OK
         )

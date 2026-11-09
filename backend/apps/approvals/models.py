@@ -1,6 +1,7 @@
 import uuid
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
@@ -39,3 +40,21 @@ class Approval(models.Model):
 
     def __str__(self) -> str:
         return f"{self.outcome}: {self.spend_request_id}"
+
+    def save(self, *args, **kwargs):
+        if self.spend_request_id is None:
+            raise ValidationError({"spend_request": "An approval requires a spend request."})
+        spend_organization_id = self.spend_request.organization_id
+        if (
+            self.organization_id is not None
+            and self.organization_id != spend_organization_id
+        ):
+            raise ValidationError(
+                {
+                    "organization": (
+                        "The approval organization must match its spend request's organization."
+                    )
+                }
+            )
+        self.organization_id = spend_organization_id
+        super().save(*args, **kwargs)

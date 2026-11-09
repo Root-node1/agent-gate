@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.test import TestCase
 from django.utils import timezone
 
@@ -37,19 +38,38 @@ class ApprovalNotificationTests(TestCase):
         approval_created.disconnect(self.receiver)
 
     def test_new_approval_emits_the_signal(self):
-        approval = Approval.objects.create(
-            organization=self.organization,
-            spend_request=self.spend_request,
-            expires_at=timezone.now() + timezone.timedelta(hours=1),
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            approval = Approval.objects.create(
+                organization=self.organization,
+                spend_request=self.spend_request,
+                expires_at=timezone.now() + timezone.timedelta(hours=1),
+            )
         self.assertEqual(self.received, [approval.pk])
 
     def test_updating_an_approval_does_not_emit_again(self):
-        approval = Approval.objects.create(
-            organization=self.organization,
-            spend_request=self.spend_request,
-            expires_at=timezone.now() + timezone.timedelta(hours=1),
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            approval = Approval.objects.create(
+                organization=self.organization,
+                spend_request=self.spend_request,
+                expires_at=timezone.now() + timezone.timedelta(hours=1),
+            )
         approval.note = "reviewed"
         approval.save(update_fields=["note", "updated_at"])
         self.assertEqual(self.received, [approval.pk])
+
+    def test_rolled_back_approval_does_not_emit_the_signal(self):
+        with self.captureOnCommitCallbacks(execute=True) as callbacks:
+            with self.assertRaises(RuntimeError):
+                with transaction.atomic():
+                    Approval.objects.create(
+                        organization=self.organization,
+                        spend_request=self.spend_request,
+                        expires_at=timezone.now() + timezone.timedelta(hours=1),
+                    )
+                    raise RuntimeError("simulated rollback")
+
+        self.assertEqual(callbacks, [])
+        self.assertEqual(self.received, [])
+        self.assertFalse(
+            Approval.objects.filter(spend_request=self.spend_request).exists()
+        )

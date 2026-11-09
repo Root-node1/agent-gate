@@ -66,9 +66,34 @@ Run it as the table owner; ownership bypasses grants. The role keeps
 python manage.py verify_audit
 ```
 
-The command walks each organization's events in id order, recomputes every hash from the stored canonical payload, and exits non-zero at the first mismatch.
+The command walks each organization's events in id order, recomputes every hash from the stored canonical payload, and checks the latest external anchor. It exits non-zero at the first mismatch.
 
-Keep a periodic off-server `pg_dump` of the audit tables. The chain is tamper-evident, not tamper-proof, unless the head hash is anchored outside Neon.
+Keep a periodic off-server `pg_dump` of the audit tables. The chain is tamper-evident, not tamper-proof, unless the head hash is anchored outside the database.
+
+## Audit head anchoring
+
+Every organization's head event id, head hash, and anchor timestamp are appended to an append-only JSON Lines file. Set `AUDIT_ANCHOR_PATH` to a file on storage that the database host cannot rewrite:
+
+```bash
+export AUDIT_ANCHOR_PATH=/srv/agentgate/audit-anchor.jsonl
+```
+
+If the variable is unset, anchoring is disabled and `verify_audit` checks only the database chain. When it is set, an organization with audit events but no anchor, a missing anchored event, or an anchor hash that differs from the stored event fails verification with `audit_chain_broken`.
+
+Record an anchor immediately after deployment and on demand:
+
+```bash
+python manage.py anchor_audit
+python manage.py anchor_audit --organization <uuid>
+```
+
+The worker records all organization heads hourly through `anchor_audit_periodic` on the `audit` queue. If the worker is not used, add this crontab entry instead:
+
+```cron
+0 * * * * cd /srv/agentgate/backend && /srv/agentgate/backend/venv/bin/python manage.py anchor_audit >> /var/log/agentgate/anchor.log 2>&1
+```
+
+Keep the anchor file on a different host or volume from PostgreSQL/Neon. If an attacker can rewrite both the database and the anchor file, the chain is no longer tamper-evident.
 
 ## Dashboard list filters
 
@@ -90,14 +115,16 @@ agent or a dashboard session scoped to the caller's organizations.
 
 ## Demo mode
 
-`DEMO_MODE=true` exposes anonymous, rate-limited dashboard reads and
-approval decisions for the seeded demo organization. It cannot create spend
-requests, agents, or policies, and it does not grant agent, policy, or admin
-surfaces.
+`DEMO_MODE=true` exposes anonymous, rate-limited dashboard reads for the
+seeded demo organization. The anonymous demo principal is read-only by
+default: it cannot approve or deny requests, create spend requests, agents, or
+policies, and it does not grant agent, policy, or admin surfaces.
 
 ```bash
 python manage.py seed_demo
 # DEMO_MODE=true
+# DEMO_MODE_ALLOW_WRITES=false
+# DEMO_MODE_ALLOW_PRODUCTION=false
 # DEMO_ORG_NAME=demo
 # DEMO_USERNAME=demo-viewer
 ```
@@ -106,6 +133,12 @@ python manage.py seed_demo
 in the demo organization. It refuses to reuse a real account or a username that
 belongs to another organization. Do not point `DEMO_ORG_NAME` at a production
 organization. Demo requests use `THROTTLE_DEMO` (default `60/min` per IP).
+
+To allow anonymous demo approvals, set `DEMO_MODE_ALLOW_WRITES=true`. That path
+intentionally skips MFA and CSRF for the anonymous demo principal, so use it
+only for a disposable demo. A separately provisioned dashboard session remains
+subject to MFA and CSRF. In production (`DEBUG=false`), startup refuses
+`DEMO_MODE=true` unless `DEMO_MODE_ALLOW_PRODUCTION=true` is also set.
 
 ## Sandbox smoke script
 
@@ -144,14 +177,14 @@ No separate schema bootstrap step is required. The core tables in 3.10.0 are:
 ```bash
 DJANGO_SETTINGS_MODULE=config.settings.prod \
 python manage.py procrastinate worker \
-  -q smoke,approvals,payments --listen-notify --delete-jobs=SUCCESSFUL
+  -q smoke,approvals,payments,audit --listen-notify --delete-jobs=SUCCESSFUL
 ```
 
 For one-shot mode (process all current jobs then exit, useful in CI):
 
 ```bash
 python manage.py procrastinate worker \
-  -q smoke,approvals,payments --no-listen-notify
+  -q smoke,approvals,payments,audit --no-listen-notify
 ```
 
 `apps.payments.tasks.execute_payment` runs on the `payments` queue. Payment
@@ -167,6 +200,19 @@ endpoint writes a deduplicated inbox row and enqueues
 `apps.payments.tasks.process_webhook_event` on the `payments` queue. If the
 enqueue fails, the event remains unprocessed in `payments_webhookevent` and can
 be re-enqueued by id.
+
+Processed webhook payloads are cleared after `WEBHOOK_RETENTION_DAYS` (default
+30). The inbox row is retained for provider retry deduplication; the payload is
+replaced with an empty object and `payload_purged_at` records when it happened.
+Unprocessed events are never purged. Audit events are separate append-only rows
+and are never affected. The daily `apps.payments.tasks.purge_webhook_payloads_periodic`
+task runs on the `payments` queue. To purge manually or inspect the backlog:
+
+```bash
+python manage.py purge_webhook_payloads --dry-run
+python manage.py purge_webhook_payloads
+python manage.py purge_webhook_payloads --days 30 --batch-size 1000
+```
 
 ### Payment reconciliation
 
@@ -370,7 +416,7 @@ Procrastinate does not ship a CLI re-defer command in 3.10.0.
 2. Run `python manage.py migrate` and `python manage.py createcachetable`.
 3. Run `python manage.py collectstatic --noinput`; Caddy serves `backend/staticfiles` and proxies `/healthz` and `/readyz` over plain HTTP to gunicorn.
 4. Keep `/admin/` off the public route or behind an IP allowlist.
-5. Configure Caddy with a 64 KiB request body limit and HTTPS. `SECURE_SSL_REDIRECT` is on; the health endpoints are exempt. Caddy's health check must send a `Host` header that is listed in `DJANGO_ALLOWED_HOSTS`.
+5. Configure Caddy with a 64 KiB request body limit and HTTPS. `SECURE_SSL_REDIRECT` is on; the health endpoints are exempt. Caddy's health check must send a `Host` header that is listed in `DJANGO_ALLOWED_HOSTS`. After deploy, run `python3 scripts/check_production_headers.py "$DOMAIN"` from the repository root to verify HSTS, CSP, frame, content-type, and referrer headers.
 6. Set `TRUSTED_PROXY_COUNT` to the number of trusted reverse proxies in front of Django: `1` for Caddy only, `2` for a CDN plus Caddy, `0` when Django is reached directly. `NUM_PROXIES` uses the same value so throttling reads the correct client address from `X-Forwarded-For`.
 7. Use the direct Neon URL for the Procrastinate worker. Use the pooled URL for web only after testing it with server-side cursors disabled.
 8. On Neon's free tier, disable scale-to-zero before a demo and expect a cold start after idle periods.

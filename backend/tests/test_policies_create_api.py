@@ -137,8 +137,17 @@ class PolicyCreateSuccessTests(PolicyCreateTestBase):
         self.assertEqual(body["currency"], "USD")
 
     def test_currency_aware_minor_conversion(self):
-        payload = {**self.valid, "currency": "JPY", "per_transaction_cap": "5000",
-                   "approval_threshold": "1000", "merchant_rules": []}
+        payload = {
+            **self.valid,
+            "currency": "JPY",
+            "per_transaction_cap": "5000",
+            "approval_threshold": "1000",
+            "daily_budget": "500",
+            "weekly_budget": "2000",
+            "monthly_budget": "5000",
+            "merchant_window_cap": "100",
+            "merchant_rules": [],
+        }
         response = self.client.post("/v1/policies/", data=payload, format="json")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["per_transaction_cap_minor"], 5000)
@@ -149,6 +158,70 @@ class PolicyCreateSuccessTests(PolicyCreateTestBase):
         policy = Policy.objects.get(version=2)
         self.assertIsInstance(policy.per_transaction_cap_minor, int)
         self.assertEqual(policy.per_transaction_cap_minor, 10_000)
+
+
+class PolicyCreateCurrencyPrecisionTests(PolicyCreateTestBase):
+    CASES = [
+        ("USD", "12.34", 1234),
+        ("JPY", "1200", 1200),
+        ("KWD", "1.234", 1234),
+        ("BHD", "1.234", 1234),
+        ("JOD", "1.234", 1234),
+        ("OMR", "1.234", 1234),
+        ("TND", "1.234", 1234),
+        ("CLF", "1.2345", 12345),
+        ("UYW", "1.2345", 12345),
+    ]
+    MONEY_FIELDS = {
+        "per_transaction_cap",
+        "daily_budget",
+        "weekly_budget",
+        "monthly_budget",
+        "approval_threshold",
+        "merchant_window_cap",
+    }
+
+    def _payload(self, currency, amount):
+        payload = {
+            key: value for key, value in self.valid.items() if key not in self.MONEY_FIELDS
+        }
+        payload.update(
+            {
+                "currency": currency,
+                "per_transaction_cap": amount,
+                "approval_threshold": "0",
+                "merchant_rules": [],
+            }
+        )
+        return payload
+
+    def test_exact_minor_units_for_supported_scales(self):
+        for currency, amount, expected in self.CASES:
+            with self.subTest(currency=currency):
+                response = self.client.post(
+                    "/v1/policies/", data=self._payload(currency, amount), format="json"
+                )
+                self.assertEqual(response.status_code, 201, response.content)
+                self.assertEqual(response.json()["per_transaction_cap_minor"], expected)
+
+    def test_fractional_digits_beyond_currency_scale_are_rejected(self):
+        cases = [
+            ("JPY", "1200.1"),
+            ("JPY", "1200.0"),
+            ("USD", "1.234"),
+            ("KWD", "1.2345"),
+            ("BHD", "1.2345"),
+            ("CLF", "1.23456"),
+        ]
+        for currency, amount in cases:
+            with self.subTest(currency=currency, amount=amount):
+                response = self.client.post(
+                    "/v1/policies/", data=self._payload(currency, amount), format="json"
+                )
+                self.assertEqual(response.status_code, 400, response.content)
+                self.assertFalse(
+                    Policy.objects.filter(agent=self.agent, version=2).exists()
+                )
 
 
 class PolicyCreateValidationTests(PolicyCreateTestBase):
@@ -202,6 +275,32 @@ class PolicyCreateValidationTests(PolicyCreateTestBase):
         ]}
         response = self.client.post("/v1/policies/", data=payload, format="json")
         self.assertEqual(response.status_code, 400)
+
+    def test_duplicate_same_kind_rules_after_normalization_leave_no_rows_or_audit(self):
+        before_policies = Policy.objects.count()
+        before_rules = MerchantRule.objects.count()
+        before_events = AuditEvent.objects.filter(
+            event_type=AuditEvent.EventType.POLICY_CHANGED
+        ).count()
+        for kind in ("allow", "block"):
+            with self.subTest(kind=kind):
+                payload = {
+                    **self.valid,
+                    "merchant_rules": [
+                        {"merchant_ref": "https://www.acme.com/checkout", "kind": kind},
+                        {"merchant_ref": "ACME.com", "kind": kind},
+                    ],
+                }
+                response = self.client.post("/v1/policies/", data=payload, format="json")
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(Policy.objects.count(), before_policies)
+                self.assertEqual(MerchantRule.objects.count(), before_rules)
+                self.assertEqual(
+                    AuditEvent.objects.filter(
+                        event_type=AuditEvent.EventType.POLICY_CHANGED
+                    ).count(),
+                    before_events,
+                )
 
     def test_invalid_merchant_kind_rejected(self):
         payload = {**self.valid, "merchant_rules": [{"merchant_ref": "acme.com", "kind": "mirror"}]}

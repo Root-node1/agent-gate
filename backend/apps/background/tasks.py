@@ -72,3 +72,39 @@ def expire_approvals_periodic(timestamp: int) -> int:
     from apps.approvals.services import expire_due
 
     return expire_due()
+
+
+# ---------------------------------------------------------------------------
+# Periodic audit-head anchoring
+# ---------------------------------------------------------------------------
+AUDIT_ANCHOR_CRON = "0 * * * *"
+AUDIT_ANCHOR_PERIODIC_ID = "audit_anchor"
+AUDIT_ANCHOR_QUEUE = "audit"
+AUDIT_ANCHOR_MAX_ATTEMPTS = 3
+AUDIT_ANCHOR_QUEUEING_LOCK = "audit_anchor"
+
+
+@app.periodic(cron=AUDIT_ANCHOR_CRON, periodic_id=AUDIT_ANCHOR_PERIODIC_ID)
+@app.task(
+    queue=AUDIT_ANCHOR_QUEUE,
+    name="apps.background.tasks.anchor_audit_periodic",
+    retry=RetryStrategy(max_attempts=AUDIT_ANCHOR_MAX_ATTEMPTS, wait=1),
+    queueing_lock=AUDIT_ANCHOR_QUEUEING_LOCK,
+)
+def anchor_audit_periodic(timestamp: int) -> int:
+    """Record every organization's current audit head once per hour.
+
+    Skipping when ``AUDIT_ANCHOR_PATH`` is unset keeps deployments without an
+    external store from failing the periodic job. The anchor file itself must
+    live on storage outside the database host for the tamper-evidence claim.
+    """
+    from apps.audit.anchors import get_anchor_store
+    from apps.audit.services import anchor_all
+
+    anchor_store = get_anchor_store()
+    if anchor_store is None:
+        logger.warning("Audit anchoring skipped: AUDIT_ANCHOR_PATH is not configured.")
+        return 0
+    anchored = anchor_all(anchor_store)
+    logger.info("Recorded audit anchors for %s organization(s).", anchored)
+    return anchored

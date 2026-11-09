@@ -60,7 +60,7 @@ def evaluate_context(context: EvaluationContext) -> Decision:
         deny("R02_CURRENCY", "The request currency does not match the policy currency.")
     if merchant in blocked:
         deny("R03_MERCHANT_BLOCK", "The merchant is blocked.")
-    if allowed and merchant not in allowed:
+    if limits.merchant_mode != "blocklist" and merchant not in allowed:
         deny("R04_MERCHANT_ALLOW", "The merchant is not on the allow list.")
     if spend.amount <= 0:
         deny("R05_PER_TX_CAP", "The amount must be greater than zero.")
@@ -104,19 +104,17 @@ def evaluate_context(context: EvaluationContext) -> Decision:
     if screening.injection_detected:
         deny("R14_INJECTION_PATTERN", "The request contains instructions that try to override policy.")
     classifier = screening.classifier
+    classifier_score = classifier.score if classifier is not None else None
     if (
-        classifier is not None
-        and classifier.available
+        classifier_score is not None
         and limits.injection_escalate_threshold > 0
-        and classifier.score >= limits.injection_escalate_threshold
+        and classifier_score >= limits.injection_escalate_threshold
     ):
         needs_approval(
             "R15_INJECTION_CLASSIFIER",
             "The request may contain instructions that try to override policy.",
         )
-    elif limits.classifier_required and (
-        classifier is None or not classifier.available
-    ):
+    elif limits.classifier_required and classifier_score is None:
         needs_approval(
             "R15_INJECTION_CLASSIFIER",
             "The injection classifier was required but is unavailable.",

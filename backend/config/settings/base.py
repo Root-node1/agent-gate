@@ -443,3 +443,21 @@ LOGGING = _LOGGING
 # registered at this stage; approval-expiration and payment-execution tasks
 # will be added after Procrastinate is verified end-to-end.
 PROCRASTINATE_DATABASE_ALIAS = os.environ.get("PROCRASTINATE_DATABASE_ALIAS", "default")
+
+# ---------------------------------------------------------------------------
+# PayPal sandbox configuration (INT-13D)
+# ---------------------------------------------------------------------------
+# Only the PayPal *sandbox* environment is supported.  Production endpoints
+# are never configured.  Credentials are server-side only and must never be
+# printed or logged.
+#
+# Feature flags are stored as raw strings and parsed by
+# ``apps.payments.paypal.config.get_paypal_config`` so that malformed values
+# are caught by Django system checks rather than silently treated as False at
+# import time.
+PAYPAL_ENV = os.environ.get("PAYPAL_ENV", "sandbox")
+PAYPAL_CLIENT_ID = os.environ.get("PAYPAL_CLIENT_ID", "")
+PAYPAL_CLIENT_SECRET = os.environ.get("PAYPAL_CLIENT_SECRET", "")
+PAYPAL_WEBHOOK_ID = os.environ.get("PAYPAL_WEBHOOK_ID", "")
+PAYPAL_CHECKOUT_ENABLED = os.environ.get("PAYPAL_CHECKOUT_ENABLED", "false")
+PAYPAL_PAYOUTS_ENABLED = os.environ.get("PAYPAL_PAYOUTS_ENABLED", "false")

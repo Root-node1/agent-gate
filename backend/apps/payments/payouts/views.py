@@ -106,6 +106,7 @@ class PayoutReservationSubmitView(APIView):
     permission_classes = [IsOrganizationAdmin]
 
     @extend_schema(
+        request=None,
         responses={
             201: PayoutReservationSerializer,
             200: PayoutReservationSerializer,

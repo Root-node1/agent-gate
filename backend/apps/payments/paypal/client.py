@@ -13,6 +13,7 @@ from collections.abc import Callable
 
 import httpx
 
+from .config import get_paypal_config
 from .exceptions import (
     PayPalAmbiguousResponse,
     PayPalAuthenticationError,
@@ -102,6 +103,10 @@ class PayPalClient:
         response = self._send("POST", path, headers=headers, json=body)
         return self._decode_json(response)
 
+    def post(self, path: str, *, json: dict | None = None, request_id: str = "") -> dict:
+        """Compatibility wrapper: POST JSON body to a PayPal API path."""
+        return self.post_json(path, body=json or {}, request_id=request_id)
+
     def get_json(self, path: str) -> dict:
         """GET JSON with a bearer token."""
         headers = {
@@ -110,6 +115,10 @@ class PayPalClient:
         }
         response = self._send("GET", path, headers=headers)
         return self._decode_json(response)
+
+    def get(self, path: str) -> dict:
+        """Compatibility wrapper: GET JSON from a PayPal API path."""
+        return self.get_json(path)
 
     def _decode_json(self, response: httpx.Response) -> dict:
         if response.status_code >= 400:
@@ -241,3 +250,43 @@ class PayPalClient:
         if not isinstance(payload, dict):
             return ""
         return str(payload.get("name") or payload.get("error") or "")[:100]
+
+    @classmethod
+    def from_settings(cls, settings, *, http_client=None):
+        """Build a client from Django settings, validating configuration first.
+
+        Performs no network I/O. Raises :class:`PayPalConfigurationError`
+        when PayPal is not enabled or the environment / credentials are invalid.
+        """
+        config = get_paypal_config(settings)
+        if not config.checkout_enabled and not config.payouts_enabled:
+            raise PayPalConfigurationError(
+                "PayPal is disabled: enable PAYPAL_CHECKOUT_ENABLED or "
+                "PAYPAL_PAYOUTS_ENABLED and provide credentials."
+            )
+        return cls(
+            config.client_id,
+            config.client_secret,
+            mode=config.mode,
+            http_client=http_client,
+            allow_live=config.allow_live,
+        )
+
+
+# Backwards-compatible aliases for exception names used by checkout/payouts services.
+PayPalConnectionError = PayPalTransientError
+PayPalNotFoundError = PayPalResponseError
+PayPalRateLimitError = PayPalTransientError
+PayPalServerError = PayPalResponseError
+PayPalUncertainOutcomeError = PayPalTransientError
+PayPalClientError = PayPalConfigurationError
+PayPalConflictError = PayPalResponseError
+PayPalTransportError = PayPalTransientError
+
+
+# Simple exception used by webhook ingestion tests that mock provider failures.
+class PayPalAPIError(Exception):
+    """Simple error raised when the PayPal API returns a non-success response."""
+
+    def __init__(self, message: str = "PayPal API error"):
+        super().__init__(message)

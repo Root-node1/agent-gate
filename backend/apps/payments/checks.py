@@ -67,3 +67,7 @@ def check_paypal_configuration(app_configs, **kwargs):
         )
 
     return errors
+
+
+# Backwards-compatible alias used by tests.
+check_paypal_config = check_paypal_configuration

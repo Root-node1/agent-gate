@@ -3,6 +3,7 @@
 from django.conf import settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -27,6 +28,16 @@ class PayPalWebhookView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        request=None,
+        responses={
+            200: {"type": "object", "properties": {"status": {"type": "string"}}},
+            400: {"type": "object", "properties": {"detail": {"type": "string"}}},
+            413: {"type": "object", "properties": {"detail": {"type": "string"}}},
+            503: {"type": "object", "properties": {"detail": {"type": "string"}}},
+        },
+        summary="Receive and verify a PayPal Sandbox webhook event.",
+    )
     def post(self, request):
         try:
             result = ingest_paypal_webhook(

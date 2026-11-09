@@ -7,8 +7,9 @@ from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from .models import AccountProfile
 from apps.common.errors import ApiError, ErrorCode, api_exception_handler
+
+from .models import AccountProfile
 from .permissions import IsAuthenticatedOr401
 from .serializers import (
     AccountProfileSerializer,

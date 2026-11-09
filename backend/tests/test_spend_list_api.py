@@ -65,11 +65,12 @@ class SpendListApiBase(APITestCase):
     def create_request(self, organization=None, agent=None, amount_minor=1000, **kwargs):
         organization = organization or self.organization
         agent = agent or self.agent
+        policy = self.policy if agent.pk == self.agent.pk else Policy.objects.get(agent=agent)
         defaults = {
             "organization": organization,
             "agent": agent,
-            "policy": self.policy,
-            "policy_version": self.policy.version,
+            "policy": policy,
+            "policy_version": policy.version,
             "amount_minor": amount_minor,
             "currency": "USD",
             "merchant_ref": "acme.com",

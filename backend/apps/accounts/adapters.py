@@ -10,6 +10,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import HttpRequest
 
 from .mfa_crypto import get_mfa_fernet
+from .models import AccountProfile
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,42 @@ class CustomAccountAdapter(DefaultAccountAdapter):
             if domain not in {d.lower() for d in allowed}:
                 raise ValidationError("Signups from this email domain are not allowed.")
         return email
+
+    def save_user(self, request, user, form, commit=True):
+        """Create the user, then ensure an AccountProfile exists.
+
+        ``full_name`` from the signup payload is stored on the profile.
+        If an ``organization`` name is provided, an Organization and
+        OrgMembership are created through the domain models (not duplicated
+        on the profile).
+        """
+        user = super().save_user(request, user, form, commit)
+
+        full_name = ""
+        org_name = None
+        if hasattr(request, "data") and request.data:
+            full_name = request.data.get("full_name", "") or ""
+            org_name = request.data.get("organization", "") or None
+
+        profile, profile_created = AccountProfile.objects.get_or_create(
+            user=user,
+            defaults={"full_name": full_name},
+        )
+        if not profile_created and full_name:
+            profile.full_name = full_name
+            profile.save(update_fields=["full_name"])
+
+        if org_name:
+            from .models import Organization, OrgMembership
+
+            organization, _ = Organization.objects.get_or_create(name=org_name.strip())
+            OrgMembership.objects.get_or_create(
+                user=user,
+                organization=organization,
+                defaults={"role": OrgMembership.Role.ADMIN},
+            )
+
+        return user
 
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):

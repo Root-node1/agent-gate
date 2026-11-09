@@ -50,3 +50,27 @@ class OrgMembership(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user} in {self.organization} as {self.role}"
+
+
+class AccountProfile(models.Model):
+    """Additional user-facing profile information linked to accounts.User.
+
+    The user model remains the source of identity and authentication.
+    Profile holds display information only; organization membership is
+    managed through Organization and OrgMembership, never duplicated here.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="account_profile",
+    )
+    full_name = models.CharField(max_length=150, blank=True, default="")
+
+    class Meta:
+        verbose_name = "account profile"
+        verbose_name_plural = "account profiles"
+
+    def __str__(self) -> str:
+        return f"Profile for {self.user}"

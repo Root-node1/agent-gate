@@ -4,8 +4,9 @@ from rest_framework import exceptions, status, views
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.response import Response
 
+from .models import AccountProfile
 from .permissions import IsAuthenticatedOr401
-from .serializers import CurrentUserSerializer
+from .serializers import AccountProfileSerializer, CurrentUserSerializer
 
 
 class CurrentUserView(views.APIView):
@@ -27,6 +28,39 @@ class CurrentUserView(views.APIView):
     @extend_schema(responses=CurrentUserSerializer)
     def get(self, request):
         return Response(CurrentUserSerializer(request.user).data)
+
+
+class ProfileView(views.APIView):
+    """Read and update the authenticated user's display profile.
+
+    Only ``full_name`` is editable. Organization membership and roles are
+    managed through Organization and OrgMembership, never through this
+    endpoint.
+    """
+
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedOr401]
+
+    def handle_exception(self, exc):
+        if isinstance(exc, exceptions.NotAuthenticated):
+            return Response(
+                {"detail": exc.detail},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        return super().handle_exception(exc)
+
+    @extend_schema(responses=AccountProfileSerializer)
+    def get(self, request):
+        profile, _ = AccountProfile.objects.get_or_create(user=request.user)
+        return Response(AccountProfileSerializer(profile).data)
+
+    @extend_schema(request=AccountProfileSerializer, responses=AccountProfileSerializer)
+    def patch(self, request):
+        profile, _ = AccountProfile.objects.get_or_create(user=request.user)
+        serializer = AccountProfileSerializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class LogoutView(views.APIView):

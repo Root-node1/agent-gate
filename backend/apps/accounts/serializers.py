@@ -1,7 +1,7 @@
 from allauth.account.models import EmailAddress
 from rest_framework import serializers
 
-from .models import OrgMembership, User
+from .models import AccountProfile, OrgMembership, User
 
 
 class MembershipSerializer(serializers.ModelSerializer):
@@ -12,9 +12,21 @@ class MembershipSerializer(serializers.ModelSerializer):
         fields = ["organization", "role"]
 
 
+class AccountProfileSerializer(serializers.ModelSerializer):
+    """Profile display information. Organization membership is read-only
+    and managed through Organization + OrgMembership, never through this
+    serializer."""
+
+    class Meta:
+        model = AccountProfile
+        fields = ["full_name"]
+        read_only_fields = ["user"]
+
+
 class CurrentUserSerializer(serializers.ModelSerializer):
     is_email_verified = serializers.SerializerMethodField()
     memberships = MembershipSerializer(many=True, read_only=True)
+    profile = AccountProfileSerializer(read_only=True)
 
     class Meta:
         model = User
@@ -27,6 +39,7 @@ class CurrentUserSerializer(serializers.ModelSerializer):
             "date_joined",
             "is_email_verified",
             "memberships",
+            "profile",
         ]
 
     def get_is_email_verified(self, user):

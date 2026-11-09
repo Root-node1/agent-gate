@@ -11,7 +11,11 @@ from .chain import GENESIS_HASH, canonical_payload, event_hash
 
 
 class AuditEvent(models.Model):
-    """Append-only record of everything that happens. Never edited, never deleted."""
+    """Append-only record of everything that happens. Never edited, never deleted.
+
+    Events have no updated_at because a row is immutable after creation; created_at
+    is the only timestamp an event can legitimately carry.
+    """
 
     class EventType(models.TextChoices):
         REQUEST_RECEIVED = "request.received", "Request received"
@@ -29,6 +33,7 @@ class AuditEvent(models.Model):
         AGENT_CREATED = "agent.created", "Agent created"
         AGENT_UPDATED = "agent.updated", "Agent updated"
         AGENT_SUSPENDED = "agent.suspended", "Agent suspended"
+        AGENT_ACTIVATED = "agent.activated", "Agent activated"
         KEY_CREATED = "key.created", "Key created"
         KEY_REVOKED = "key.revoked", "Key revoked"
         DEMO_RESET = "demo.reset", "Demo reset"

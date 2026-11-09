@@ -160,8 +160,13 @@ class AgentDetailView(APIView):
                 )
 
             if "status" in validated and validated["status"] != old_status:
+                event_type = (
+                    AuditEvent.EventType.AGENT_ACTIVATED
+                    if validated["status"] == Agent.Status.ACTIVE
+                    else AuditEvent.EventType.AGENT_SUSPENDED
+                )
                 AuditEvent.record(
-                    AuditEvent.EventType.AGENT_SUSPENDED,
+                    event_type,
                     organization=agent.organization,
                     agent=agent,
                     actor_type=AuditEvent.ActorType.USER,

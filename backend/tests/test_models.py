@@ -211,6 +211,19 @@ class OrganizationTests(TestCase):
             OrgMembership.objects.create(user=user, organization=organization, role="viewer")
 
 
+class UserTimestampTests(TestCase):
+    def test_user_updated_at_is_set_and_refreshed(self):
+        user = User.objects.create_user(username="timestamped", password="x")
+        self.assertIsNotNone(user.updated_at)
+
+        user.updated_at = timezone.now() - timedelta(days=1)
+        user.first_name = "Changed"
+        user.save()
+        user.refresh_from_db()
+
+        self.assertGreater(user.updated_at, timezone.now() - timedelta(hours=1))
+
+
 class WebhookEventTests(TestCase):
     def test_paypal_event_id_is_unique(self):
         WebhookEvent.objects.create(paypal_event_id="evt_1", event_type="PAYMENT.SALE.COMPLETED")

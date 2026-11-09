@@ -350,7 +350,7 @@ class AgentAuditTests(AgentApiTestBase):
         events = self._audit_events()
         self.assertEqual(events.count(), before + 1)
         event = events.last()
-        self.assertEqual(event.event_type, AuditEvent.EventType.AGENT_SUSPENDED)
+        self.assertEqual(event.event_type, AuditEvent.EventType.AGENT_ACTIVATED)
         self.assertEqual(event.payload["from_status"], Agent.Status.SUSPENDED)
         self.assertEqual(event.payload["to_status"], Agent.Status.ACTIVE)
 

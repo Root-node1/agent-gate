@@ -45,7 +45,7 @@ function ProtectedAppLayout() {
     )
   }
   if (!session.authenticated) return <Navigate to="/login" replace />
-  return <AppLayout />
+  return <AppLayout user={session.user} />
 }
 
 // A data router (not BrowserRouter) so pages can use useBlocker to guard unsaved edits.
@@ -56,8 +56,8 @@ const router = createBrowserRouter(
       <Route path="login" lazy={page(() => import('./pages/LoginPage'))} />
       <Route path="register" lazy={page(() => import('./pages/RegisterPage'))} />
       <Route path="verify-email" lazy={page(() => import('./pages/VerifyEmailPage'))} />
-      <Route path="forgot-password" lazy={page(() => import('./pages/auth/ForgotPasswordPage'))} />
-      <Route path="reset-password/:key" lazy={page(() => import('./pages/auth/ResetPasswordPage'))} />
+      <Route path="forgot-password" lazy={page(() => import('./pages/ForgotPasswordPage'))} />
+      <Route path="reset-password/:key" lazy={page(() => import('./pages/ResetPasswordPage'))} />
       <Route path="mfa" lazy={page(() => import('./pages/MfaPage'))} />
       <Route path="app" loader={loadDashboardSession} element={<ProtectedAppLayout />}>
         <Route index lazy={page(() => import('./pages/app/OverviewPage'))} />

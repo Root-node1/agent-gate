@@ -1,6 +1,6 @@
+from django.conf import settings
 from django.contrib.auth import logout as django_logout
 from django.middleware.csrf import get_token
-from django.conf import settings
 from drf_spectacular.utils import extend_schema
 from rest_framework import exceptions, status, views
 from rest_framework.authentication import SessionAuthentication

@@ -338,6 +338,10 @@ export async function verifyMfa(code: string): Promise<void> {
   }
 }
 
+export async function reauthenticate(password: string): Promise<void> {
+  await headlessRequest('auth/reauthenticate', 'POST', { password }, {}, [401])
+}
+
 export async function signUp(input: {
   email: string
   password: string

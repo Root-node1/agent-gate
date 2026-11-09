@@ -5,6 +5,7 @@ export const SETTINGS_TABS = [
   { id: 'team', label: 'Team and roles' },
   { id: 'developers', label: 'Developers' },
   { id: 'password', label: 'Password' },
+  { id: 'security', label: 'Security' },
   { id: 'appearance', label: 'Appearance' }
 ] as const
 

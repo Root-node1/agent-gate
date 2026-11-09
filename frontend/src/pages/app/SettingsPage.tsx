@@ -7,6 +7,7 @@ import ApiKeysSection from './settings/ApiKeysSection'
 import AppearanceSection from './settings/AppearanceSection'
 import DevelopersSection from './settings/DevelopersSection'
 import PaypalSection from './settings/PaypalSection'
+import SecuritySection from './settings/SecuritySection'
 import TeamSection from './settings/TeamSection'
 import WorkspaceSection from './settings/WorkspaceSection'
 import PasswordChangeForm from '../auth/PasswordChangeForm'
@@ -88,6 +89,7 @@ export default function SettingsPage() {
         {active === 'team' && <TeamSection state={state} loading={loading} />}
         {active === 'developers' && <DevelopersSection />}
         {active === 'password' && <PasswordChangeForm />}
+        {active === 'security' && <SecuritySection />}
         {active === 'appearance' && <AppearanceSection />}
       </section>
     </div>

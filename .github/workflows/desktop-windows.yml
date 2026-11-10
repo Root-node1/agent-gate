@@ -112,6 +112,6 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "=== Windows installer artifacts ==="
-          Get-Content frontend/windows-artifacts/SHA256SUMS.txt
+          Get-Content windows-artifacts/SHA256SUMS.txt
           Write-Host "Signature status: UNSIGNED (Authenticode not configured)"
           Write-Host "Distribution: workflow artifact only — not a public GitHub Release"

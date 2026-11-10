@@ -36,10 +36,13 @@ from apps.payees.models import DestinationType, Payee
 from apps.payments.paypal.client import (
     PayPalAPIError,
     PayPalClient,
+    PayPalError,
+    PayPalTimeoutError,
     PayPalClientError,
     PayPalConflictError,
     PayPalRateLimitError,
     PayPalTransportError,
+    PayPalTransientError,
     PayPalUncertainOutcomeError,
 )
 from apps.payments.paypal.config import PayPalConfigError, get_paypal_config
@@ -420,7 +423,7 @@ def _submit_to_paypal(
             json=payload,
             request_id=str(reservation.sender_batch_id),
         )
-    except PayPalTransportError as exc:
+    except (PayPalTransportError, PayPalTimeoutError, PayPalTransientError) as exc:
         raise PayPalUncertainOutcomeError(f"PayPal transport error: {exc}") from exc
     # PayPalClient._request raises on non-2xx in production; when mocked,
     # check status codes here to surface the same exceptions.
@@ -746,7 +749,7 @@ def reconcile_payout(
     # SUBMISSION_PENDING or UNCERTAIN: query PayPal.
     try:
         result = _reconcile_with_paypal(reservation, django_settings, session=session)
-    except PayPalClientError as exc:
+    except (PayPalClientError, PayPalError) as exc:
         # Cannot reach PayPal (or PayPal rejected the lookup): keep current
         # state recoverable.  Never claim completion or failure.
         return SubmissionResult(

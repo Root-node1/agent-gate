@@ -406,7 +406,7 @@ class CaptureServiceTests(TestCase):
 
     def test_get_5xx_preserves_capture_pending(self):
         client = make_capture_client(
-            get_side_effect=PayPalServerError("PayPal GET returned HTTP 503."),
+            get_side_effect=PayPalServerError("PayPal GET returned HTTP 503.", status_code=503),
             post_response=_CAPTURE_RESPONSE,
         )
         checkout, outcome, _ = self._capture(client=client)
@@ -1147,7 +1147,7 @@ class CheckoutCaptureViewTests(CheckoutViewBase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["amount"], "Unknown field.")
+        self.assertEqual(response.json()["error"]["details"]["amount"], "Unknown field.")
 
 
 # ---------------------------------------------------------------------------

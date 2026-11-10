@@ -207,7 +207,7 @@ class CheckoutWebhookSecurityTests(TestCase):
 
     def test_get_5xx(self):
         ev = self._event(_capture_event())
-        with _mock_get(side_effect=PayPalServerError("se")):
+        with _mock_get(side_effect=PayPalServerError("se", status_code=503)):
             result = process_webhook_event(ev, settings)
         self.assertEqual(result, "retryable")
         self.checkout.refresh_from_db()
@@ -362,7 +362,7 @@ class CaptureDeniedSecurityTests(TestCase):
 
     def test_get_5xx(self):
         ev = self._event()
-        with _mock_get(side_effect=PayPalServerError("se")):
+        with _mock_get(side_effect=PayPalServerError("se", status_code=503)):
             result = process_webhook_event(ev, settings)
         self.assertEqual(result, "retryable")
         self.checkout.refresh_from_db()
@@ -558,7 +558,7 @@ class PayoutWebhookSecurityTests(TestCase):
 
     def test_provider_get_5xx(self):
         ev = self._event()
-        with _mock_paypal_get(exception=PayPalServerError("se")):
+        with _mock_paypal_get(exception=PayPalServerError("se", status_code=503)):
             result = process_webhook_event(ev, settings)
         self.assertEqual(result, "retryable")
         self.reservation.refresh_from_db()

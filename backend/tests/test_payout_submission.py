@@ -672,7 +672,7 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
             )
         self.assertEqual(result.outcome, "pending")
 
-        with _mock_paypal_get(exception=PayPalServerError("se")):
+        with _mock_paypal_get(exception=PayPalServerError("se", status_code=503)):
             result = payout_services.reconcile_payout(
                 self.reservation.pk, django_settings=settings
             )
@@ -794,7 +794,7 @@ class PayoutSubmissionViewTests(PayoutSubmissionViewBase):
         with _mock_paypal_post(return_value=response):
             resp = self._post_submit(user=no_mfa)
         self.assertEqual(resp.status_code, 403)
-        self.assertEqual(resp.json()["code"], "mfa_enrollment_required")
+        self.assertEqual(resp.json()["error"]["code"], "mfa_enrollment_required")
 
     def test_organization_isolation(self):
         other_agent = Agent.objects.create(name="other", organization=self.other_org)

@@ -23,7 +23,7 @@ from apps.payments.checkout.services import (
 from apps.payments.models import CheckoutOrder, WebhookEvent
 from apps.payments.payouts.models import PayoutReservation
 from apps.payments.payouts.services import reconcile_payout
-from apps.payments.paypal.client import PayPalClientError
+from apps.payments.paypal.client import PayPalClientError, PayPalError
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def process_checkout_capture_completed(webhook_event, django_settings):
     client = PayPalClient.from_settings(django_settings)
     try:
         response = get_paypal_order(checkout_order=checkout, client=client)
-    except PayPalClientError:
+    except PayPalError:
         return "retryable"
     if response is None:
         return "retryable"
@@ -183,7 +183,7 @@ def process_checkout_capture_denied(webhook_event, django_settings):
     client = PayPalClient.from_settings(django_settings)
     try:
         response = get_paypal_order(checkout_order=checkout, client=client)
-    except PayPalClientError:
+    except PayPalError:
         return "retryable"
     if response is None:
         return "retryable"

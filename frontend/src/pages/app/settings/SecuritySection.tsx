@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Copy, ShieldCheck } from 'lucide-react'
 import {
-  HeadlessError as AuthError,
   activateTotp,
   generateRecoveryCodes,
   getAuthenticators,
@@ -31,6 +30,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isSecurityError(cause: unknown): cause is { status: number; responseData: unknown } {
+  return (
+    typeof cause === 'object' &&
+    cause !== null &&
+    'status' in cause &&
+    typeof (cause as { status?: unknown }).status === 'number' &&
+    'responseData' in cause
+  )
+}
+
 export default function SecuritySection() {
   const pendingAction = useRef<(() => Promise<void>) | null>(null)
   const [loading, setLoading] = useState(true)
@@ -49,7 +58,7 @@ export default function SecuritySection() {
   const [confirmAction, setConfirmAction] = useState<'remove' | 'regenerate' | null>(null)
 
   function needsReauthentication(cause: unknown) {
-    if (!(cause instanceof AuthError) || cause.status !== 401) return false
+    if (!isSecurityError(cause) || cause.status !== 401) return false
     if (!isRecord(cause.responseData)) return false
     return (
       Array.isArray(cause.responseData.flows) &&

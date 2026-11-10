@@ -10,6 +10,8 @@ from django.utils import timezone
 
 from apps.audit.models import AuditEvent
 from apps.payments.paypal.client import (
+    PayPalAPIError,
+    PayPalTimeoutError,
     PayPalClient,
     PayPalClientError,
     PayPalTransportError,
@@ -274,9 +276,9 @@ def ingest_paypal_webhook(*, body, headers, django_settings):
             "/v1/notifications/verify-webhook-signature",
             json=verification_payload,
         )
-    except PayPalTransportError as exc:
+    except (PayPalTransportError, PayPalTimeoutError) as exc:
         raise WebhookTransportError(str(exc)) from exc
-    except PayPalClientError as exc:
+    except (PayPalClientError, PayPalAPIError) as exc:
         raise WebhookVerificationError(str(exc)) from exc
 
     status_code = getattr(response, "status_code", 200) or 200

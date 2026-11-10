@@ -7,6 +7,8 @@ operations the payment executor needs.
 
 from __future__ import annotations
 
+import base64
+
 import threading
 import time
 from collections.abc import Callable
@@ -16,6 +18,7 @@ import httpx
 from .config import get_paypal_config
 from .exceptions import (
     PayPalAmbiguousResponse,
+    PayPalError,
     PayPalAuthenticationError,
     PayPalConfigurationError,
     PayPalResponseError,
@@ -80,6 +83,8 @@ class PayPalClient:
 
         self._client_id = client_id
         self._client_secret = client_secret
+        self._allow_live = allow_live
+        self._mode = mode
         self._base_url = (
             base_url or (LIVE_BASE_URL if mode == "live" else SANDBOX_BASE_URL)
         ).rstrip("/")
@@ -107,6 +112,8 @@ class PayPalClient:
         if parsed.scheme != "https":
             raise PayPalConfigurationError("PayPal base URL must use HTTPS.")
         host = parsed.hostname
+        if self._allow_live and self._mode == "live" and host == "api-m.paypal.com":
+            return
         if host in _PRODUCTION_HOSTS:
             raise PayPalConfigurationError(
                 f"Production PayPal host {host!r} is forbidden; the sandbox "
@@ -137,7 +144,7 @@ class PayPalClient:
     ) -> dict:
         """POST JSON with a bearer token and a caller-supplied idempotency id."""
         headers = {
-            "Authorization": f"Bearer {self._fetch_token()}",
+            "Authorization": f"Bearer {self.get_token()}",
             "Accept": "application/json",
             "Content-Type": "application/json",
             "PayPal-Request-Id": request_id,
@@ -152,7 +159,7 @@ class PayPalClient:
     def get_json(self, path: str) -> dict:
         """GET JSON with a bearer token."""
         headers = {
-            "Authorization": f"Bearer {self._fetch_token()}",
+            "Authorization": f"Bearer {self.get_token()}",
             "Accept": "application/json",
         }
         response = self._send("GET", path, headers=headers)
@@ -190,12 +197,18 @@ class PayPalClient:
                 return self._access_token
 
             try:
+                basic = base64.b64encode(
+                    f"{self._client_id}:{self._client_secret}".encode("utf-8")
+                ).decode("ascii")
                 response = self._send(
                     "POST",
                     "/v1/oauth2/token",
-                    auth=httpx.BasicAuth(self._client_id, self._client_secret),
                     data={"grant_type": "client_credentials"},
-                    headers={"Accept": "application/json"},
+                    headers={
+                        "Accept": "application/json",
+                        "Authorization": f"Basic {basic}",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
                 )
             except (PayPalTimeoutError, PayPalTransientError) as exc:
                 raise PayPalAuthenticationError(
@@ -232,6 +245,22 @@ class PayPalClient:
         """Public accessor for the cached OAuth access token."""
         return self._fetch_token()
 
+    def _build_url(self, path: str) -> str:
+        """Build and validate a request URL from a relative API path."""
+        if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
+            raise PayPalConfigurationError("PayPal request path must be a relative path.")
+        if "://" in path or "\\" in path:
+            raise PayPalConfigurationError("PayPal request path must be a relative path.")
+        for segment in path.split("?")[0].split("#")[0].split("/"):
+            if segment in {"", ".", ".."} and segment != "":
+                # allow empty segments from leading slash; reject dot segments
+                if segment in {".", ".."}:
+                    raise PayPalConfigurationError("PayPal request path must not traverse.")
+        # explicit traversal check
+        if any(seg in {".", ".."} for seg in path.split("?")[0].split("#")[0].split("/")):
+            raise PayPalConfigurationError("PayPal request path must not traverse.")
+        return f"{self._base_url}{path}"
+
     def _send(
         self,
         method: str,
@@ -242,7 +271,7 @@ class PayPalClient:
         data: dict | None = None,
         auth: httpx.Auth | None = None,
     ) -> httpx.Response:
-        url = f"{self._base_url}{path}"
+        url = self._build_url(path)
         last_error: Exception | None = None
 
         for attempt in range(self._max_retries + 1):
@@ -312,7 +341,7 @@ class PayPalClient:
         return str(payload.get("name") or payload.get("error") or "")[:100]
 
     @classmethod
-    def from_settings(cls, settings, *, http_client=None):
+    def from_settings(cls, settings, *, http_client=None, session=None):
         """Build a client from Django settings, validating configuration first.
 
         Performs no network I/O. Raises :class:`PayPalConfigurationError`
@@ -329,6 +358,7 @@ class PayPalClient:
             config.client_secret,
             mode=config.mode,
             http_client=http_client,
+            session=session,
             allow_live=config.allow_live,
         )
 

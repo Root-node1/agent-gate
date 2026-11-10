@@ -512,7 +512,7 @@ class PayoutViewTests(PayoutViewBase):
         )
         response = self._post(user=no_mfa)
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["code"], "mfa_enrollment_required")
+        self.assertEqual(response.json()["error"]["code"], "mfa_enrollment_required")
 
     def test_disabled_payout_feature(self):
         with override_settings(PAYPAL_PAYOUTS_ENABLED="false"):
@@ -555,7 +555,7 @@ class PayoutViewTests(PayoutViewBase):
             amount="9999.00",
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["amount"], "Unknown field.")
+        self.assertEqual(response.json()["error"]["details"]["amount"], "Unknown field.")
 
 
 @skipUnless(

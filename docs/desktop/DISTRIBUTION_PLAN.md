@@ -35,12 +35,13 @@ CSP `connect-src` in `tauri.conf.json` must be updated per environment before bu
 
 ### Windows
 - Architecture: x86_64.
-- Installer: MSI (recommended) or EXE (NSIS). MSI preferred for enterprise/managed deployment.
-- WebView2: Evergreen runtime; installer bootstraps if missing.
-- Installation: per-user or per-machine; upgrade via MSI major upgrade.
-- Uninstall: removes app + (optionally) user data; leaves no orphaned listeners (sidecar lifecycle).
-- Code signing: required (Authenticode). Not yet obtained.
-- Origin/loopback: WebView2 origin `https://tauri.localhost`; loopback proxy must serve frontend over HTTP on `127.0.0.1` (cross-origin vs WebView2 origin). **Limitation:** needs validation on Windows.
+- Installer: MSI (WiX) and EXE (NSIS). Both are produced by `.github/workflows/desktop-windows.yml` on `windows-latest`.
+- WebView2: Evergreen runtime; installer uses `downloadBootstrapper` if missing.
+- Installation: NSIS `currentUser` (no admin required by default); MSI for managed/enterprise deployment.
+- Uninstall: removes app binaries; does **not** silently delete `%APPDATA%\AgentGate` (backend URL config). Documented on the Installation page.
+- Code signing: required for production (Authenticode). Not yet obtained — CI artifacts are unsigned workflow artifacts only.
+- Backend URL: Settings → Connection writes `%APPDATA%\AgentGate\backend_url`; `AGENTGATE_BACKEND_URL` env overrides and locks the UI.
+- Origin/loopback: packaged app serves the SPA from an embedded loopback HTTP server and proxies `/api` + `/v1`. **Limitation:** end-to-end install/launch verification still requires a Windows host or Actions artifact smoke test.
 
 ### Linux
 - AppImage (x86_64): portable, no install required.

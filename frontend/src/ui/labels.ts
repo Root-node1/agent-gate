@@ -31,18 +31,28 @@ export const DECISION: Record<Decision, StatusLabel & { summary: string }> = {
   pending: { tone: 'neutral', icon: '…', label: 'Pending', summary: 'No decision yet.' },
 }
 
-/** Payment execution at PayPal, separate from the policy decision. */
+/** Simulated payment results in the in-memory dashboard demo. */
 export const PAYMENT: Record<PaymentStatus, StatusLabel & { summary: string }> = {
-  not_sent: { tone: 'neutral', icon: '–', label: 'Not sent', summary: 'No payment was sent to PayPal.' },
+  not_sent: { tone: 'neutral', icon: '–', label: 'Not sent', summary: 'No PayPal call was made in this demo.' },
   awaiting_approval: {
     tone: 'neutral',
     icon: '⏸',
     label: 'On hold',
-    summary: 'Held until a person approves it.',
+    summary: 'Held for a person in the demo; no PayPal call was made.',
   },
-  processing: { tone: 'info', icon: '↻', label: 'Processing', summary: 'Sent to PayPal, waiting for confirmation.' },
-  completed: { tone: 'allow', icon: '✓', label: 'Paid', summary: 'PayPal confirmed the payment.' },
-  failed: { tone: 'deny', icon: '✕', label: 'Failed', summary: 'PayPal rejected the payment.' },
+  processing: { tone: 'info', icon: '↻', label: 'Simulating', summary: 'Demo only; no PayPal request was sent.' },
+  completed: {
+    tone: 'allow',
+    icon: '✓',
+    label: 'Simulated paid',
+    summary: 'Demo-only simulated success; no payment was made.',
+  },
+  failed: {
+    tone: 'deny',
+    icon: '✕',
+    label: 'Simulated failure',
+    summary: 'Demo-only simulated failure; no PayPal request was sent.',
+  },
 }
 
 export const APPROVAL: Record<ApprovalOutcome, StatusLabel> = {
@@ -76,9 +86,9 @@ export const EVENT: Record<AuditEventType, { label: string; tone: Tone }> = {
   'approval.approved': { label: 'Approval granted', tone: 'allow' },
   'approval.denied': { label: 'Approval denied', tone: 'deny' },
   'approval.expired': { label: 'Approval expired', tone: 'neutral' },
-  'payment.processing': { label: 'Payment sent to PayPal', tone: 'info' },
-  'payment.completed': { label: 'Payment completed', tone: 'allow' },
-  'payment.failed': { label: 'Payment failed', tone: 'deny' },
+  'payment.processing': { label: 'Simulated payment', tone: 'info' },
+  'payment.completed': { label: 'Simulated payment success', tone: 'allow' },
+  'payment.failed': { label: 'Simulated payment failure', tone: 'deny' },
   'agent.created': { label: 'Agent registered', tone: 'neutral' },
   'agent.suspended': { label: 'Agent suspended', tone: 'deny' },
   'agent.reactivated': { label: 'Agent reactivated', tone: 'allow' },

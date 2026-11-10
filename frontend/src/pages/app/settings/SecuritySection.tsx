@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Copy, ShieldCheck } from 'lucide-react'
 import {
-  AuthError,
+  HeadlessError as AuthError,
   activateTotp,
   generateRecoveryCodes,
   getAuthenticators,

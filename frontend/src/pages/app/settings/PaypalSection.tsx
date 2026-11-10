@@ -10,7 +10,7 @@ export default function PaypalSection() {
         </div>
         <div className="st-connection-body">
           <h2 className="card-title">PayPal connection</h2>
-          <p className="card-subtitle">AgentGate sends approved payments to PayPal. Nothing real is paid in this demo.</p>
+          <p className="card-subtitle">This dashboard demo does not send payments to PayPal.</p>
         </div>
         <div className="cluster">
           <Badge tone="approval" icon="◐">
@@ -38,8 +38,8 @@ export default function PaypalSection() {
       <div className="notice tone-info">
         <Info size={18} aria-hidden="true" />
         <p>
-          The PayPal integration is being built. Until it lands, AgentGate makes every decision for real and simulates
-          only PayPal's answer, so you can follow the full flow from request to payment.
+          This dashboard uses sample data and client-side policy and payment simulations. It does not call the AgentGate
+          backend or PayPal. The backend payment executor is separate and defaults to a fake executor.
         </p>
       </div>
 

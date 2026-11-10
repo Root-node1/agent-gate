@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router'
 import Logo from '../../components/Logo'
-import { bootstrapCsrf, confirmPasswordReset } from '../../api/auth'
+import { confirmPasswordReset } from '../../api/auth'
 import AuthField from './AuthField'
 import './AuthPages.css'
 
@@ -13,10 +13,6 @@ export default function ResetPasswordPage() {
   const [serverError, setServerError] = useState<string | null>(null)
   const [serverFieldErrors, setServerFieldErrors] = useState<Record<string, string>>({})
   const [done, setDone] = useState(false)
-
-  useEffect(() => {
-    void bootstrapCsrf()
-  }, [])
 
   const passwordError = serverFieldErrors.password
   const confirmError =

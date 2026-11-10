@@ -20,11 +20,9 @@ import DisplayButton from '../a11y/DisplayButton'
 import Logo from '../components/Logo'
 import { resetDemo, useDemoState } from '../demo/store'
 import { pendingApprovals } from '../demo/selectors'
-import type { AuthUser } from '../api/auth'
-import { useSession } from '../session/context'
 import Modal from './Modal'
-import { ROLE } from './labels'
 import { useToast } from './toast-context'
+import { useSession } from '../session/context'
 
 interface NavItem {
   to: string
@@ -34,14 +32,20 @@ interface NavItem {
   count?: number
 }
 
-export default function AppLayout({ user }: { user: AuthUser }) {
+export default function AppLayout() {
   const state = useDemoState()
+  const { currentUser, logout } = useSession()
   const toast = useToast()
-  const { logout } = useSession()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
   const waiting = pendingApprovals(state).length
+  const accountName = currentUser
+    ? `${currentUser.first_name} ${currentUser.last_name}`.trim() ||
+      currentUser.username ||
+      currentUser.email
+    : ''
 
   const main: NavItem[] = [
     { to: '/app', label: 'Overview', icon: LayoutDashboard, end: true },
@@ -101,13 +105,35 @@ export default function AppLayout({ user }: { user: AuthUser }) {
           </ul>
           <div className="user-chip">
             <span className="avatar" aria-hidden="true">
-              {user?.username.slice(0, 1).toUpperCase()}
+              {accountName.slice(0, 1).toUpperCase()}
             </span>
             <span>
-              <strong>{user?.username}</strong>
-              <span className="user-role">{ROLE[state.currentUser.role].label}</span>
+              <strong>{accountName}</strong>
+              <span className="user-role">{currentUser?.email}</span>
             </span>
           </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={signingOut}
+            onClick={async () => {
+              setSigningOut(true)
+              try {
+                await logout()
+                navigate('/login', { replace: true })
+              } catch (error) {
+                toast.show(
+                  error instanceof Error ? error.message : 'Sign-out failed. Please try again.',
+                  'error',
+                )
+              } finally {
+                setSigningOut(false)
+              }
+            }}
+          >
+            <LogOut size={16} aria-hidden="true" />
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </button>
         </div>
       </aside>
       <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
@@ -125,26 +151,9 @@ export default function AppLayout({ user }: { user: AuthUser }) {
           </button>
           <div className="demo-pill">
             <span className="demo-dot" aria-hidden="true" />
-            Demo workspace <span className="demo-pill-detail">· sample data, no real money</span>
+            Demo workspace <span className="demo-pill-detail">· sample data; simulator is in memory</span>
           </div>
           <DisplayButton />
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => {
-              void logout().then(
-                () => {
-                  toast.show('Signed out.')
-                  navigate('/login', { replace: true })
-                },
-                (error: unknown) =>
-                  toast.show(error instanceof Error ? error.message : 'Could not sign out.', 'error'),
-              )
-            }}
-          >
-            <LogOut size={16} aria-hidden="true" />
-            Sign out
-          </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmReset(true)}>
             <RotateCcw size={16} aria-hidden="true" />
             Reset demo

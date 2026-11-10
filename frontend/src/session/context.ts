@@ -1,6 +1,14 @@
 import { createContext, useContext } from 'react'
+import type { CurrentUser, HeadlessFlow, LoginResult } from '../api/auth'
 import type { SpendRequest } from '../api/spendRequests'
-import type { AuthStatus, LoginResult } from '../api/auth'
+import type { SessionResolution } from './sessionModel'
+
+export type AuthenticationStatus =
+  | 'loading'
+  | 'authenticated'
+  | 'unauthenticated'
+  | 'pending'
+  | 'error'
 
 export interface Session {
   /** Kept in memory only: never written to storage or the URL. */
@@ -9,12 +17,13 @@ export interface Session {
   /** Requests seen in this tab, newest first. Stands in until a list endpoint exists. */
   recent: SpendRequest[]
   remember: (request: SpendRequest) => void
-  /** Authentication state restored from the backend on mount. */
-  authenticated: boolean
-  user: { username: string } | null
-  setAuthenticated: (status: AuthStatus) => void
-  /** Sign in with email/password. Returns the login result kind. */
+  authenticationStatus: AuthenticationStatus
+  currentUser: CurrentUser | null
+  pendingFlow: HeadlessFlow | null
+  authenticationError: string | null
+  refreshSession: () => Promise<SessionResolution>
   login: (email: string, password: string) => Promise<LoginResult>
+  register: (email: string, password: string) => Promise<LoginResult>
   logout: () => Promise<void>
 }
 

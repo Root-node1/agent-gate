@@ -10,16 +10,14 @@
 
 The chain starts with the first event written after the chain code is deployed. Existing demo rows are unchained, so reset the demo databases before using the demo. The data contains no live credentials and the old keys are revoked. Do not ship a migration that disables the audit triggers to rewrite rows.
 
-### Local SQLite
+### Local development database
 
-```bash
-cd backend
-export DATABASE_URL=          # ignore a Neon URL in .env for this reset
-rm db.sqlite3
-python manage.py migrate
-python manage.py seed_demo
-python manage.py verify_audit
-```
+Development migrations require PostgreSQL 17 because the Procrastinate
+migrations create PostgreSQL-only schema. A fresh SQLite database is not a
+supported development database; SQLite remains available under the test
+settings. For a disposable PostgreSQL 17 setup and local demo instructions,
+see [docs/demo/LOCAL_SETUP.md](../docs/demo/LOCAL_SETUP.md). Do not point a
+demo reset at a database containing data you need.
 
 ### Neon
 

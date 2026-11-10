@@ -1,21 +1,128 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { SpendRequest } from '../api/spendRequests'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  getAuthStatus,
+  getAuthenticationState,
+  getCurrentUser,
   signIn,
+  signUp,
   signOut,
-  type AuthStatus,
-  type LoginResult,
+  type CurrentUser,
+  type HeadlessFlow,
 } from '../api/auth'
+import type { SpendRequest } from '../api/spendRequests'
 import { SessionContext } from './context'
+import {
+  pendingAuthenticationFlow,
+  resolveSession,
+  type SessionResolution,
+} from './sessionModel'
 
 const MAX_RECENT = 20
+
+type AuthenticationStatus =
+  | 'loading'
+  | 'authenticated'
+  | 'unauthenticated'
+  | 'pending'
+  | 'error'
 
 export default function SessionProvider({ children }: { children: ReactNode }) {
   const [agentKey, setAgentKey] = useState('')
   const [recent, setRecent] = useState<SpendRequest[]>([])
-  const [authenticated, setAuthenticated] = useState(false)
-  const [user, setUser] = useState<{ username: string } | null>(null)
+  const [authenticationStatus, setAuthenticationStatus] =
+    useState<AuthenticationStatus>('loading')
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
+  const [pendingFlow, setPendingFlow] = useState<HeadlessFlow | null>(null)
+  const [authenticationError, setAuthenticationError] = useState<string | null>(null)
+  const requestId = useRef(0)
+  const initialRequest = useRef<Promise<SessionResolution> | null>(null)
+
+  const refreshSession = useCallback(async () => {
+    const id = ++requestId.current
+    setAuthenticationError(null)
+    setAuthenticationStatus('loading')
+    try {
+      const session = await resolveSession(getAuthenticationState, getCurrentUser)
+      if (requestId.current === id) {
+        setCurrentUser(session.status === 'authenticated' ? session.user : null)
+        setPendingFlow(session.status === 'pending' ? session.flow : null)
+        setAuthenticationStatus(session.status)
+      } else {
+        throw new Error('Session verification was superseded by a newer authentication action.')
+      }
+      return session
+    } catch (error) {
+      if (requestId.current === id) {
+        setCurrentUser(null)
+        setPendingFlow(null)
+        setAuthenticationStatus('error')
+        setAuthenticationError(
+          error instanceof Error ? error.message : 'Could not verify the dashboard session.',
+        )
+      }
+      throw error
+    }
+  }, [])
+
+  useEffect(() => {
+    let request = initialRequest.current
+    if (!request) {
+      request = refreshSession().finally(() => {
+        initialRequest.current = null
+      })
+      initialRequest.current = request
+    }
+    void request.catch(() => undefined)
+  }, [refreshSession])
+
+  const login = useCallback(async (email: string, password: string) => {
+    setAuthenticationError(null)
+    const result = await signIn(email, password)
+    if (result.kind === 'authenticated') {
+      const session = await refreshSession()
+      if (session.status !== 'authenticated') {
+        throw new Error('Sign-in was not confirmed by the dashboard session.')
+      }
+    } else {
+      setCurrentUser(null)
+      const flow = pendingAuthenticationFlow(result)
+      setPendingFlow(flow)
+      setAuthenticationStatus(flow ? 'pending' : 'unauthenticated')
+    }
+    return result
+  }, [refreshSession])
+
+  const register = useCallback(async (email: string, password: string) => {
+    setAuthenticationError(null)
+    const result = await signUp({ email, password })
+    if (result.kind === 'authenticated') {
+      const session = await refreshSession()
+      if (session.status !== 'authenticated') {
+        throw new Error('Account creation was not confirmed by the dashboard session.')
+      }
+    } else {
+      setCurrentUser(null)
+      const flow = pendingAuthenticationFlow(result)
+      setPendingFlow(flow)
+      setAuthenticationStatus(flow ? 'pending' : 'unauthenticated')
+    }
+    return result
+  }, [refreshSession])
+
+  const logout = useCallback(async () => {
+    setAuthenticationError(null)
+    try {
+      await signOut()
+      requestId.current += 1
+      setCurrentUser(null)
+      setPendingFlow(null)
+      setAuthenticationStatus('unauthenticated')
+    } catch (error) {
+      setAuthenticationError(
+        error instanceof Error ? error.message : 'Sign-out failed. Please try again.',
+      )
+      throw error
+    }
+  }, [])
 
   const remember = useCallback((request: SpendRequest) => {
     setRecent((prev) => {
@@ -25,63 +132,34 @@ export default function SessionProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const setAuthStatus = useCallback((status: AuthStatus) => {
-    if (status.authenticated) {
-      setAuthenticated(true)
-      setUser(status.user)
-    } else {
-      setAuthenticated(false)
-      setUser(null)
-    }
-  }, [])
-
-  // Restore session from backend on mount.
-  useEffect(() => {
-    let mounted = true
-    getAuthStatus()
-      .then((status) => {
-        if (mounted) setAuthStatus(status)
-      })
-      .catch(() => {
-        if (mounted) setAuthStatus({ authenticated: false })
-      })
-    return () => {
-      mounted = false
-    }
-  }, [setAuthStatus])
-
-  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-    const result = await signIn(email, password)
-    if (result.kind === 'authenticated') {
-      setAuthStatus({ authenticated: true, user: { username: email } })
-    }
-    return result
-  }, [setAuthStatus])
-
-  const logout = useCallback(async () => {
-    try {
-      await signOut()
-    } catch {
-      // Ignore sign-out errors; always clear local state.
-    }
-    setAuthenticated(false)
-    setUser(null)
-    window.location.replace('/login')
-  }, [])
-
   const value = useMemo(
     () => ({
       agentKey,
       setAgentKey,
       recent,
       remember,
-      authenticated,
-      user,
-      setAuthenticated: setAuthStatus,
+      authenticationStatus,
+      currentUser,
+      pendingFlow,
+      authenticationError,
+      refreshSession,
       login,
+      register,
       logout,
     }),
-    [agentKey, recent, remember, authenticated, user, setAuthStatus, login, logout],
+    [
+      agentKey,
+      recent,
+      remember,
+      authenticationStatus,
+      currentUser,
+      pendingFlow,
+      authenticationError,
+      refreshSession,
+      login,
+      register,
+      logout,
+    ],
   )
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

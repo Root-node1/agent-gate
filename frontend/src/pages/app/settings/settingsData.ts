@@ -1,11 +1,13 @@
 export const SETTINGS_TABS = [
   { id: 'workspace', label: 'Workspace' },
+  { id: 'connection', label: 'Connection' },
   { id: 'paypal', label: 'PayPal' },
   { id: 'keys', label: 'API keys' },
   { id: 'security', label: 'Security' },
   { id: 'team', label: 'Team and roles' },
   { id: 'developers', label: 'Developers' },
-  { id: 'appearance', label: 'Appearance' },
+  { id: 'password', label: 'Password' },
+  { id: 'appearance', label: 'Appearance' }
 ] as const
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number]['id']

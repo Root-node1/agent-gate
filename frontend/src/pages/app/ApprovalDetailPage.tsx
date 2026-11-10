@@ -309,8 +309,8 @@ function DecisionPanel({
       setConfirming(null)
       toast.show(
         confirming === 'approved'
-          ? `Approved. Sending ${amount} to ${request.merchant} through PayPal.`
-          : `Denied. ${request.merchant} will not be paid.`,
+          ? 'Approved in demo. Simulated result only; no PayPal call was made.'
+          : 'Denied in demo. No payment was sent.',
       )
       onDecided()
     } catch (e) {
@@ -332,7 +332,7 @@ function DecisionPanel({
         </span>
       </div>
       <p className="muted small">
-        Approving sends the payment to PayPal right away. Denying blocks it; the agent is told and nothing is paid.
+        This browser demo records a simulated approval or denial. It does not send a payment to PayPal.
       </p>
       <div className="field">
         <label htmlFor={noteId}>Note for the audit log (optional)</label>
@@ -386,8 +386,8 @@ function DecisionPanel({
           )}
           <p>
             {approving
-              ? 'AgentGate will send this payment to PayPal now. This cannot be undone here.'
-              : 'The payment will be blocked and the agent told why.'}
+              ? 'This demo records the approval and simulates a payment result. No PayPal request is sent.'
+              : 'This demo records the denial. No payment is sent.'}
           </p>
           <dl className="kv">
             <dt>Amount</dt>

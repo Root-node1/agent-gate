@@ -134,7 +134,7 @@ export default function SimulatePage() {
     <>
       <PageHeader
         title="Simulate a request"
-        description="Play the AI agent. Send a payment request and watch AgentGate check it, block it or hold it for a person. Sample data only: no real money moves."
+        description="Play the AI agent using sample data and client-side demo rules. No backend request or PayPal call is made."
       />
 
       <div className="stack-lg">
@@ -145,7 +145,7 @@ export default function SimulatePage() {
                 What you are watching
               </h2>
               <p className="card-subtitle">
-                Every request stops at AgentGate first. Only allowed or approved payments reach PayPal.
+                The demo shows whether a request would be allowed, denied or held for a person. Payment outcomes are simulated.
               </p>
             </div>
           </div>
@@ -156,7 +156,7 @@ export default function SimulatePage() {
           <h2 id="sim-scenarios" className="sim-heading">
             Try a scenario
           </h2>
-          <p className="hint sim-heading-text">One click sends a real request through the same rules as the API.</p>
+          <p className="hint sim-heading-text">Run a sample request through the demo rules. It updates in-memory demo data only.</p>
           <div className="grid grid-3">
             {SCENARIOS.map((s) => {
               const now = previewDecision(state, s.agentId, s.input)

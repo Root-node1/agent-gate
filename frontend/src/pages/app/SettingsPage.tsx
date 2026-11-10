@@ -5,8 +5,10 @@ import PageHeader from '../../ui/PageHeader'
 import { useSimulatedLoad } from '../../ui/hooks'
 import ApiKeysSection from './settings/ApiKeysSection'
 import AppearanceSection from './settings/AppearanceSection'
+import ConnectionSection from './settings/ConnectionSection'
 import DevelopersSection from './settings/DevelopersSection'
 import PaypalSection from './settings/PaypalSection'
+import PasswordChangeForm from '../auth/PasswordChangeForm'
 import SecuritySection from './settings/SecuritySection'
 import TeamSection from './settings/TeamSection'
 import WorkspaceSection from './settings/WorkspaceSection'
@@ -83,11 +85,13 @@ export default function SettingsPage() {
         tabIndex={0}
       >
         {active === 'workspace' && <WorkspaceSection saved={workspace} onSave={setWorkspace} />}
+        {active === 'connection' && <ConnectionSection />}
         {active === 'paypal' && <PaypalSection />}
         {active === 'keys' && <ApiKeysSection state={state} loading={loading} />}
         {active === 'security' && <SecuritySection />}
         {active === 'team' && <TeamSection state={state} loading={loading} />}
         {active === 'developers' && <DevelopersSection />}
+        {active === 'password' && <PasswordChangeForm />}
         {active === 'appearance' && <AppearanceSection />}
       </section>
     </div>

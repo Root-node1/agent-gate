@@ -1,408 +1,518 @@
 /**
- * Unified client for the AgentGate authentication contract.
+ * Browser client for django-allauth's headless JSON API.
  *
- * Backend contract (all authoritative under /api/auth/):
- *
- * Allauth headless JSON (session-cookie based):
- *   POST /api/auth/headless/browser/v1/auth/login
- *   POST /api/auth/headless/browser/v1/auth/signup
- *   POST /api/auth/headless/browser/v1/auth/password/request
- *   POST /api/auth/headless/browser/v1/auth/password/reset
- *   GET  /api/auth/headless/browser/v1/auth/session
- *   POST /api/auth/headless/browser/v1/account/password/change
- *   GET/POST/DELETE /api/auth/headless/browser/v1/account/authenticators/totp
- *   POST  /api/auth/headless/browser/v1/account/authenticators/recovery-codes
- *   GET   /api/auth/headless/browser/v1/account/authenticators/recovery-codes
- *
- * Custom session endpoints:
- *   GET  /api/auth/csrf/          -> { csrfToken }
- *   GET  /api/auth/options/       -> { csrfToken, googleOAuthEnabled, githubOAuthEnabled }
- *   GET  /api/auth/session/       -> { authenticated, user?: { username } }
- *   POST /api/auth/session/remember/ -> { remember }
- *   POST /api/auth/logout/        -> 204
- *
- * Dashboard user endpoints:
- *   GET  /api/auth/user/          -> CurrentUserSerializer (includes profile)
- *   GET/PATCH /api/auth/profile/  -> AccountProfileSerializer
- *
- * Every request carries `credentials: "include"` and a CSRF token read
- * from the `csrftoken` cookie.
+ * Authentication is held by the HttpOnly Django session cookie. Unsafe
+ * requests bootstrap CSRF through allauth's config endpoint and send the
+ * readable csrftoken cookie as X-CSRFToken.
  */
+
+export interface HeadlessFlow {
+  id: string
+  is_pending?: boolean
+  types?: string[]
+}
 
 export interface HeadlessBody {
   status: number
   errors?: Array<{ code?: string; param?: string; message: string }>
-  data?: Record<string, unknown>
-  meta?: { is_authenticated?: boolean }
-  flows?: Array<{ id: string }>
+  data?: Record<string, unknown> | unknown[]
+  meta?: Record<string, unknown> & {
+    is_authenticated?: boolean
+    secret?: string
+    totp_url?: string
+  }
 }
 
 export interface HeadlessError extends Error {
   status: number
   fieldErrors: Record<string, string>
   is_authenticated: boolean | null
+  responseData: unknown
 }
 
-export function createHeadlessError(message: string, body: HeadlessBody): HeadlessError {
-  const fieldErrors: Record<string, string> = {}
-  if (body.errors) {
-    for (const err of body.errors) {
-      const field = err.param || (err.code === 'invalid_password_reset' ? 'key' : 'non_field')
-      fieldErrors[field] = err.message
-    }
-  }
-  const err: HeadlessError = new Error(message) as HeadlessError
-  err.name = 'HeadlessError'
-  err.status = body.status
-  err.fieldErrors = fieldErrors
-  err.is_authenticated = body.meta?.is_authenticated ?? null
-  return err
-}
-
-function getCookie(name: string): string | null {
-  const match = document.cookie.match(
-    new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/\\+^])/g, '\\$1') + '=([^;]*)'),
-  )
-  return match ? decodeURIComponent(match[1]) : null
-}
-
-const HEADLESS_BASE = '/api/auth/headless/browser/v1'
-
-export async function bootstrapCsrf(): Promise<void> {
-  const res = await fetch(`${HEADLESS_BASE}/config`, { credentials: 'include' })
-  if (!res.ok) throw new Error('Could not initialize the authentication session.')
-}
-
-export async function headlessFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = typeof document === 'undefined' ? null : getCookie('csrftoken')
-  const headers = new Headers(init.headers)
-  if (token && !headers.has('X-CSRFToken')) headers.set('X-CSRFToken', token)
-  if (init.body && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json')
-  }
-  let res: Response
-  try {
-    res = await fetch(HEADLESS_BASE + path, {
-      ...init,
-      credentials: 'include',
-      headers,
-    })
-  } catch {
-    throw createHeadlessError(
-      'Cannot reach the backend. Is it running on port 8000?',
-      { status: 0 },
-    )
-  }
-  return res
-}
-
-/** GET /auth/session -> 200 when authenticated, 401 otherwise. */
-export async function getSession(): Promise<HeadlessBody> {
-  const res = await headlessFetch('/auth/session')
-  const body = (await res.json().catch(() => ({}))) as HeadlessBody
-  body.status = res.status
-  return body
-}
-
-/** Request a password-reset email. Always resolves (allauth returns 200 whether
- * or not the account exists, to prevent enumeration). Rejects only on transport
- * errors or rate limiting (429). */
-export async function requestPasswordReset(email: string): Promise<void> {
-  const res = await headlessFetch('/auth/password/request', {
-    method: 'POST',
-    body: JSON.stringify({ email }),
-  })
-  const body = (await res.json().catch(() => ({}))) as HeadlessBody
-  body.status = res.status
-  if (!res.ok) throw createHeadlessError('Could not send the reset email.', body)
-}
-
-/**
- * Confirm a password reset. The reset-confirm endpoint is an *anonymous*
- * operation: allauth returns 401 (meta.is_authenticated=false, no errors) on
- * success and 400 (with `errors`) on failure. Callers must NOT treat a 401 here
- * as a failure.
- *
- * Resolves to the response of the new password being live.
- */
-export async function confirmPasswordReset(key: string, password: string): Promise<void> {
-  const res = await headlessFetch('/auth/password/reset', {
-    method: 'POST',
-    body: JSON.stringify({ key, password }),
-  })
-  const body = (await res.json().catch(() => ({}))) as HeadlessBody
-  body.status = res.status
-  if (!res.ok && res.status !== 401) {
-    throw createHeadlessError(
-      res.status === 429
-        ? 'Too many reset attempts. Please wait a moment and try again.'
-        : 'The password reset link is invalid or expired.',
-      body,
-    )
-  }
-}
-
-/** Change the password of the currently authenticated (session) user. */
-export async function changePassword(current: string, next: string): Promise<void> {
-  const res = await headlessFetch('/account/password/change', {
-    method: 'POST',
-    body: JSON.stringify({ current_password: current, new_password: next }),
-  })
-  const body = (await res.json().catch(() => ({}))) as HeadlessBody
-  body.status = res.status
-  if (res.status === 401) {
-    throw createHeadlessError('You must be logged in to change your password.', body)
-  }
-  if (!res.ok) throw createHeadlessError('Could not change the password.', body)
-}
-
-// ---------------------------------------------------------------------------
-// Custom session contract (smallest extensions needed by the dashboard SPA)
-// ---------------------------------------------------------------------------
-
-export interface AuthUser {
+export interface CurrentUser {
+  id: string
+  email: string
   username: string
+  first_name: string
+  last_name: string
+  date_joined: string
+  is_email_verified: boolean
+  memberships: Array<{ organization: string; role: string }>
 }
 
-export type AuthStatus =
-  | { authenticated: false }
-  | { authenticated: true; user: AuthUser }
-
-export interface AuthOptions {
-  csrfToken: string
-  googleOAuthEnabled: boolean
-  githubOAuthEnabled: boolean
-}
+export type AuthenticationState =
+  | { status: 'authenticated'; body: HeadlessBody }
+  | { status: 'anonymous'; body: HeadlessBody }
+  | { status: 'pending'; flow: HeadlessFlow; body: HeadlessBody }
 
 export type LoginResult =
   | { kind: 'authenticated' }
   | { kind: 'mfa'; types: string[] }
   | { kind: 'verify-email' }
 
-interface HeadlessResponse {
-  status: number
-  data?: unknown
-  meta?: Record<string, unknown>
-  errors?: Array<{ message?: string; param?: string; code?: string }>
-}
-
-export class AuthError extends Error {
-  readonly status: number
-  readonly fieldErrors: Record<string, string>
-  readonly responseData: unknown
-
-  constructor(
-    message: string,
-    status: number,
-    fieldErrors: Record<string, string> = {},
-    responseData?: unknown,
-  ) {
-    super(message)
-    this.status = status
-    this.fieldErrors = fieldErrors
-    this.responseData = responseData
-  }
-}
+const HEADLESS_BASE = '/api/auth/headless/browser/v1'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-async function responseBody(response: Response): Promise<Record<string, unknown>> {
-  const body: unknown = await response.json().catch(() => ({}))
-  return isRecord(body) ? body : {}
+function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${escapedName}=([^;]*)`))
+  return match ? decodeURIComponent(match[1]) : null
 }
 
-function errorFromResponse(body: Record<string, unknown>, status: number, fallback: string) {
-  const errors = Array.isArray(body.errors) ? body.errors : []
-  const fieldErrors: Record<string, string> = {}
-  let firstMessage: string | null = null
-  for (const item of errors) {
-    if (!isRecord(item) || typeof item.message !== 'string') continue
-    firstMessage ??= item.message
-    if (typeof item.param === 'string') fieldErrors[item.param] = item.message
+function headlessBody(payload: unknown, status: number): HeadlessBody {
+  if (!isRecord(payload)) {
+    throw createHeadlessError(
+      'The authentication service returned an invalid response.',
+      { status },
+    )
   }
-  return new AuthError(firstMessage ?? fallback, status, fieldErrors, body.data)
+
+  const body: HeadlessBody = { status }
+  if (isRecord(payload.data) || Array.isArray(payload.data)) body.data = payload.data
+  if (isRecord(payload.meta)) body.meta = payload.meta
+  if (Array.isArray(payload.errors)) {
+    body.errors = payload.errors.filter(
+      (error): error is { code?: string; param?: string; message: string } =>
+        isRecord(error) && typeof error.message === 'string',
+    )
+  }
+  return body
+}
+
+export function createHeadlessError(message: string, body: HeadlessBody): HeadlessError {
+  const fieldErrors: Record<string, string> = {}
+  for (const error of body.errors ?? []) {
+    const field =
+      error.param || (error.code === 'invalid_password_reset' ? 'key' : 'non_field')
+    fieldErrors[field] = error.message
+  }
+
+  const err = new Error(message) as HeadlessError
+  err.name = 'HeadlessError'
+  err.status = body.status
+  err.fieldErrors = fieldErrors
+  err.is_authenticated =
+    typeof body.meta?.is_authenticated === 'boolean' ? body.meta.is_authenticated : null
+  err.responseData = body.data ?? null
+  return err
+}
+
+function firstErrorMessage(body: HeadlessBody, fallback: string): string {
+  return body.errors?.[0]?.message || fallback
+}
+
+function dataRecord(body: HeadlessBody): Record<string, unknown> | null {
+  return isRecord(body.data) ? body.data : null
+}
+
+async function readBody(response: Response): Promise<HeadlessBody> {
+  const text = await response.text()
+  if (!text) return { status: response.status }
+
+  let payload: unknown
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    throw createHeadlessError(
+      'The authentication service returned an invalid response.',
+      { status: response.status },
+    )
+  }
+  return headlessBody(payload, response.status)
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  const text = await response.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    throw createHeadlessError(
+      'The authentication service returned an invalid response.',
+      { status: response.status },
+    )
+  }
+}
+
+/**
+ * Prime the browser's CSRF cookie using allauth's documented config endpoint.
+ * The cookie itself is never persisted by this client.
+ */
+export async function bootstrapCsrf(): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(`${HEADLESS_BASE}/config`, { credentials: 'include' })
+  } catch {
+    throw createHeadlessError(
+      'Could not initialize authentication security. Check your connection and try again.',
+      { status: 0 },
+    )
+  }
+
+  if (!response.ok) {
+    throw createHeadlessError(
+      `Could not initialize authentication security (HTTP ${response.status}).`,
+      { status: response.status },
+    )
+  }
+  if (!getCookie('csrftoken')) {
+    throw createHeadlessError(
+      'The authentication service did not set a CSRF cookie. Check that cookies are enabled.',
+      { status: response.status },
+    )
+  }
 }
 
 async function csrfToken(): Promise<string> {
-  const response = await fetch('/api/auth/csrf/', { credentials: 'same-origin' })
-  const body = await responseBody(response)
-  if (!response.ok || typeof body.csrfToken !== 'string') {
-    throw new AuthError('Could not prepare a secure authentication request.', response.status)
+  const existing = getCookie('csrftoken')
+  if (existing) return existing
+
+  await bootstrapCsrf()
+  const token = getCookie('csrftoken')
+  if (!token) {
+    throw createHeadlessError(
+      'The authentication service did not set a CSRF cookie. Check that cookies are enabled.',
+      { status: 0 },
+    )
   }
-  return body.csrfToken
+  return token
 }
 
-async function headlessRequest(
-  path: string,
-  method = 'GET',
-  body?: unknown,
-  headers: Record<string, string> = {},
-  allowedStatuses: number[] = [],
-): Promise<HeadlessResponse> {
-  const requestHeaders = new Headers(headers)
-  const init: RequestInit = { method, credentials: 'include', headers: requestHeaders }
-
-  if (method !== 'GET' && method !== 'HEAD') {
-    requestHeaders.set('X-CSRFToken', await csrfToken())
+/** Make a headless request, adding CSRF protection for every unsafe method. */
+export async function headlessFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const method = (init.method ?? 'GET').toUpperCase()
+  const headers = new Headers(init.headers)
+  if (init.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
   }
-  if (body !== undefined) {
-    requestHeaders.set('Content-Type', 'application/json')
-    init.body = JSON.stringify(body)
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !headers.has('X-CSRFToken')) {
+    headers.set('X-CSRFToken', await csrfToken())
   }
 
-  const response = await fetch(`${HEADLESS_BASE}/${path}`, init)
-  const payload = await responseBody(response)
-  if (!isRecord(payload) || typeof payload.status !== 'number') {
-    throw new AuthError('The authentication service returned an invalid response.', response.status)
+  try {
+    return await fetch(`${HEADLESS_BASE}${path.startsWith('/') ? path : `/${path}`}`, {
+      ...init,
+      method,
+      credentials: 'include',
+      headers,
+    })
+  } catch {
+    throw createHeadlessError(
+      'Cannot reach the authentication service. Check your connection and try again.',
+      { status: 0 },
+    )
   }
-
-  const result = payload as unknown as HeadlessResponse
-  if (!response.ok && !allowedStatuses.includes(response.status)) {
-    throw errorFromResponse(payload, response.status, 'The authentication request failed.')
-  }
-  return result
 }
 
-export async function getAuthOptions(): Promise<AuthOptions> {
-  const response = await fetch('/api/auth/options/', { credentials: 'same-origin' })
-  const body = await responseBody(response)
-  if (
-    response.ok &&
-    typeof body.csrfToken === 'string' &&
-    typeof body.googleOAuthEnabled === 'boolean' &&
-    typeof body.githubOAuthEnabled === 'boolean'
-  ) {
-    return {
-      csrfToken: body.csrfToken as string,
-      googleOAuthEnabled: body.googleOAuthEnabled as boolean,
-      githubOAuthEnabled: body.githubOAuthEnabled as boolean,
-    }
-  }
-  throw new AuthError(
-    typeof body.detail === 'string' ? body.detail : 'Could not load sign-in options.',
-    response.status,
+async function requestBody(path: string, init: RequestInit = {}): Promise<HeadlessBody> {
+  const response = await headlessFetch(path, init)
+  return readBody(response)
+}
+
+function flowsFrom(body: HeadlessBody): HeadlessFlow[] {
+  const flows = dataRecord(body)?.flows
+  if (!Array.isArray(flows)) return []
+  return flows.filter(
+    (flow): flow is HeadlessFlow => isRecord(flow) && typeof flow.id === 'string',
   )
 }
 
-export async function getAuthStatus(): Promise<AuthStatus> {
-  const response = await fetch('/api/auth/session/', { credentials: 'same-origin' })
-  const body = await responseBody(response)
-  if (!response.ok) {
-    throw new AuthError(
-      typeof body.detail === 'string' ? body.detail : 'Could not verify the dashboard session.',
-      response.status,
-    )
-  }
-  if (body.authenticated === true && isRecord(body.user) && typeof body.user.username === 'string') {
-    return { authenticated: true, user: { username: body.user.username as string } }
-  }
-  if (body.authenticated === false) return { authenticated: false }
-  throw new AuthError('The backend returned an invalid session response.', response.status)
+function pendingFlow(body: HeadlessBody): HeadlessFlow | undefined {
+  return flowsFrom(body).find((flow) => flow.is_pending === true)
 }
 
-function getFlows(response: HeadlessResponse): Array<Record<string, unknown>> {
-  if (!isRecord(response.data) || !Array.isArray(response.data.flows)) return []
-  return response.data.flows.filter(isRecord)
+function isAnonymousSuccess(body: HeadlessBody): boolean {
+  const data = dataRecord(body)
+  return (
+    body.status === 401 &&
+    body.meta?.is_authenticated === false &&
+    body.errors === undefined &&
+    Array.isArray(data?.flows)
+  )
+}
+
+/** Existing API: 200 means authenticated; 401 means anonymous or pending. */
+export async function getSession(): Promise<HeadlessBody> {
+  return requestBody('/auth/session')
+}
+
+/** Classify the actual allauth session response without inventing user fields. */
+export async function getAuthenticationState(): Promise<AuthenticationState> {
+  const body = await getSession()
+  const flow = pendingFlow(body)
+
+  if (body.status !== 200 && body.status !== 401) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not verify the authentication session.'),
+      body,
+    )
+  }
+  if (body.meta?.is_authenticated === true) return { status: 'authenticated', body }
+  if (flow) return { status: 'pending', flow, body }
+  if (body.meta?.is_authenticated === false) return { status: 'anonymous', body }
+
+  throw createHeadlessError(
+    'The authentication service returned an invalid session response.',
+    body,
+  )
+}
+
+/** Fetch the authoritative dashboard profile after headless confirms a session. */
+export async function getCurrentUser(): Promise<CurrentUser> {
+  let response: Response
+  try {
+    response = await fetch('/api/auth/user/', { credentials: 'include' })
+  } catch {
+    throw createHeadlessError(
+      'Cannot reach the dashboard account service. Check your connection and try again.',
+      { status: 0 },
+    )
+  }
+
+  const payload = await readJson(response)
+  if (!response.ok) {
+    const body = isRecord(payload) ? payload : {}
+    const message =
+      typeof body.detail === 'string'
+        ? body.detail
+        : response.status === 401
+          ? 'Your dashboard session is no longer authenticated.'
+          : `Could not load the dashboard profile (HTTP ${response.status}).`
+    throw createHeadlessError(message, { status: response.status })
+  }
+  if (
+    !isRecord(payload) ||
+    typeof payload.id !== 'string' ||
+    typeof payload.email !== 'string' ||
+    typeof payload.username !== 'string' ||
+    typeof payload.first_name !== 'string' ||
+    typeof payload.last_name !== 'string' ||
+    typeof payload.date_joined !== 'string' ||
+    typeof payload.is_email_verified !== 'boolean' ||
+    !Array.isArray(payload.memberships)
+  ) {
+    throw createHeadlessError(
+      'The dashboard account service returned an invalid profile.',
+      { status: response.status },
+    )
+  }
+
+  const memberships: CurrentUser['memberships'] = []
+  for (const membership of payload.memberships) {
+    if (
+      !isRecord(membership) ||
+      typeof membership.organization !== 'string' ||
+      typeof membership.role !== 'string'
+    ) {
+      throw createHeadlessError(
+        'The dashboard account service returned an invalid profile.',
+        { status: response.status },
+      )
+    }
+    memberships.push({ organization: membership.organization, role: membership.role })
+  }
+
+  return {
+    id: payload.id,
+    email: payload.email,
+    username: payload.username,
+    first_name: payload.first_name,
+    last_name: payload.last_name,
+    date_joined: payload.date_joined,
+    is_email_verified: payload.is_email_verified,
+    memberships,
+  }
 }
 
 export async function signIn(email: string, password: string): Promise<LoginResult> {
-  const response = await headlessRequest(
-    'auth/login',
-    'POST',
-    { email, password },
-    {},
-    [401],
-  )
-  if (response.meta?.is_authenticated === true) return { kind: 'authenticated' }
+  const body = await requestBody('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
 
-  const flows = getFlows(response)
-  const pending = flows.find((flow) => flow.is_pending === true)
-  if (pending?.id === 'mfa_authenticate') {
+  if (body.meta?.is_authenticated === true) return { kind: 'authenticated' }
+  const flow = pendingFlow(body)
+  if (flow?.id === 'mfa_authenticate') {
     return {
       kind: 'mfa',
-      types: Array.isArray(pending.types)
-        ? pending.types.filter((type): type is string => typeof type === 'string')
+      types: Array.isArray(flow.types)
+        ? flow.types.filter((type): type is string => typeof type === 'string')
         : [],
     }
   }
-  if (pending?.id === 'verify_email') return { kind: 'verify-email' }
-  throw new AuthError('The account needs another verification step.', response.status)
+  if (flow?.id === 'verify_email') return { kind: 'verify-email' }
+
+  throw createHeadlessError(
+    firstErrorMessage(body, 'Sign-in failed. Check your email and password.'),
+    body,
+  )
 }
 
-export async function verifyMfa(code: string): Promise<void> {
-  const response = await headlessRequest('auth/2fa/authenticate', 'POST', { code }, {}, [401])
-  if (response.meta?.is_authenticated !== true) {
-    throw new AuthError('The verification code was not accepted.', response.status)
-  }
-}
-
-export async function reauthenticate(password: string): Promise<void> {
-  await headlessRequest('auth/reauthenticate', 'POST', { password }, {}, [401])
-}
-
+/** Sign up using only fields supported by main's allauth signup configuration. */
 export async function signUp(input: {
   email: string
   password: string
-  full_name: string
-  organization: string
-  accept_terms: boolean
-}): Promise<void> {
-  await headlessRequest('auth/signup', 'POST', input, {}, [401])
+}): Promise<LoginResult> {
+  const body = await requestBody('/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({ email: input.email, password: input.password }),
+  })
+
+  if (body.meta?.is_authenticated === true) return { kind: 'authenticated' }
+  const flow = pendingFlow(body)
+  if (flow?.id === 'verify_email') return { kind: 'verify-email' }
+  if (flow?.id === 'mfa_authenticate') {
+    return {
+      kind: 'mfa',
+      types: Array.isArray(flow.types)
+        ? flow.types.filter((type): type is string => typeof type === 'string')
+        : [],
+    }
+  }
+  throw createHeadlessError(firstErrorMessage(body, 'Could not create the account.'), body)
 }
 
 export async function verifyEmail(key: string): Promise<void> {
-  await headlessRequest('auth/email/verify', 'POST', { key })
+  const body = await requestBody('/auth/email/verify', {
+    method: 'POST',
+    body: JSON.stringify({ key }),
+  })
+  if (body.status >= 200 && body.status < 300) return
+  if (isAnonymousSuccess(body)) return
+  throw createHeadlessError(
+    firstErrorMessage(body, 'The email verification code is invalid or expired.'),
+    body,
+  )
 }
 
 export async function resendVerificationCode(): Promise<void> {
-  await headlessRequest('auth/email/verify/resend', 'POST')
+  const body = await requestBody('/auth/email/verify/resend', { method: 'POST' })
+  if (body.status < 200 || body.status >= 300) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not resend the email verification code.'),
+      body,
+    )
+  }
 }
 
 export async function changeVerificationEmail(email: string): Promise<void> {
-  await headlessRequest('account/email', 'POST', { email })
-}
-
-export async function setRememberSession(remember: boolean): Promise<void> {
-  const token = await csrfToken()
-  const response = await fetch('/api/auth/session/remember/', {
+  const body = await requestBody('/account/email', {
     method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
-    body: JSON.stringify({ remember }),
+    body: JSON.stringify({ email }),
   })
-  const body = await responseBody(response)
-  if (!response.ok) {
-    throw new AuthError(
-      typeof body.detail === 'string' ? body.detail : 'Could not update session duration.',
-      response.status,
+  if (body.status < 200 || body.status >= 300) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not change the verification email.'),
+      body,
     )
   }
+}
+
+/** Request a reset email; allauth keeps unknown and known addresses indistinguishable. */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const body = await requestBody('/auth/password/request', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+  if (body.status < 200 || body.status >= 300) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not send the reset email.'),
+      body,
+    )
+  }
+}
+
+/**
+ * Confirm a password reset. Main's tested allauth response is 401 with
+ * is_authenticated=false, no errors, and a flows array on successful reset.
+ */
+export async function confirmPasswordReset(key: string, password: string): Promise<void> {
+  const body = await requestBody('/auth/password/reset', {
+    method: 'POST',
+    body: JSON.stringify({ key, password }),
+  })
+  if (body.status >= 200 && body.status < 300) return
+  if (isAnonymousSuccess(body)) return
+  throw createHeadlessError(
+    firstErrorMessage(
+      body,
+      body.status === 429
+        ? 'Too many reset attempts. Please wait a moment and try again.'
+        : 'The password reset link is invalid or expired.',
+    ),
+    body,
+  )
+}
+
+/** Change the password of the currently authenticated session user. */
+export async function changePassword(current: string, next: string): Promise<void> {
+  const body = await requestBody('/account/password/change', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: current, new_password: next }),
+  })
+  if (body.status >= 200 && body.status < 300) return
+  throw createHeadlessError(
+    firstErrorMessage(
+      body,
+      body.status === 401
+        ? 'You must be logged in to change the password.'
+        : 'Could not change the password.',
+    ),
+    body,
+  )
 }
 
 export async function signOut(): Promise<void> {
-  const token = await csrfToken()
-  const response = await fetch('/api/auth/logout/', {
+  const body = await requestBody('/auth/session', { method: 'DELETE' })
+  if (body.status >= 200 && body.status < 300) return
+  if (isAnonymousSuccess(body)) return
+  throw createHeadlessError(firstErrorMessage(body, 'Sign-out failed.'), body)
+}
+
+export async function verifyMfa(code: string): Promise<void> {
+  const body = await requestBody('/auth/2fa/authenticate', {
     method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'X-CSRFToken': token },
+    body: JSON.stringify({ code }),
   })
-  if (!response.ok) {
-    const body = await responseBody(response)
-    throw new AuthError(
-      typeof body.detail === 'string' ? body.detail : 'Sign-out failed.',
-      response.status,
-    )
-  }
+  if (body.status >= 200 && body.status < 300 && body.meta?.is_authenticated === true) return
+  throw createHeadlessError(
+    firstErrorMessage(body, 'The verification code was not accepted.'),
+    body,
+  )
+}
+
+export async function reauthenticate(password: string): Promise<void> {
+  const body = await requestBody('/auth/reauthenticate', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  })
+  if (body.status >= 200 && body.status < 300) return
+  throw createHeadlessError(
+    firstErrorMessage(body, 'Could not verify the current password.'),
+    body,
+  )
 }
 
 export async function getAuthenticators(): Promise<unknown[]> {
-  const response = await headlessRequest('account/authenticators')
-  if (!Array.isArray(response.data)) {
-    throw new AuthError('The authentication service returned invalid authenticator data.', 502)
+  const body = await requestBody('/account/authenticators')
+  if (body.status < 200 || body.status >= 300) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not load authenticators.'),
+      body,
+    )
   }
-  return response.data
+  if (!Array.isArray(body.data)) {
+    throw createHeadlessError(
+      'The authentication service returned invalid authenticator data.',
+      body,
+    )
+  }
+  return body.data
 }
 
 export async function getTotpSetup(): Promise<{
@@ -410,47 +520,82 @@ export async function getTotpSetup(): Promise<{
   secret?: string
   totpUrl?: string
 }> {
-  const response = await headlessRequest(
-    'account/authenticators/totp',
-    'GET',
-    undefined,
-    {},
-    [404],
-  )
-  if (response.status === 404) {
-    if (typeof response.meta?.secret !== 'string' || typeof response.meta?.totp_url !== 'string') {
-      throw new AuthError('The authentication service returned invalid TOTP setup data.', 502)
-    }
-    return { active: false, secret: response.meta.secret as string, totpUrl: response.meta.totp_url as string }
+  const body = await requestBody('/account/authenticators/totp')
+  if (
+    body.status === 404 &&
+    typeof body.meta?.secret === 'string' &&
+    typeof body.meta.totp_url === 'string'
+  ) {
+    return { active: false, secret: body.meta.secret, totpUrl: body.meta.totp_url }
   }
-  return { active: true }
+  if (body.status >= 200 && body.status < 300) return { active: true }
+  throw createHeadlessError(
+    firstErrorMessage(body, 'Could not load TOTP settings.'),
+    body,
+  )
 }
 
 export async function activateTotp(code: string): Promise<void> {
-  await headlessRequest('account/authenticators/totp', 'POST', { code })
+  const body = await requestBody('/account/authenticators/totp', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+  if (body.status < 200 || body.status >= 300) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not enable TOTP authentication.'),
+      body,
+    )
+  }
 }
 
 export async function removeTotp(): Promise<void> {
-  await headlessRequest('account/authenticators/totp', 'DELETE')
+  const body = await requestBody('/account/authenticators/totp', { method: 'DELETE' })
+  if (body.status < 200 || body.status >= 300) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not remove TOTP authentication.'),
+      body,
+    )
+  }
 }
 
 export async function generateRecoveryCodes(): Promise<string[]> {
-  const response = await headlessRequest('account/authenticators/recovery-codes', 'POST', {})
-  if (!isRecord(response.data) || !Array.isArray(response.data.unused_codes)) {
-    throw new AuthError('The authentication service did not return recovery codes.', 502)
+  const body = await requestBody('/account/authenticators/recovery-codes', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+  if (body.status < 200 || body.status >= 300) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not generate recovery codes.'),
+      body,
+    )
   }
-  return response.data.unused_codes.filter((code): code is string => typeof code === 'string')
+  const data = dataRecord(body)
+  const codes = data?.unused_codes
+  if (!Array.isArray(codes)) {
+    throw createHeadlessError('The authentication service did not return recovery codes.', body)
+  }
+  return codes.filter((code): code is string => typeof code === 'string')
 }
 
 export async function getRecoveryCodes(): Promise<string[] | null> {
-  const response = await headlessRequest(
-    'account/authenticators/recovery-codes',
-    'GET',
-    undefined,
-    {},
-    [404],
+  const body = await requestBody('/account/authenticators/recovery-codes')
+  if (body.status === 404) return null
+  if (body.status < 200 || body.status >= 300) {
+    throw createHeadlessError(
+      firstErrorMessage(body, 'Could not load recovery codes.'),
+      body,
+    )
+  }
+  const data = dataRecord(body)
+  const codes = data?.unused_codes
+  if (Array.isArray(codes)) {
+    return codes.filter((code): code is string => typeof code === 'string')
+  }
+  if (typeof data?.unused_code_count === 'number') {
+    return []
+  }
+  throw createHeadlessError(
+    'The authentication service returned invalid recovery-code data.',
+    body,
   )
-  if (response.status === 404) return null
-  if (!isRecord(response.data) || !Array.isArray(response.data.unused_codes)) return []
-  return response.data.unused_codes.filter((code): code is string => typeof code === 'string')
 }

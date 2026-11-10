@@ -43,6 +43,8 @@ class PayPalConfig:
     webhook_id: str
     checkout_enabled: bool
     payouts_enabled: bool
+    mode: str = "sandbox"
+    allow_live: bool = False
 
 
 def _parse_bool(raw_value, label):
@@ -108,6 +110,8 @@ def get_paypal_config(settings):
 
     return PayPalConfig(
         env=env,
+        mode="sandbox",
+        allow_live=False,
         client_id=client_id,
         client_secret=client_secret,
         webhook_id=webhook_id,

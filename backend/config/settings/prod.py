@@ -58,10 +58,10 @@ if prod_email_host:
 else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
-if PAYMENT_EXECUTOR != "paypal" and PAYMENTS_EXECUTION_ENABLED:  # noqa: F405
+if not PAYPAL_CHECKOUT_ENABLED and not PAYPAL_PAYOUTS_ENABLED:  # noqa: F405
     raise ImproperlyConfigured(
-        "Production payment execution requires PAYMENT_EXECUTOR=paypal; "
-        "set PAYMENTS_EXECUTION_ENABLED=false to leave execution off."
+        "Production payment execution requires PAYPAL_CHECKOUT_ENABLED or "
+        "PAYPAL_PAYOUTS_ENABLED; set both to false to leave execution off."
     )
 
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405

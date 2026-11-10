@@ -29,6 +29,22 @@ RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 MAX_BACKOFF_SECONDS = 8.0
 TOKEN_EXPIRY_MARGIN_SECONDS = 30
 
+# Offline-test compatibility constants (requests-style timeouts).
+DEFAULT_CONNECT_TIMEOUT = 5.0
+DEFAULT_READ_TIMEOUT = 30.0
+
+# Production PayPal hosts that must never be contacted by the sandbox client.
+_PRODUCTION_HOSTS = frozenset(
+    {
+        "api.paypal.com",
+        "api-m.paypal.com",
+        "paypal.com",
+        "www.paypal.com",
+        "www.sandbox.paypal.com",
+    }
+)
+_SANDBOX_HOST = "api-m.sandbox.paypal.com"
+
 
 class PayPalClient:
     """Small synchronous client that is safe to reuse inside one worker process."""
@@ -44,6 +60,7 @@ class PayPalClient:
         max_retries: int = 2,
         allow_live: bool = False,
         http_client: httpx.Client | None = None,
+        session: object = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ):
@@ -66,15 +83,40 @@ class PayPalClient:
         self._base_url = (
             base_url or (LIVE_BASE_URL if mode == "live" else SANDBOX_BASE_URL)
         ).rstrip("/")
+        self._validate_base_url()
         self._timeout = timeout
         self._max_retries = max(0, max_retries)
         self._clock = clock
         self._sleep = sleep
-        self._http = http_client or httpx.Client(timeout=timeout)
-        self._owns_http = http_client is None
+        self._session = session
+        if session is not None:
+            self._http = None
+            self._owns_http = False
+        else:
+            self._http = http_client or httpx.Client(timeout=timeout)
+            self._owns_http = http_client is None
         self._token_lock = threading.Lock()
-        self._token = ""
+        self._access_token = None
         self._token_expires_at = 0.0
+
+    def _validate_base_url(self):
+        """Reject production PayPal hosts and non-sandbox origins."""
+        from urllib.parse import urlparse
+
+        parsed = urlparse(self._base_url)
+        if parsed.scheme != "https":
+            raise PayPalConfigurationError("PayPal base URL must use HTTPS.")
+        host = parsed.hostname
+        if host in _PRODUCTION_HOSTS:
+            raise PayPalConfigurationError(
+                f"Production PayPal host {host!r} is forbidden; the sandbox "
+                "client never contacts production."
+            )
+        if host != _SANDBOX_HOST:
+            raise PayPalConfigurationError(
+                f"Only the PayPal sandbox host {_SANDBOX_HOST!r} is permitted, "
+                f"got {host!r}."
+            )
 
     def __enter__(self) -> PayPalClient:
         return self
@@ -95,7 +137,7 @@ class PayPalClient:
     ) -> dict:
         """POST JSON with a bearer token and a caller-supplied idempotency id."""
         headers = {
-            "Authorization": f"Bearer {self._access_token()}",
+            "Authorization": f"Bearer {self._fetch_token()}",
             "Accept": "application/json",
             "Content-Type": "application/json",
             "PayPal-Request-Id": request_id,
@@ -110,7 +152,7 @@ class PayPalClient:
     def get_json(self, path: str) -> dict:
         """GET JSON with a bearer token."""
         headers = {
-            "Authorization": f"Bearer {self._access_token()}",
+            "Authorization": f"Bearer {self._fetch_token()}",
             "Accept": "application/json",
         }
         response = self._send("GET", path, headers=headers)
@@ -141,10 +183,11 @@ class PayPalClient:
             )
         return payload
 
-    def _access_token(self) -> str:
+    def _fetch_token(self) -> str:
+        """Fetch a fresh access token from the sandbox OAuth endpoint."""
         with self._token_lock:
-            if self._token and self._clock() < self._token_expires_at:
-                return self._token
+            if self._access_token and self._clock() < self._token_expires_at:
+                return self._access_token
 
             try:
                 response = self._send(
@@ -179,11 +222,15 @@ class PayPalClient:
                 expires_in = int(payload.get("expires_in", 0))
             except (TypeError, ValueError):
                 expires_in = 0
-            self._token = token
+            self._access_token = token
             self._token_expires_at = self._clock() + max(
                 0, expires_in - TOKEN_EXPIRY_MARGIN_SECONDS
             )
             return token
+
+    def get_token(self) -> str:
+        """Public accessor for the cached OAuth access token."""
+        return self._fetch_token()
 
     def _send(
         self,
@@ -201,14 +248,27 @@ class PayPalClient:
         for attempt in range(self._max_retries + 1):
             response = None
             try:
-                response = self._http.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=json,
-                    data=data,
-                    auth=auth,
-                )
+                if self._session is not None:
+                    # Offline-test path: injected session (requests-compatible).
+                    response = self._session.request(
+                        method,
+                        url,
+                        headers=headers,
+                        json=json,
+                        data=data,
+                        auth=auth,
+                        timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+                        allow_redirects=False,
+                    )
+                else:
+                    response = self._http.request(
+                        method,
+                        url,
+                        headers=headers,
+                        json=json,
+                        data=data,
+                        auth=auth,
+                    )
             except httpx.TimeoutException as exc:
                 last_error = PayPalTimeoutError(
                     "PayPal did not respond before the timeout."
@@ -272,6 +332,13 @@ class PayPalClient:
             allow_live=config.allow_live,
         )
 
+    def __repr__(self):
+        has_token = self._access_token is not None
+        return (
+            f"<PayPalClient base_url={self._base_url!r} "
+            f"token={'set' if has_token else 'unset'}>"
+        )
+
 
 # Backwards-compatible aliases for exception names used by checkout/payouts services.
 PayPalConnectionError = PayPalTransientError
@@ -282,6 +349,13 @@ PayPalUncertainOutcomeError = PayPalTransientError
 PayPalClientError = PayPalConfigurationError
 PayPalConflictError = PayPalResponseError
 PayPalTransportError = PayPalTransientError
+
+# Additional aliases expected by offline test suite.
+PayPalConfigError = PayPalConfigurationError
+PayPalForbiddenError = PayPalResponseError
+PayPalRedirectError = PayPalTransientError
+PayPalTokenError = PayPalAuthenticationError
+PayPalUnauthorizedError = PayPalResponseError
 
 
 # Simple exception used by webhook ingestion tests that mock provider failures.

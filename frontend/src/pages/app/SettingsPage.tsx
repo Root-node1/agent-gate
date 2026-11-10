@@ -5,6 +5,7 @@ import PageHeader from '../../ui/PageHeader'
 import { useSimulatedLoad } from '../../ui/hooks'
 import ApiKeysSection from './settings/ApiKeysSection'
 import AppearanceSection from './settings/AppearanceSection'
+import ConnectionSection from './settings/ConnectionSection'
 import DevelopersSection from './settings/DevelopersSection'
 import PaypalSection from './settings/PaypalSection'
 import TeamSection from './settings/TeamSection'
@@ -84,6 +85,7 @@ export default function SettingsPage() {
         tabIndex={0}
       >
         {active === 'workspace' && <WorkspaceSection saved={workspace} onSave={setWorkspace} />}
+        {active === 'connection' && <ConnectionSection />}
         {active === 'paypal' && <PaypalSection />}
         {active === 'keys' && <ApiKeysSection state={state} loading={loading} />}
         {active === 'team' && <TeamSection state={state} loading={loading} />}

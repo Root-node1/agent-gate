@@ -14,6 +14,9 @@ const router = createBrowserRouter(
   createRoutesFromElements(
     <Route hydrateFallbackElement={<p className="visually-hidden">Loading…</p>}>
       <Route index lazy={page(() => import('./pages/LandingPage'))} />
+      <Route path="downloads" lazy={page(() => import('./pages/DownloadsPage'))} />
+      <Route path="system-requirements" lazy={page(() => import('./pages/SystemRequirementsPage'))} />
+      <Route path="install" lazy={page(() => import('./pages/InstallationPage'))} />
       <Route element={<ProtectedDashboard />}>
         <Route path="app" element={<AppLayout />}>
           <Route index lazy={page(() => import('./pages/app/OverviewPage'))} />

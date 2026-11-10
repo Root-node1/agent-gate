@@ -34,6 +34,7 @@ export default function LandingHeader() {
         >
           <a href="#how-it-works" onClick={close}>How it works</a>
           <a href="#features" onClick={close}>Features</a>
+          <Link to={LINKS.downloads} onClick={close}>Downloads</Link>
           <a href={LINKS.readme} onClick={close}>Docs</a>
           <a href={LINKS.github} className="lp-nav-github" onClick={close}>
             <GitHubMark />

@@ -11,33 +11,33 @@ export function explainDecision(request: SpendRequest, agent: string): string {
   const labels = request.reasons.map((r) => (RULE_INFO[r.code]?.label ?? r.code).toLowerCase())
   switch (request.decision) {
     case 'allow':
-      return `The request passed every rule in ${agent}'s policy, so AgentGate sent it to PayPal without asking anyone.`
+      return `The request passed every rule in ${agent}'s demo policy. This is a local simulation; no payment request was sent.`
     case 'deny': {
       const hard = request.reasons.filter((r) => RULE_INFO[r.code]?.outcome !== 'needs_approval')
       const hardLabels = hard.map((r) => (RULE_INFO[r.code]?.label ?? r.code).toLowerCase())
-      return `AgentGate blocked this request because it broke ${hard.length === 1 ? 'a hard rule' : `${hard.length} hard rules`}: ${joinWords(hardLabels)}. Nothing was sent to PayPal.`
+      return `The demo policy blocked this request because it broke ${hard.length === 1 ? 'a hard rule' : `${hard.length} hard rules`}: ${joinWords(hardLabels)}. No PayPal call was made.`
     }
     case 'needs_approval':
-      return `No hard rule was broken, but AgentGate held the payment for a person to check because: ${joinWords(labels)}.`
+      return `The demo held this request for a person to check because: ${joinWords(labels)}. No PayPal call was made.`
     case 'pending':
       return 'AgentGate has not decided yet.'
   }
 }
 
-/** What happened (or will happen) at PayPal, in plain English. */
+/** Explain the simulated payment result without implying a PayPal API call. */
 export function explainPayment(request: SpendRequest, approval?: Approval): string {
   switch (request.payment_status) {
     case 'completed':
-      return 'PayPal confirmed the payment.'
+      return 'Demo only: a successful PayPal response is simulated; no payment was made.'
     case 'processing':
-      return 'Sent to PayPal. Waiting for PayPal to confirm.'
+      return 'Demo only: simulating a PayPal response; no request was sent to PayPal.'
     case 'failed':
-      return 'AgentGate allowed it, but PayPal rejected the payment, so no money moved.'
+      return 'Demo only: a PayPal rejection is simulated; no payment was attempted.'
     case 'awaiting_approval':
-      return 'Nothing is sent to PayPal until a person approves it.'
+      return 'The demo is holding the request for approval. It has not called PayPal.'
     case 'not_sent':
-      if (approval?.outcome === 'denied') return 'A person denied it, so nothing was sent to PayPal.'
-      if (approval?.outcome === 'expired') return 'Nobody decided in time, so nothing was sent to PayPal.'
-      return 'Blocked by policy, so nothing was sent to PayPal.'
+      if (approval?.outcome === 'denied') return 'The demo recorded a denial; no PayPal call was made.'
+      if (approval?.outcome === 'expired') return 'The demo request expired without a decision; no PayPal call was made.'
+      return 'The demo policy blocked the request; no PayPal call was made.'
   }
 }

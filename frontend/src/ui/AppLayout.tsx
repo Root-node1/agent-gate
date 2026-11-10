@@ -151,7 +151,7 @@ export default function AppLayout() {
           </button>
           <div className="demo-pill">
             <span className="demo-dot" aria-hidden="true" />
-            Demo workspace <span className="demo-pill-detail">· sample data, no real money</span>
+            Demo workspace <span className="demo-pill-detail">· sample data; simulator is in memory</span>
           </div>
           <DisplayButton />
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmReset(true)}>

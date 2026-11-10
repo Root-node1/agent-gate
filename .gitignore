@@ -12,6 +12,19 @@ backend/docs/
 *.pem
 *.key
 
+# Local agent / IDE scratch
+.continue/
+
+# Desktop build outputs (never commit installers)
+frontend/src-tauri/target/
+frontend/windows-artifacts/
+*.msi
+*-setup.exe
+*.AppImage
+*.deb
+*.rpm
+*.dmg
+
 # Production environment files (secrets)
 .env.production
 .env.production.*

@@ -34,6 +34,7 @@ export default function LandingHeader() {
         >
           <a href="#how-it-works" onClick={close}>How it works</a>
           <a href="#features" onClick={close}>Features</a>
+          <Link to={LINKS.downloads} onClick={close}>Downloads</Link>
           <a href={LINKS.readme} onClick={close}>Docs</a>
           <a href={LINKS.github} className="lp-nav-github" onClick={close}>
             <GitHubMark />
@@ -43,6 +44,9 @@ export default function LandingHeader() {
 
         <div className="lp-header-actions">
           <DisplayButton className="icon-button lp-display-btn" />
+          <Link to="/login" className="lp-header-signin">
+            Sign in
+          </Link>
           <Link to={LINKS.demo} className="btn btn-primary lp-header-cta">
             Explore demo
             <ArrowRight size={16} aria-hidden="true" />

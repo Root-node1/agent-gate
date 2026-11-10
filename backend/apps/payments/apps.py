@@ -6,4 +6,4 @@ class PaymentsConfig(AppConfig):
     name = "apps.payments"
 
     def ready(self):
-        from . import checks  # noqa: F401
+        from . import checks  # noqa: F401  registers system checks

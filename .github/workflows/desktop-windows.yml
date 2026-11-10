@@ -1,0 +1,117 @@
+# Build AgentGate Windows installers (MSI + NSIS EXE) on a native Windows runner.
+# Artifacts are uploaded for download from the Actions run — this workflow does
+# NOT publish a GitHub Release.
+#
+# Installers are unsigned. Windows SmartScreen may warn on first launch.
+name: Desktop Windows build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/v0.1.0-ux-demo
+    paths:
+      - "frontend/src-tauri/**"
+      - "frontend/src/**"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "frontend/vite.config.*"
+      - "frontend/tsconfig*.json"
+      - "frontend/index.html"
+      - ".github/workflows/desktop-windows.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Build MSI + NSIS
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend lint
+        run: npm run lint
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Tauri Rust tests
+        working-directory: frontend/src-tauri
+        run: cargo test
+
+      - name: Build Windows installers (MSI + NSIS)
+        run: npm run tauri -- build --bundles msi,nsis
+
+      - name: Collect artifacts and checksums
+        shell: pwsh
+        run: |
+          $bundle = "src-tauri/target/release/bundle"
+          $out = "windows-artifacts"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $msi = Get-ChildItem -Path "$bundle/msi" -Filter "*.msi" -ErrorAction SilentlyContinue
+          $nsis = Get-ChildItem -Path "$bundle/nsis" -Filter "*-setup.exe" -ErrorAction SilentlyContinue
+
+          if (-not $msi -or $msi.Count -lt 1) { throw "No MSI installer found under $bundle/msi" }
+          if (-not $nsis -or $nsis.Count -lt 1) { throw "No NSIS setup.exe found under $bundle/nsis" }
+
+          Copy-Item $msi.FullName $out/
+          Copy-Item $nsis.FullName $out/
+
+          $lines = @()
+          Get-ChildItem $out -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            $size = $_.Length
+            $lines += ("{0}  {1}  {2} bytes" -f $hash, $_.Name, $size)
+            Write-Host ("ARTIFACT {0} size={1} sha256={2}" -f $_.Name, $size, $hash)
+          }
+          $lines | Set-Content -Path "$out/SHA256SUMS.txt" -Encoding utf8
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentgate-windows-0.1.0
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            frontend/windows-artifacts/*.msi
+            frontend/windows-artifacts/*-setup.exe
+            frontend/windows-artifacts/SHA256SUMS.txt
+
+      - name: Summarize artifacts
+        shell: pwsh
+        run: |
+          Write-Host "=== Windows installer artifacts ==="
+          Get-Content windows-artifacts/SHA256SUMS.txt
+          Write-Host "Signature status: UNSIGNED (Authenticode not configured)"
+          Write-Host "Distribution: workflow artifact only — not a public GitHub Release"

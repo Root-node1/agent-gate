@@ -569,40 +569,58 @@ class ExecutionTriggerTests(TestCase):
 
 
 class PayPalChecksTests(SimpleTestCase):
-    def test_live_mode_without_allow_live_is_an_error(self):
-        with override_settings(PAYPAL_MODE="live", PAYPAL_ALLOW_LIVE=False):
+    def test_production_env_rejected_is_an_error(self):
+        with override_settings(PAYPAL_ENV="production"):
             errors = check_paypal_configuration(None)
-        self.assertIn("payments.E003", [error.id for error in errors])
+        self.assertIn("payments.E001", [error.id for error in errors])
 
-    def test_paypal_executor_requires_credentials(self):
+    def test_checkout_enabled_requires_credentials(self):
         with override_settings(
-            PAYMENT_EXECUTOR="paypal",
+            PAYPAL_ENV="sandbox",
             PAYPAL_CLIENT_ID="",
             PAYPAL_CLIENT_SECRET="",
+            PAYPAL_WEBHOOK_ID="webhook-id",
+            PAYPAL_CHECKOUT_ENABLED="true",
+            PAYPAL_PAYOUTS_ENABLED="false",
         ):
             errors = check_paypal_configuration(None)
-        self.assertIn("payments.E004", [error.id for error in errors])
+        self.assertIn("payments.E001", [error.id for error in errors])
 
     def test_valid_sandbox_configuration_passes(self):
         with override_settings(
-            PAYMENT_EXECUTOR="paypal",
+            PAYPAL_ENV="sandbox",
             PAYPAL_CLIENT_ID="id",
             PAYPAL_CLIENT_SECRET="secret",
             PAYPAL_WEBHOOK_ID="webhook-id",
-            PAYPAL_MODE="sandbox",
+            PAYPAL_CHECKOUT_ENABLED="true",
+            PAYPAL_PAYOUTS_ENABLED="true",
         ):
             errors = check_paypal_configuration(None)
         self.assertEqual(errors, [])
 
-    def test_paypal_executor_requires_a_webhook_id(self):
+    def test_checkout_enabled_requires_webhook_id(self):
         with override_settings(
-            PAYMENT_EXECUTOR="paypal",
+            PAYPAL_ENV="sandbox",
             PAYPAL_CLIENT_ID="id",
             PAYPAL_CLIENT_SECRET="secret",
             PAYPAL_WEBHOOK_ID="",
+            PAYPAL_CHECKOUT_ENABLED="true",
+            PAYPAL_PAYOUTS_ENABLED="false",
         ):
             errors = check_paypal_configuration(None)
-        self.assertIn("payments.E005", [error.id for error in errors])
+        self.assertIn("payments.E001", [error.id for error in errors])
+
+    def test_invalid_boolean_flag_is_an_error(self):
+        with override_settings(
+            PAYPAL_ENV="sandbox",
+            PAYPAL_CLIENT_ID="id",
+            PAYPAL_CLIENT_SECRET="secret",
+            PAYPAL_WEBHOOK_ID="webhook-id",
+            PAYPAL_CHECKOUT_ENABLED="maybe",
+            PAYPAL_PAYOUTS_ENABLED="false",
+        ):
+            errors = check_paypal_configuration(None)
+        self.assertIn("payments.E001", [error.id for error in errors])
 
 
 class PayloadTests(SimpleTestCase):

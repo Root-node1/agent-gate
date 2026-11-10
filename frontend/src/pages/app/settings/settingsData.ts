@@ -1,7 +1,9 @@
 export const SETTINGS_TABS = [
   { id: 'workspace', label: 'Workspace' },
+  { id: 'connection', label: 'Connection' },
   { id: 'paypal', label: 'PayPal' },
   { id: 'keys', label: 'API keys' },
+  { id: 'security', label: 'Security' },
   { id: 'team', label: 'Team and roles' },
   { id: 'developers', label: 'Developers' },
   { id: 'password', label: 'Password' },

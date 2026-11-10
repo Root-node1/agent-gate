@@ -38,11 +38,11 @@ export function describeEvent(s: DemoState, e: AuditEvent): string {
     case 'approval.expired':
       return 'Nobody decided in time, so the request expired and nothing was paid.'
     case 'payment.processing':
-      return `Sent ${money} to PayPal.`
+      return `Demo simulation: would send ${money} to PayPal; no request was made.`
     case 'payment.completed':
-      return `PayPal confirmed the payment (${p.paypal_reference}).`
+      return `Demo simulation: PayPal success (${p.paypal_reference}); no payment was made.`
     case 'payment.failed':
-      return `PayPal rejected the payment: ${p.error}`
+      return `Demo simulation: PayPal rejection (${p.error}); no request was made.`
     case 'agent.created':
       return `${e.actor} registered ${agent}.`
     case 'agent.suspended':

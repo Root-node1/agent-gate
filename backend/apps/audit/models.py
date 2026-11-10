@@ -25,6 +25,7 @@ class AuditEvent(models.Model):
         APPROVAL_DENIED = "approval.denied", "Approval denied"
         APPROVAL_EXPIRED = "approval.expired", "Approval expired"
         PAYMENT_EXECUTING = "payment.executing", "Payment executing"
+        PAYMENT_RESERVED = "payment.reserved", "Payment reserved"
         PAYMENT_SUCCEEDED = "payment.succeeded", "Payment succeeded"
         PAYMENT_FAILED = "payment.failed", "Payment failed"
         PAYMENT_REVERSED = "payment.reversed", "Payment reversed"

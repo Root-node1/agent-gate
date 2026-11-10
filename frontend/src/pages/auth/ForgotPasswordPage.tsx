@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import Logo from '../../components/Logo'
-import { bootstrapCsrf, requestPasswordReset } from '../../api/auth'
+import { requestPasswordReset } from '../../api/auth'
 import AuthField from './AuthField'
 import './AuthPages.css'
 
@@ -10,10 +10,6 @@ export default function ForgotPasswordPage() {
   const [submitted, setSubmitted] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
-
-  useEffect(() => {
-    void bootstrapCsrf()
-  }, [])
 
   function validate(): string | null {
     if (!email) return 'Enter your email address.'

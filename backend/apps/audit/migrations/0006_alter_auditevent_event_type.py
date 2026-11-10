@@ -22,6 +22,7 @@ class Migration(migrations.Migration):
                     ("approval.denied", "Approval denied"),
                     ("approval.expired", "Approval expired"),
                     ("payment.executing", "Payment executing"),
+                    ("payment.reserved", "Payment reserved"),
                     ("payment.succeeded", "Payment succeeded"),
                     ("payment.failed", "Payment failed"),
                     ("payment.reversed", "Payment reversed"),

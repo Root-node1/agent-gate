@@ -8,21 +8,56 @@ from apps.accounts.models import OrgMembership
 from .models import Agent
 
 
-class AgentKeySummarySerializer(serializers.Serializer):
+class CurrentKeySerializer(serializers.Serializer):
     """Schema shape for the current API key summary."""
+    prefix = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    last_used_at = serializers.DateTimeField(allow_null=True)
+
+
+class AgentKeySummarySerializer(serializers.Serializer):
+    """Schema shape for the current API key summary (alias)."""
 
     prefix = serializers.CharField()
     created_at = serializers.DateTimeField()
     last_used_at = serializers.DateTimeField(allow_null=True)
 
 
+class AgentPolicySerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    version = serializers.IntegerField()
+    name = serializers.CharField()
+    currency = serializers.CharField()
+
+
 class AgentPolicySummarySerializer(serializers.Serializer):
-    """Schema shape for the five most recent agent policies."""
+    """Schema shape for the five most recent agent policies (alias)."""
 
     id = serializers.UUIDField()
     version = serializers.IntegerField()
     name = serializers.CharField()
     currency = serializers.CharField()
+
+
+class RevokedKeySerializer(serializers.Serializer):
+    prefix = serializers.CharField()
+    revoked_at = serializers.DateTimeField()
+
+
+class AgentRotateKeyResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    status = serializers.ChoiceField(choices=Agent.Status.choices)
+    current_key = CurrentKeySerializer(allow_null=True)
+    api_key = serializers.CharField(help_text="New raw API key. Returned only once.")
+
+
+class AgentRevokeKeyResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    status = serializers.ChoiceField(choices=Agent.Status.choices)
+    current_key = serializers.CharField(allow_null=True)
+    revoked_key = RevokedKeySerializer()
 
 
 class AgentSerializer(serializers.ModelSerializer):
@@ -55,7 +90,20 @@ class AgentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    @extend_schema_field(AgentKeySummarySerializer(allow_null=True))
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if self.context.get("list_view"):
+            return {
+                "id": data["id"],
+                "name": data["name"],
+                "status": data["status"],
+                "created_at": data["created_at"],
+                "updated_at": data["updated_at"],
+                "current_key_prefix": data["current_key_prefix"],
+            }
+        return data
+
+    @extend_schema_field(CurrentKeySerializer(allow_null=True))
     def get_current_key(self, obj):
         key = obj.current_key
         if key is None:
@@ -71,7 +119,7 @@ class AgentSerializer(serializers.ModelSerializer):
         key = obj.current_key
         return key.prefix if key else None
 
-    @extend_schema_field(AgentPolicySummarySerializer(many=True))
+    @extend_schema_field(AgentPolicySerializer(many=True))
     def get_policies(self, obj):
         return [
             {

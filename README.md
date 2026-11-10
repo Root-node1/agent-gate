@@ -17,11 +17,16 @@ run.sh Starts both servers
 
 ## Quick start
 
-Requirements: Python 3.13+, Node 22+.
+Requirements: Python 3.13+, Node 22+, PostgreSQL 17.
 
 ```bash
 git clone git@github.com:Root-node1/agent-gate.git
 cd agent-gate
+```
+
+Configure PostgreSQL 17 as described in the [local demo setup](docs/demo/LOCAL_SETUP.md), then start both servers:
+
+```bash
 ./run.sh
 ```
 
@@ -45,7 +50,7 @@ ruff check . && lint-imports && python manage.py makemigrations --check --dry-ru
 cd frontend && npm run lint && npm run build
 ```
 
-`python manage.py test` uses SQLite by default. To run the PostgreSQL-only concurrency and trigger tests, set `TEST_DATABASE_URL` to a throwaway PostgreSQL 17 database. The same checks run in GitHub Actions on every push and pull request. Ruff settings live in `backend/ruff.toml`.
+Local development migrations require PostgreSQL 17 because Procrastinate creates PostgreSQL-only schema. `python manage.py test` uses SQLite by default; set `TEST_DATABASE_URL` to a throwaway PostgreSQL 17 database to run PostgreSQL-specific tests. The same checks run in GitHub Actions on every push and pull request. Ruff settings live in `backend/ruff.toml`.
 
 ## How PayPal is used
 
@@ -84,6 +89,7 @@ Design, API plan, workflow, and status live in [Doc.md](Doc.md).
 
 ### Markdown documentation
 
+- [UX demo handoff](docs/demo/README.md) — local setup, PayPal AI Toolkit, demo walkthrough, troubleshooting, and readiness.
 - [Deployment guide](docs/deployment/CONTABO_DEPLOYMENT.md) — Contabo VPS deployment, Docker Compose, Caddy, secrets, migrations, health checks.
 - [Database backup and recovery](docs/deployment/DATABASE_BACKUP_AND_RECOVERY.md) — backup strategy, restore procedure, RPO/RTO, disaster recovery.
 - [Desktop distribution plan](docs/desktop/DISTRIBUTION_PLAN.md) — Tauri desktop packaging, build outputs, system requirements.
@@ -202,10 +208,14 @@ Run `python manage.py expire_approvals` from cron every minute to expire overdue
 
 ## Database
 
-Local development uses SQLite with no setup. To use PostgreSQL instead, set `DATABASE_URL` in `backend/.env`, for example `postgres://user:pass@localhost:5432/agentgate`. CI and production use PostgreSQL.
+Local development migrations require PostgreSQL 17. Leaving `DATABASE_URL` unset selects SQLite, which is suitable for the test settings but not a fresh development migration. Follow [the local demo setup](docs/demo/LOCAL_SETUP.md) for a PostgreSQL 17 database. The production `compose.yaml` does not include a database service.
 
-CI runs the backend tests against PostgreSQL 17. To reproduce that locally, start a Postgres container and set `TEST_DATABASE_URL` before running the tests:
+CI runs backend tests against PostgreSQL 17. To reproduce them locally without using the default PostgreSQL port:
 
-    docker run -d --name agentgate-pg -e POSTGRES_USER=agentgate -e POSTGRES_PASSWORD=agentgate -e POSTGRES_DB=agentgate -p 5432:5432 postgres:17
+    docker run --rm -d --name agentgate-pg17-test -e POSTGRES_USER=agentgate -e POSTGRES_PASSWORD=agentgate-local-only -e POSTGRES_DB=agentgate -p 127.0.0.1:55432:5432 postgres:17
+    for attempt in $(seq 1 30); do docker exec agentgate-pg17-test pg_isready -U agentgate -d agentgate >/dev/null 2>&1 && break; sleep 2; done
     cd backend && source venv/bin/activate
-    TEST_DATABASE_URL=postgres://agentgate:agentgate@localhost:5432/agentgate python manage.py test
+    TEST_DATABASE_URL=postgresql://agentgate:agentgate-local-only@127.0.0.1:55432/agentgate python manage.py test
+    docker stop agentgate-pg17-test
+
+The test database is disposable and removed when the container is stopped. The local-only password above is an example, not a credential to reuse.

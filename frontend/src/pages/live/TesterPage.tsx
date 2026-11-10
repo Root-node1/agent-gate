@@ -19,7 +19,7 @@ export default function TesterPage() {
     <>
       <PageHeader
         title="Live API tester"
-        description="Send a real request to the AgentGate backend as an agent and see what it decides. Needs the backend running and an agent key."
+        description="Send a request to the AgentGate backend as an agent and see its decision. Needs the backend running and an agent key. Payment execution is separately configured and defaults to fake; confirm server settings before submitting."
         actions={
           <Link to="/app/live/requests" className="btn btn-secondary">
             Look up a request

@@ -14,6 +14,8 @@ use std::time::Duration;
 const DEFAULT_BACKEND: &str = "http://127.0.0.1:8000";
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 const PROXY_PATHS: [&str; 2] = ["/api", "/v1"];
+const CONFIG_BACKEND_PATH: &str = "/__agentgate/backend";
+const CONFIG_PROBE_PATH: &str = "/__agentgate/backend/probe";
 const ALLOWED_METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const HOP_BY_HOP: [&str; 12] = [
     "connection",
@@ -29,6 +31,98 @@ const HOP_BY_HOP: [&str; 12] = [
     "content-encoding",
     "expect",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendUrlSource {
+    Env,
+    File,
+    Default,
+}
+
+impl BackendUrlSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            BackendUrlSource::Env => "env",
+            BackendUrlSource::File => "file",
+            BackendUrlSource::Default => "default",
+        }
+    }
+}
+
+/// Platform config directory for persisted desktop settings.
+/// Override: `AGENTGATE_CONFIG_DIR` (used by tests and advanced installs).
+/// Windows: `%APPDATA%/AgentGate`
+/// macOS: `~/Library/Application Support/AgentGate`
+/// Linux: `$XDG_CONFIG_HOME/agentgate` or `~/.config/agentgate`
+pub fn config_dir() -> Option<PathBuf> {
+    if let Some(custom) = std::env::var_os("AGENTGATE_CONFIG_DIR") {
+        return Some(PathBuf::from(custom));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("AgentGate"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("Library").join("Application Support").join("AgentGate"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+            Some(PathBuf::from(xdg).join("agentgate"))
+        } else {
+            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config").join("agentgate"))
+        }
+    }
+}
+
+pub fn backend_config_path() -> Option<PathBuf> {
+    config_dir().map(|d| d.join("backend_url"))
+}
+
+pub fn read_persisted_backend_url() -> Option<String> {
+    let path = backend_config_path()?;
+    let raw = fs::read_to_string(path).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+pub fn write_persisted_backend_url(url: &str) -> Result<(), String> {
+    let dir = config_dir().ok_or_else(|| "could not resolve config directory".to_string())?;
+    fs::create_dir_all(&dir).map_err(|e| format!("could not create config directory: {e}"))?;
+    let path = dir.join("backend_url");
+    fs::write(&path, format!("{url}\n")).map_err(|e| format!("could not write backend URL: {e}"))
+}
+
+pub fn clear_persisted_backend_url() -> Result<(), String> {
+    let Some(path) = backend_config_path() else {
+        return Ok(());
+    };
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| format!("could not remove backend URL file: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Resolve the active backend URL and where it came from.
+/// Priority: `AGENTGATE_BACKEND_URL` env → persisted file → default loopback.
+pub fn resolve_backend_url() -> Result<(String, BackendUrlSource), String> {
+    match std::env::var("AGENTGATE_BACKEND_URL") {
+        Ok(v) => validate_backend_url(&v).map(|u| (u, BackendUrlSource::Env)),
+        Err(_) => {
+            if let Some(persisted) = read_persisted_backend_url() {
+                validate_backend_url(&persisted).map(|u| (u, BackendUrlSource::File))
+            } else {
+                validate_backend_url(DEFAULT_BACKEND).map(|u| (u, BackendUrlSource::Default))
+            }
+        }
+    }
+}
 
 pub struct ServerHandle {
     stop: Arc<AtomicBool>,
@@ -182,10 +276,12 @@ impl ureq::unversioned::resolver::Resolver for ValidatingResolver {
 }
 
 fn backend_url() -> Result<String, String> {
-    match std::env::var("AGENTGATE_BACKEND_URL") {
-        Ok(v) => validate_backend_url(&v),
-        Err(_) => validate_backend_url(DEFAULT_BACKEND),
-    }
+    resolve_backend_url().map(|(url, _)| url)
+}
+
+pub fn is_config_path(path: &str) -> bool {
+    let p = path.split('?').next().unwrap_or(path);
+    p == CONFIG_BACKEND_PATH || p == CONFIG_PROBE_PATH
 }
 
 pub fn validate_host(host: &str, port: u16) -> bool {
@@ -340,11 +436,187 @@ fn handle_request(req: tiny_http::Request, dist: &Path, port: u16) {
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or(&url).to_string();
 
-    if is_proxy_path(&path) {
+    if is_config_path(&path) {
+        handle_config_request(req, &method, &path);
+    } else if is_proxy_path(&path) {
         proxy_request(req, &method, &url);
     } else {
         serve_static(req, dist, &path);
     }
+}
+
+fn json_response(status: u16, body: &str) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
+    tiny_http::Response::from_data(body.as_bytes().to_vec())
+        .with_status_code(status)
+        .with_header(
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..])
+                .unwrap(),
+        )
+}
+
+fn read_limited_body(req: &mut tiny_http::Request) -> Result<Vec<u8>, u16> {
+    let mut body = Vec::new();
+    let mut buf = [0u8; 8192];
+    let mut total = 0usize;
+    loop {
+        match req.as_reader().read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                total += n;
+                if total > MAX_BODY_BYTES {
+                    return Err(413);
+                }
+                body.extend_from_slice(&buf[..n]);
+            }
+            Err(_) => break,
+        }
+    }
+    Ok(body)
+}
+
+fn handle_config_request(mut req: tiny_http::Request, method: &str, path: &str) {
+    if path == CONFIG_BACKEND_PATH && method == "GET" {
+        match resolve_backend_url() {
+            Ok((url, source)) => {
+                let env_locked = source == BackendUrlSource::Env;
+                let body = format!(
+                    "{{\"url\":{},\"source\":\"{}\",\"envLocked\":{}}}",
+                    serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".to_string()),
+                    source.as_str(),
+                    if env_locked { "true" } else { "false" }
+                );
+                let _ = req.respond(json_response(200, &body));
+            }
+            Err(e) => {
+                let body = format!(
+                    "{{\"error\":{}}}",
+                    serde_json::to_string(&e).unwrap_or_else(|_| "\"invalid backend URL\"".to_string())
+                );
+                let _ = req.respond(json_response(500, &body));
+            }
+        }
+        return;
+    }
+
+    if path == CONFIG_BACKEND_PATH && method == "PUT" {
+        if std::env::var("AGENTGATE_BACKEND_URL").is_ok() {
+            let body = "{\"error\":\"Backend URL is locked by the AGENTGATE_BACKEND_URL environment variable.\"}";
+            let _ = req.respond(json_response(409, body));
+            return;
+        }
+        let raw = match read_limited_body(&mut req) {
+            Ok(b) => b,
+            Err(413) => {
+                let _ = req.respond(json_response(413, "{\"error\":\"Payload too large\"}"));
+                return;
+            }
+            Err(_) => {
+                let _ = req.respond(json_response(400, "{\"error\":\"Could not read body\"}"));
+                return;
+            }
+        };
+        let parsed: serde_json::Value = match serde_json::from_slice(&raw) {
+            Ok(v) => v,
+            Err(_) => {
+                let _ = req.respond(json_response(400, "{\"error\":\"Expected JSON body with a url field\"}"));
+                return;
+            }
+        };
+        let Some(url_val) = parsed.get("url").and_then(|v| v.as_str()) else {
+            let _ = req.respond(json_response(400, "{\"error\":\"Missing url field\"}"));
+            return;
+        };
+        // Empty string resets to default (removes persisted override).
+        if url_val.trim().is_empty() {
+            if let Err(e) = clear_persisted_backend_url() {
+                let body = format!(
+                    "{{\"error\":{}}}",
+                    serde_json::to_string(&e).unwrap_or_else(|_| "\"clear failed\"".to_string())
+                );
+                let _ = req.respond(json_response(500, &body));
+                return;
+            }
+            let body = format!(
+                "{{\"url\":{},\"source\":\"default\",\"envLocked\":false}}",
+                serde_json::to_string(DEFAULT_BACKEND).unwrap()
+            );
+            let _ = req.respond(json_response(200, &body));
+            return;
+        }
+        let canonical = match validate_backend_url(url_val) {
+            Ok(u) => u,
+            Err(e) => {
+                let body = format!(
+                    "{{\"error\":{}}}",
+                    serde_json::to_string(&e).unwrap_or_else(|_| "\"invalid URL\"".to_string())
+                );
+                let _ = req.respond(json_response(400, &body));
+                return;
+            }
+        };
+        if let Err(e) = write_persisted_backend_url(&canonical) {
+            let body = format!(
+                "{{\"error\":{}}}",
+                serde_json::to_string(&e).unwrap_or_else(|_| "\"write failed\"".to_string())
+            );
+            let _ = req.respond(json_response(500, &body));
+            return;
+        }
+        let body = format!(
+            "{{\"url\":{},\"source\":\"file\",\"envLocked\":false}}",
+            serde_json::to_string(&canonical).unwrap()
+        );
+        let _ = req.respond(json_response(200, &body));
+        return;
+    }
+
+    if path == CONFIG_PROBE_PATH && method == "POST" {
+        let backend = match backend_url() {
+            Ok(b) => b,
+            Err(e) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    serde_json::to_string(&e).unwrap_or_else(|_| "\"invalid backend URL\"".to_string())
+                );
+                let _ = req.respond(json_response(200, &body));
+                return;
+            }
+        };
+        let target = format!("{}/api/health/", backend.trim_end_matches('/'));
+        let config = ureq::config::Config::builder()
+            .timeout_global(Some(Duration::from_secs(10)))
+            .timeout_per_read(Some(Duration::from_secs(10)))
+            .timeout_per_write(Some(Duration::from_secs(10)))
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .build();
+        let resolver = ValidatingResolver;
+        let connector = ureq::unversioned::transport::DefaultConnector::default();
+        let agent = ureq::Agent::with_parts(config, connector, resolver);
+        match agent.get(&target).call() {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let ok = (200..300).contains(&status);
+                let body = format!(
+                    "{{\"ok\":{},\"status\":{},\"backend\":{}}}",
+                    if ok { "true" } else { "false" },
+                    status,
+                    serde_json::to_string(&backend).unwrap()
+                );
+                let _ = req.respond(json_response(200, &body));
+            }
+            Err(_) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"Backend unreachable\",\"backend\":{}}}",
+                    serde_json::to_string(&backend).unwrap()
+                );
+                let _ = req.respond(json_response(200, &body));
+            }
+        }
+        return;
+    }
+
+    let _ = req.respond(json_response(405, "{\"error\":\"Method not allowed\"}"));
 }
 
 fn serve_static(req: tiny_http::Request, dist: &Path, path: &str) {
@@ -574,6 +846,14 @@ pub fn start_server(dist: PathBuf) -> Result<ServerHandle, String> {
 mod tests {
     use super::*;
     use ureq::unversioned::resolver::Resolver;
+
+    /// Tests that mutate process-global env vars must not run concurrently.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn host_validation_accepts_loopback() {
         assert!(validate_host("127.0.0.1:8080", 8080));
@@ -696,13 +976,160 @@ mod tests {
 
     #[test]
     fn backend_url_default_is_valid() {
-        // Ensure no env override.
+        let _env = env_guard();
+        // Ensure no env override; isolate from any developer config file.
         unsafe {
             std::env::remove_var("AGENTGATE_BACKEND_URL");
         }
+        let tmp = std::env::temp_dir().join(format!(
+            "agentgate_cfg_default_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        unsafe {
+            std::env::set_var("AGENTGATE_CONFIG_DIR", &tmp);
+        }
         let r = backend_url();
+        unsafe {
+            std::env::remove_var("AGENTGATE_CONFIG_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
         assert!(r.is_ok(), "default must validate: {:?}", r);
         assert_eq!(r.unwrap(), "http://127.0.0.1:8000");
+    }
+
+    #[test]
+    fn resolve_prefers_persisted_file_over_default() {
+        let _env = env_guard();
+        unsafe {
+            std::env::remove_var("AGENTGATE_BACKEND_URL");
+        }
+        let tmp = std::env::temp_dir().join(format!(
+            "agentgate_cfg_file_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        unsafe {
+            std::env::set_var("AGENTGATE_CONFIG_DIR", &tmp);
+        }
+        write_persisted_backend_url("https://api.example.com").unwrap();
+        let (url, source) = resolve_backend_url().unwrap();
+        assert_eq!(url, "https://api.example.com");
+        assert_eq!(source, BackendUrlSource::File);
+        clear_persisted_backend_url().unwrap();
+        unsafe {
+            std::env::remove_var("AGENTGATE_CONFIG_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_env_overrides_persisted_file() {
+        let _env = env_guard();
+        let tmp = std::env::temp_dir().join(format!(
+            "agentgate_cfg_env_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        unsafe {
+            std::env::set_var("AGENTGATE_CONFIG_DIR", &tmp);
+            std::env::set_var("AGENTGATE_BACKEND_URL", "https://env.example.com");
+        }
+        write_persisted_backend_url("https://file.example.com").unwrap();
+        let (url, source) = resolve_backend_url().unwrap();
+        assert_eq!(url, "https://env.example.com");
+        assert_eq!(source, BackendUrlSource::Env);
+        unsafe {
+            std::env::remove_var("AGENTGATE_BACKEND_URL");
+            std::env::remove_var("AGENTGATE_CONFIG_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn config_path_classification() {
+        assert!(is_config_path("/__agentgate/backend"));
+        assert!(is_config_path("/__agentgate/backend/probe"));
+        assert!(!is_config_path("/api/health/"));
+        assert!(!is_config_path("/__agentgate/other"));
+    }
+
+    #[test]
+    fn config_http_get_put_and_probe_unreachable() {
+        let _env = env_guard();
+        unsafe {
+            std::env::remove_var("AGENTGATE_BACKEND_URL");
+        }
+        let cfg = std::env::temp_dir().join(format!(
+            "agentgate_cfg_http_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&cfg);
+        std::fs::create_dir_all(&cfg).unwrap();
+        unsafe {
+            std::env::set_var("AGENTGATE_CONFIG_DIR", &cfg);
+        }
+
+        let dist = std::env::temp_dir().join(format!(
+            "agentgate_dist_http_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dist);
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::write(dist.join("index.html"), b"ok").unwrap();
+        let handle = start_server(dist.clone()).expect("start");
+        let port = handle.port;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // GET default config
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+        let req = format!(
+            "GET /__agentgate/backend HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).unwrap();
+        let resp = String::from_utf8_lossy(&buf);
+        assert!(resp.contains("200 OK"), "{resp}");
+        assert!(resp.contains("\"source\":\"default\""), "{resp}");
+
+        // PUT hosted https URL
+        let body = r#"{"url":"https://api.example.com"}"#;
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+        let req = format!(
+            "PUT /__agentgate/backend HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).unwrap();
+        let resp = String::from_utf8_lossy(&buf);
+        assert!(resp.contains("200 OK"), "{resp}");
+        assert!(resp.contains("\"source\":\"file\""), "{resp}");
+        assert!(resp.contains("https://api.example.com"), "{resp}");
+
+        // Probe unreachable hosted backend (no DNS/connect) should report ok:false without 5xx
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+        let req = format!(
+            "POST /__agentgate/backend/probe HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).unwrap();
+        let resp = String::from_utf8_lossy(&buf);
+        assert!(resp.contains("200 OK"), "{resp}");
+        assert!(resp.contains("\"ok\":false"), "{resp}");
+
+        drop(handle);
+        unsafe {
+            std::env::remove_var("AGENTGATE_CONFIG_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&cfg);
+        let _ = std::fs::remove_dir_all(&dist);
     }
 
     #[test]
@@ -779,6 +1206,7 @@ mod tests {
 
     #[test]
     fn validate_backend_url_env_invalid_does_not_fallback() {
+        let _env = env_guard();
         unsafe {
             std::env::set_var("AGENTGATE_BACKEND_URL", "http://evil.com");
         }

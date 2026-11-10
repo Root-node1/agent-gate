@@ -1,10 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { bootstrapCsrf, changePassword, getSession } from '../../api/auth'
+import { useState, type FormEvent } from 'react'
+import { changePassword } from '../../api/auth'
 import AuthField from './AuthField'
+import { useSession } from '../../session/context'
 
 export default function PasswordChangeForm() {
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null)
-  const [checking, setChecking] = useState(true)
+  const { authenticationError, authenticationStatus, refreshSession } = useSession()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -12,19 +12,6 @@ export default function PasswordChangeForm() {
   const [serverError, setServerError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      await bootstrapCsrf()
-      const body = await getSession()
-      if (!cancelled) setAuthenticated(body.meta?.is_authenticated ?? false)
-      if (!cancelled) setChecking(false)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   const confirmError =
     !fieldErrors.new_password && next && confirm && next !== confirm
@@ -74,9 +61,28 @@ export default function PasswordChangeForm() {
     }
   }
 
-  if (checking) return <p className="hint">Checking session…</p>
+  if (authenticationStatus === 'loading') {
+    return <p className="hint" role="status">Checking session…</p>
+  }
 
-  if (!authenticated) {
+  if (authenticationStatus === 'error') {
+    return (
+      <div className="stack">
+        <p className="form-error" role="alert">
+          {authenticationError || 'Could not verify the dashboard session.'}
+        </p>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => void refreshSession().catch(() => undefined)}
+        >
+          Retry session check
+        </button>
+      </div>
+    )
+  }
+
+  if (authenticationStatus !== 'authenticated') {
     return (
       <div className="stack">
         <p className="muted">

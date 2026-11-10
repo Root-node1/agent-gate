@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, intergration]
+    branches: [main, integration/agentgate-dashboard]
   pull_request:
   workflow_dispatch:
 

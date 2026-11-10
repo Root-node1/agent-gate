@@ -34,6 +34,41 @@
   gap: var(--space-3);
 }
 
+.st-security-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.st-security-card h3 {
+  font-size: var(--text-lg);
+}
+
+.st-security-form,
+.st-security-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.st-security-secret {
+  overflow-wrap: anywhere;
+}
+
+.st-recovery-codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-2);
+}
+
 /* Workspace form */
 
 .st-form-actions {

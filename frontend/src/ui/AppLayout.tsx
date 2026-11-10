@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Link, NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router'
 import {
   Bot,
   CircleCheckBig,
   FlaskConical,
   LayoutDashboard,
   ListOrdered,
+  LogOut,
   Menu,
   RotateCcw,
   ScrollText,
@@ -20,8 +21,8 @@ import Logo from '../components/Logo'
 import { resetDemo, useDemoState } from '../demo/store'
 import { pendingApprovals } from '../demo/selectors'
 import Modal from './Modal'
-import { ROLE } from './labels'
 import { useToast } from './toast-context'
+import { useSession } from '../session/context'
 
 interface NavItem {
   to: string
@@ -33,10 +34,18 @@ interface NavItem {
 
 export default function AppLayout() {
   const state = useDemoState()
+  const { currentUser, logout } = useSession()
   const toast = useToast()
+  const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
   const waiting = pendingApprovals(state).length
+  const accountName = currentUser
+    ? `${currentUser.first_name} ${currentUser.last_name}`.trim() ||
+      currentUser.username ||
+      currentUser.email
+    : ''
 
   const main: NavItem[] = [
     { to: '/app', label: 'Overview', icon: LayoutDashboard, end: true },
@@ -96,13 +105,35 @@ export default function AppLayout() {
           </ul>
           <div className="user-chip">
             <span className="avatar" aria-hidden="true">
-              {state.currentUser.name.slice(0, 1)}
+              {accountName.slice(0, 1).toUpperCase()}
             </span>
             <span>
-              <strong>{state.currentUser.name}</strong>
-              <span className="user-role">{ROLE[state.currentUser.role].label}</span>
+              <strong>{accountName}</strong>
+              <span className="user-role">{currentUser?.email}</span>
             </span>
           </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            disabled={signingOut}
+            onClick={async () => {
+              setSigningOut(true)
+              try {
+                await logout()
+                navigate('/login', { replace: true })
+              } catch (error) {
+                toast.show(
+                  error instanceof Error ? error.message : 'Sign-out failed. Please try again.',
+                  'error',
+                )
+              } finally {
+                setSigningOut(false)
+              }
+            }}
+          >
+            <LogOut size={16} aria-hidden="true" />
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </button>
         </div>
       </aside>
       <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />

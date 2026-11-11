@@ -9,6 +9,7 @@ from unittest import skipUnless
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import httpx
 from django.conf import settings
 from django.db import connection
 from django.test import TestCase, override_settings
@@ -23,6 +24,7 @@ from apps.payees.models import DestinationType, Payee, fingerprint
 from apps.payments.payouts import services as payout_services
 from apps.payments.payouts.models import PayoutReservation
 from apps.payments.paypal.client import PayPalClient
+from apps.payments.paypal.exceptions import PayPalResponseError
 from apps.policies.models import Policy
 from apps.spend.models import SpendRequest
 from tests.base import PostgresTransactionTestCase, force_mfa
@@ -118,7 +120,7 @@ def _success_payload(
     }
 
 
-class PayoutSubmissionBase(TestCase):
+class PayoutSubmissionBase:
     """Shared fixtures for payout submission tests."""
 
     def setUp(self):
@@ -158,7 +160,7 @@ class PayoutSubmissionBase(TestCase):
 
 
 @override_settings(**PAYOUT_SETTINGS)
-class PayoutSubmissionServiceTests(PayoutSubmissionBase):
+class PayoutSubmissionServiceTests(PayoutSubmissionBase, TestCase):
     """Service-level submission tests."""
 
     def _submit(self):
@@ -241,6 +243,97 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
             self._submit()
         self.reservation.refresh_from_db()
         self.assertEqual(captured["request_id"], str(self.reservation.sender_batch_id))
+
+    def test_pending_submission_reuses_identity_and_recovers_duplicate_batch(self):
+        sender_batch_id = uuid4()
+        self.reservation.sender_batch_id = sender_batch_id
+        self.reservation.submission_attempted_at = timezone.now() - timedelta(minutes=2)
+        self.reservation.status = PayoutReservation.Status.UNCERTAIN
+        self.reservation.save(
+            update_fields=[
+                "sender_batch_id",
+                "submission_attempted_at",
+                "status",
+                "updated_at",
+            ]
+        )
+        duplicate = PayPalResponseError(
+            "duplicate payout",
+            status_code=400,
+            code="DUPLICATE_BATCH_ID",
+            body={
+                "name": "DUPLICATE_BATCH_ID",
+                "links": [
+                    {
+                        "href": (
+                            "https://api-m.sandbox.paypal.com/"
+                            "v1/payments/payouts/BATCH-123"
+                        ),
+                        "method": "GET",
+                        "rel": "self",
+                    }
+                ],
+            },
+        )
+        existing_batch = _success_payload(
+            batch_id="BATCH-123", item_id="ITEM-456", status="PENDING"
+        )
+        with patch.object(PayPalClient, "post", side_effect=duplicate) as post:
+            with _mock_paypal_get(return_value=_mock_response(200, existing_batch)) as get:
+                result = self._submit()
+
+        self.assertEqual(result.outcome, "submitted")
+        self.assertEqual(result.paypal_batch_id, "BATCH-123")
+        self.assertEqual(
+            post.call_args.kwargs["request_id"], str(sender_batch_id)
+        )
+        get.assert_called_once_with("/v1/payments/payouts/BATCH-123")
+        self.reservation.refresh_from_db()
+        self.assertEqual(
+            self.reservation.status, PayoutReservation.Status.SUBMITTED
+        )
+
+    def test_native_client_dictionary_responses_are_processed(self):
+        with patch.object(PayPalClient, "post", return_value=_success_payload()):
+            result = self._submit()
+
+        self.assertEqual(result.outcome, "submitted")
+        with patch.object(
+            PayPalClient,
+            "get",
+            return_value=_success_payload(
+                status="SUCCESS", item_status="SUCCESS"
+            ),
+        ):
+            reconciled = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+
+        self.assertEqual(reconciled.outcome, "reconciled")
+        self.reservation.refresh_from_db()
+        self.assertEqual(
+            self.reservation.status, PayoutReservation.Status.COMPLETED
+        )
+
+    def test_stale_submission_is_not_reposted_after_idempotency_window(self):
+        self.reservation.sender_batch_id = uuid4()
+        self.reservation.submission_attempted_at = timezone.now() - timedelta(days=31)
+        self.reservation.status = PayoutReservation.Status.UNCERTAIN
+        self.reservation.save(
+            update_fields=[
+                "sender_batch_id",
+                "submission_attempted_at",
+                "status",
+                "updated_at",
+            ]
+        )
+
+        with patch.object(PayPalClient, "post") as post:
+            result = self._submit()
+
+        self.assertEqual(result.outcome, "pending")
+        self.assertIn("manual review required", result.error)
+        post.assert_not_called()
 
     def test_timeout_marks_uncertain(self):
         """Lost POST response: transition to UNCERTAIN, not SUBMISSION_PENDING."""
@@ -366,7 +459,7 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
         self.assertIsNone(self.reservation.paypal_payout_batch_id)
 
     def test_no_automatic_retry_on_uncertain_resubmit(self):
-        """Calling submit_payout on UNCERTAIN must not re-POST to PayPal."""
+        """A retry reuses the same idempotency key and remains uncertain."""
         from apps.payments.paypal.client import PayPalTimeoutError
 
         # First submission times out → UNCERTAIN
@@ -375,18 +468,21 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
         self.reservation.refresh_from_db()
         self.assertEqual(self.reservation.status, PayoutReservation.Status.UNCERTAIN)
 
-        # Re-submit: should NOT re-POST, should return pending
+        sender_batch_id = self.reservation.sender_batch_id
         call_count = 0
+        test_case = self
 
-        def counting_post(self, path, *, json=None, request_id=None):
+        def counting_post(client, path, *, json=None, request_id=None):
             nonlocal call_count
             call_count += 1
+            test_case.assertEqual(request_id, str(sender_batch_id))
             raise PayPalTimeoutError("boom")
 
         with patch.object(PayPalClient, "post", counting_post):
             result = self._submit()
-        self.assertEqual(result.outcome, "pending")
-        self.assertEqual(call_count, 0)  # no re-POST
+        self.assertEqual(result.outcome, "uncertain")
+        self.assertEqual(call_count, 1)
+
 
     def test_batch_success_item_pending_not_completed(self):
         """Batch SUCCESS but item ONHOLD → SUBMISSION_PENDING, not COMPLETED."""
@@ -702,6 +798,159 @@ class PayoutSubmissionServiceTests(PayoutSubmissionBase):
             ).count(),
             1,
         )
+
+
+@override_settings(**PAYOUT_SETTINGS)
+class PayoutNetworkBoundaryTests(PayoutSubmissionBase, PostgresTransactionTestCase):
+    """Verify that provider I/O runs after database transactions commit."""
+
+    def test_submission_commits_identity_before_provider_call(self):
+        atomic_states = []
+        persisted_states = []
+        test_case = self
+
+        def capture_post(client, path, *, json=None, request_id=None):
+            atomic_states.append(connection.in_atomic_block)
+            persisted = PayoutReservation.objects.get(pk=test_case.reservation.pk)
+            persisted_states.append(
+                (
+                    persisted.status,
+                    persisted.sender_batch_id,
+                    persisted.submission_attempted_at,
+                    request_id,
+                )
+            )
+            return _mock_response(200, _success_payload())
+
+        with patch.object(PayPalClient, "post", capture_post):
+            result = payout_services.submit_payout(
+                self.reservation.pk, django_settings=settings
+            )
+
+        self.assertEqual(result.outcome, "submitted")
+        self.assertEqual(atomic_states, [False])
+        self.assertEqual(
+            persisted_states[0][0], PayoutReservation.Status.SUBMISSION_PENDING
+        )
+        self.assertIsNotNone(persisted_states[0][1])
+        self.assertIsNotNone(persisted_states[0][2])
+        self.assertEqual(persisted_states[0][3], str(persisted_states[0][1]))
+
+    def test_reconciliation_provider_query_runs_outside_transaction(self):
+        self.reservation.status = PayoutReservation.Status.SUBMITTED
+        self.reservation.paypal_payout_batch_id = "BATCH-123"
+        self.reservation.save(
+            update_fields=[
+                "status",
+                "paypal_payout_batch_id",
+                "updated_at",
+            ]
+        )
+        atomic_states = []
+
+        def capture_get(client, path):
+            atomic_states.append(connection.in_atomic_block)
+            return _mock_response(
+                200,
+                _success_payload(
+                    batch_id="BATCH-123",
+                    item_id="ITEM-456",
+                    status="SUCCESS",
+                    item_status="SUCCESS",
+                ),
+            )
+
+        with patch.object(PayPalClient, "get", capture_get):
+            result = payout_services.reconcile_payout(
+                self.reservation.pk, django_settings=settings
+            )
+
+        self.assertEqual(result.outcome, "reconciled")
+        self.assertEqual(atomic_states, [False])
+        self.reservation.refresh_from_db()
+        self.assertEqual(
+            self.reservation.status, PayoutReservation.Status.COMPLETED
+        )
+
+    def test_submit_response_does_not_regress_concurrent_completion(self):
+        test_case = self
+
+        def complete_before_response(client, path, *, json=None, request_id=None):
+            reservation = PayoutReservation.objects.get(pk=test_case.reservation.pk)
+            reservation.status = PayoutReservation.Status.COMPLETED
+            reservation.save(update_fields=["status", "updated_at"])
+            return _mock_response(200, _success_payload())
+
+        with patch.object(PayPalClient, "post", complete_before_response):
+            result = payout_services.submit_payout(
+                self.reservation.pk, django_settings=settings
+            )
+
+        self.assertEqual(result.outcome, "terminal")
+        self.reservation.refresh_from_db()
+        self.assertEqual(
+            self.reservation.status, PayoutReservation.Status.COMPLETED
+        )
+        self.assertFalse(
+            AuditEvent.objects.filter(
+                event_type=AuditEvent.EventType.PAYMENT_EXECUTING,
+                spend_request=self.spend_request,
+            ).exists()
+        )
+
+    def test_submit_error_does_not_regress_concurrent_failure(self):
+        from apps.payments.paypal.client import PayPalTimeoutError
+
+        test_case = self
+
+        def fail_before_timeout(client, path, *, json=None, request_id=None):
+            reservation = PayoutReservation.objects.get(pk=test_case.reservation.pk)
+            reservation.status = PayoutReservation.Status.FAILED
+            reservation.submission_error = "provider event resolved the payout"
+            reservation.save(
+                update_fields=["status", "submission_error", "updated_at"]
+            )
+            raise PayPalTimeoutError("late response")
+
+        with patch.object(PayPalClient, "post", fail_before_timeout):
+            result = payout_services.submit_payout(
+                self.reservation.pk, django_settings=settings
+            )
+
+        self.assertEqual(result.outcome, "terminal")
+        self.reservation.refresh_from_db()
+        self.assertEqual(self.reservation.status, PayoutReservation.Status.FAILED)
+        self.assertEqual(
+            self.reservation.submission_error,
+            "provider event resolved the payout",
+        )
+
+    def test_paypal_response_error_retains_duplicate_details(self):
+        body = {
+            "name": "DUPLICATE_BATCH_ID",
+            "links": [{"rel": "self", "method": "GET", "href": "https://example.test"}],
+        }
+        client = PayPalClient(
+            "test-client",
+            "test-secret",
+            http_client=httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(400, json=body)
+                )
+            ),
+        )
+        try:
+            with patch.object(client, "_fetch_token", return_value="test-token"):
+                with self.assertRaises(PayPalResponseError) as raised:
+                    client.post_json(
+                        "/v1/payments/payouts",
+                        body={},
+                        request_id="stable-request-id",
+                    )
+        finally:
+            client.close()
+
+        self.assertEqual(raised.exception.body, body)
 
 
 class PayoutSubmissionViewBase(APITestCase):

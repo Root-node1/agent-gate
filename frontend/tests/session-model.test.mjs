@@ -57,6 +57,19 @@ test('pending email verification routes separately from pending MFA', async () =
   assert.equal(sessionModel.pendingAuthenticationPath({ id: 'unknown_flow' }), null)
 })
 
+test('authenticated users without memberships go to onboarding', () => {
+  assert.equal(
+    sessionModel.authenticatedHomePath({ memberships: [] }),
+    '/onboarding',
+  )
+  assert.equal(
+    sessionModel.authenticatedHomePath({
+      memberships: [{ organization_id: 'org-id', organization: 'Example', role: 'admin' }],
+    }),
+    '/app',
+  )
+})
+
 test('authenticated bootstrap requires the backend profile to confirm the user', async () => {
   const user = { id: 'user-id', email: 'user@example.com' }
   const session = await sessionModel.resolveSession(
@@ -74,4 +87,17 @@ test('authenticated bootstrap requires the backend profile to confirm the user',
     ),
     /profile unavailable/,
   )
+})
+
+test('an expired profile session resolves to anonymous instead of a session error', async () => {
+  const session = await sessionModel.resolveSession(
+    async () => ({ status: 'authenticated', body: { status: 200 } }),
+    async () => {
+      const error = new Error('Authentication failed.')
+      error.name = 'SessionExpiredError'
+      throw error
+    },
+  )
+
+  assert.deepEqual(session, { status: 'unauthenticated' })
 })

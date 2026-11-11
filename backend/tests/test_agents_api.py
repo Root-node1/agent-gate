@@ -196,7 +196,7 @@ class AgentUpdateTests(AgentApiTestBase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.raw_key}")
         response = self.client.post(
             "/v1/spend-requests/",
-            {"amount": "10.00", "currency": "USD", "merchant": "acme.com", "source": "trusted"},
+            {"amount": "10.00", "currency": "USD", "merchant": "acme.com"},
             format="json",
             HTTP_IDEMPOTENCY_KEY="suspend-spend-1",
         )
@@ -261,12 +261,13 @@ class AgentRotateKeyTests(AgentApiTestBase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {new_key}")
         spend_response = self.client.post(
             "/v1/spend-requests/",
-            {"amount": "10.00", "currency": "USD", "merchant": "acme.com", "source": "trusted"},
+            {"amount": "10.00", "currency": "USD", "merchant": "acme.com"},
             format="json",
             HTTP_IDEMPOTENCY_KEY="key-rotate-spend-1",
         )
         self.assertEqual(spend_response.status_code, 201)
-        self.assertEqual(spend_response.json()["decision"], "allow")
+        self.assertEqual(spend_response.json()["decision"], "needs_approval")
+        self.assertEqual(spend_response.json()["source"], "untrusted")
 
     def test_rotate_requires_admin(self):
         self.client.force_authenticate(user=self.viewer)
@@ -295,7 +296,7 @@ class AgentRevokeKeyTests(AgentApiTestBase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.raw_key}")
         response = self.client.post(
             "/v1/spend-requests/",
-            {"amount": "10.00", "currency": "USD", "merchant": "acme.com", "source": "trusted"},
+            {"amount": "10.00", "currency": "USD", "merchant": "acme.com"},
             format="json",
             HTTP_IDEMPOTENCY_KEY="key-revoke-spend-1",
         )
@@ -418,9 +419,10 @@ class SpendApiRegressionTests(AgentApiTestBase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.raw_key}")
         response = self.client.post(
             "/v1/spend-requests/",
-            {"amount": "10.00", "currency": "USD", "merchant": "acme.com", "source": "trusted"},
+            {"amount": "10.00", "currency": "USD", "merchant": "acme.com"},
             format="json",
             HTTP_IDEMPOTENCY_KEY="regression-1",
         )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["decision"], "allow")
+        self.assertEqual(response.json()["decision"], "needs_approval")
+        self.assertEqual(response.json()["source"], "untrusted")

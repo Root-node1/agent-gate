@@ -220,3 +220,107 @@ class PayoutReservation(models.Model):
         self._original_destination_value = self.destination_value
         self._original_destination_fingerprint = self.destination_fingerprint
         self._original_sender_batch_id = self.sender_batch_id
+
+
+class SpendExecutionClaim(models.Model):
+    """Durable, exclusive claim shared by automatic and manual execution paths."""
+
+    class Path(models.TextChoices):
+        AUTOMATIC = "automatic", "Automatic"
+        MANUAL = "manual", "Manual payout"
+
+    class Status(models.TextChoices):
+        CLAIMED = "claimed", "Claimed"
+        UNCERTAIN = "uncertain", "Outcome uncertain"
+        SUCCEEDED = "succeeded", "Succeeded"
+        FAILED = "failed", "Failed"
+
+    STATUS_TRANSITIONS = {
+        Status.CLAIMED: frozenset(
+            {Status.UNCERTAIN, Status.SUCCEEDED, Status.FAILED}
+        ),
+        Status.UNCERTAIN: frozenset({Status.SUCCEEDED, Status.FAILED}),
+        Status.SUCCEEDED: frozenset(),
+        Status.FAILED: frozenset(),
+    }
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    spend_request = models.OneToOneField(
+        "spend.SpendRequest",
+        on_delete=models.PROTECT,
+        related_name="execution_claim",
+    )
+    path = models.CharField(max_length=10, choices=Path.choices)
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.CLAIMED
+    )
+    payout_reservation = models.OneToOneField(
+        PayoutReservation,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="execution_claim",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(path="automatic", payout_reservation__isnull=True)
+                    | models.Q(path="manual", payout_reservation__isnull=False)
+                ),
+                name="execution_claim_path_reservation",
+            ),
+        ]
+        indexes = [models.Index(fields=["status"], name="exec_claim_status_idx")]
+
+    def __str__(self):
+        return f"{self.path} {self.status}: {self.spend_request_id}"
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._original_status = instance.status
+        instance._original_spend_request_id = instance.spend_request_id
+        instance._original_path = instance.path
+        instance._original_payout_reservation_id = instance.payout_reservation_id
+        return instance
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            if (
+                getattr(self, "_original_spend_request_id", None) is not None
+                and self.spend_request_id != self._original_spend_request_id
+            ):
+                raise ValueError("spend_request is immutable after claim creation.")
+            if (
+                getattr(self, "_original_path", None) is not None
+                and self.path != self._original_path
+            ):
+                raise ValueError("execution path is immutable after claim creation.")
+            if (
+                getattr(self, "_original_payout_reservation_id", None) is not None
+                and self.payout_reservation_id
+                != self._original_payout_reservation_id
+            ):
+                raise ValueError(
+                    "payout_reservation is immutable after claim creation."
+                )
+        original_status = getattr(self, "_original_status", None)
+        if (
+            not self._state.adding
+            and original_status is not None
+            and self.status != original_status
+            and self.status not in self.STATUS_TRANSITIONS[original_status]
+        ):
+            raise ValueError(
+                f"Invalid execution claim transition from {original_status!r} "
+                f"to {self.status!r}."
+            )
+        super().save(*args, **kwargs)
+        self._original_status = self.status
+        self._original_spend_request_id = self.spend_request_id
+        self._original_path = self.path
+        self._original_payout_reservation_id = self.payout_reservation_id

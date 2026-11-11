@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth import logout as django_logout
+from django.db import IntegrityError, transaction
 from django.middleware.csrf import get_token
 from drf_spectacular.utils import extend_schema
 from rest_framework import exceptions, status, views
@@ -9,11 +10,13 @@ from rest_framework.response import Response
 
 from apps.common.errors import ApiError, ErrorCode, api_exception_handler
 
-from .models import AccountProfile
+from .models import AccountProfile, Organization, OrgMembership
 from .permissions import IsAuthenticatedOr401
 from .serializers import (
     AccountProfileSerializer,
     CurrentUserSerializer,
+    OrganizationCreateResponseSerializer,
+    OrganizationCreateSerializer,
     SessionRememberSerializer,
 )
 
@@ -183,6 +186,60 @@ class ProfileView(views.APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class OrganizationCreateView(views.APIView):
+    """Create a new workspace and make its creator the initial administrator."""
+
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticatedOr401]
+
+    def handle_exception(self, exc):
+        if isinstance(exc, exceptions.NotAuthenticated):
+            return Response(
+                {"detail": exc.detail},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        return super().handle_exception(exc)
+
+    @extend_schema(
+        request=OrganizationCreateSerializer,
+        responses={status.HTTP_201_CREATED: OrganizationCreateResponseSerializer},
+    )
+    def post(self, request):
+        serializer = OrganizationCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        name = serializer.validated_data["name"]
+        if Organization.objects.filter(name=name).exists():
+            return Response(
+                {"detail": "A workspace with this name already exists."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            with transaction.atomic():
+                organization = Organization.objects.create(name=name)
+                membership = OrgMembership.objects.create(
+                    user=request.user,
+                    organization=organization,
+                    role=OrgMembership.Role.ADMIN,
+                )
+        except IntegrityError:
+            if Organization.objects.filter(name=name).exists():
+                return Response(
+                    {"detail": "A workspace with this name already exists."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            raise
+
+        return Response(
+            {
+                "id": str(organization.id),
+                "name": organization.name,
+                "role": membership.role,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class LogoutView(views.APIView):

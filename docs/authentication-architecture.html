@@ -40,6 +40,14 @@
     </p>
 
     <div class="callout note">
+      <strong>Current onboarding behavior:</strong> Signup does not create or join an organization.
+      An authenticated user without memberships is directed to <code>/onboarding</code>, where
+      <code>POST /api/auth/organizations/</code> creates a new workspace and its creator's initial
+      administrator membership in one transaction. The endpoint requires the dashboard session and
+      CSRF protection; an existing workspace name never grants membership.
+    </div>
+
+    <div class="callout note">
       <strong>Ownership boundary</strong>: A dedicated <strong>auth developer</strong> owns this work.
       The auth developer must <strong>not</strong> modify the policy engine
       (<code>backend/engine/</code>), the spend service (<code>backend/apps/spend/services.py</code>),
@@ -388,16 +396,11 @@
     <h3 id="org-assignment">Organization assignment for new users</h3>
 
     <p>
-      When a user signs up via email/password or GitHub OAuth, they must be assigned to an
-      organization with a role. The recommended approach:
+      Signup and OAuth authentication do not assign organization membership. Authenticated users
+      without a membership are routed to <code>/onboarding</code> and may create a new workspace.
+      The creator receives the initial <code>admin</code> membership; an existing workspace cannot
+      be joined by supplying its name.
     </p>
-    <ol>
-      <li><strong>Single-tenant demo</strong>: New users are auto-assigned to the organization named in
-        <code>DEMO_ORG_NAME</code> (default: <code>demo</code>) with the <code>viewer</code> role.
-        An admin later promotes them.</li>
-      <li><strong>Multi-tenant with invite codes</strong> (planned for post-MVP): User enters an invite code during signup;
-        the backend looks up the organization and assigns the role specified by the invite.</li>
-    </ol>
 
     <h2 id="github-oauth-flow">GitHub OAuth callback flow</h2>
 
@@ -417,7 +420,7 @@
       <li><strong>Allauth fetches user info</strong>: Server-side GET to <code>https://api.github.com/user</code>
         using the access token. Optionally fetches the user's email from <code>/user/emails</code>.</li>
       <li><strong>Allauth creates/updates <code>SocialAccount</code></strong>: If the GitHub user has not logged in before, a new
-        <code>User</code> and <code>SocialAccount</code> are created. The user is then auto-assigned to the demo organization as a <code>viewer</code>.</li>
+        <code>User</code> and <code>SocialAccount</code> are created. The user receives no organization membership during signup.</li>
       <li><strong>Allauth sets the Django session</strong>: <code>django.contrib.auth.login()</code> is called, which sets the <code>sessionid</code> cookie.</li>
       <li><strong>Redirect to frontend</strong>: Allauth redirects to <code>SOCIAL_AUTH_LOGIN_REDIRECT_URL</code>
         (default: <code>/accounts/profile/</code>), which the auth developer should configure to redirect to a frontend route (e.g., <code>https://app.agentgate.dev/dashboard</code>).</li>
@@ -507,8 +510,7 @@ EMAIL_HOST_PASSWORD=</code></pre>
     <ul>
       <li>If <code>userLoaded === false</code>, show a loading spinner (do not render dashboard screens).</li>
       <li>If <code>userLoaded === true</code> and <code>user === null</code>, redirect to <code>/login</code>.</li>
-      <li>If <code>userLoaded === true</code> and <code>user</code> exists but has no memberships,
-          redirect to a "waiting for admin" page.</li>
+      <li>If the authenticated user has no memberships, redirect to <code>/onboarding</code> to create a new workspace.</li>
       <li>Role-based sub-guards: if the user lacks approver/admin role, redirect away from <code>/app/approvals</code>
           and <code>/app/settings</code>.</li>
     </ul>
@@ -861,12 +863,12 @@ Unauthenticated</code></pre>
     <table>
       <thead><tr><th>#</th><th>Finding</th><th>Impact</th><th>Owner</th></tr></thead>
       <tbody>
-        <tr><td>1</td><td>No <code>GET /api/auth/user/</code> endpoint exists. Frontend has no way to learn the user's roles/memberships.</td><td>Blocker &mdash; role-based route guards cannot be built</td><td>Auth developer</td></tr>
+        <tr><td>1</td><td><code>GET /api/auth/user/</code> returns the authenticated profile and memberships.</td><td>Implemented; membership IDs support workspace routing.</td><td>Complete</td></tr>
         <tr><td>2</td><td>DRF login form at <code>/api-auth/login/</code> is HTML-based, not JSON. A SPA cannot easily consume it without rendering the form.</td><td>Medium &mdash; need JSON login wrapper or allauth API</td><td>Auth developer</td></tr>
         <tr><td>3</td><td><code>CSRF_TRUSTED_ORIGINS</code> is only set in <code>prod.py</code>, not in <code>dev.py</code>. The Vite dev server origin is not trusted, so CSRF-protected POSTs from <code>localhost:5173</code> would fail in dev.</td><td>Medium &mdash; dev environment broken for CSRF calls</td><td>Auth developer</td></tr>
-        <tr><td>4</td><td>No org auto-assignment signal for allauth signups. New users with no <code>OrgMembership</code> would be stuck.</td><td>Blocker &mdash; new user onboarding</td><td>Auth developer</td></tr>
+        <tr><td>4</td><td>Signup intentionally grants no membership; onboarding creates a new workspace after authentication.</td><td>Implemented; users cannot join an existing tenant by name.</td><td>Complete</td></tr>
         <tr><td>5</td><td>No email backend configured (<code>EMAIL_HOST</code> etc. not in <code>.env.example</code>). Email verification and password reset cannot work.</td><td>Blocker for email workflows</td><td>Auth developer</td></tr>
-        <tr><td>6</td><td>Frontend <code>SessionProvider</code> and <code>context.ts</code> have no concept of dashboard user or roles.</td><td>Blocker &mdash; frontend must be rewritten for session auth</td><td>Frontend team + Auth developer</td></tr>
+        <tr><td>6</td><td>Frontend session state includes the dashboard user and organization memberships.</td><td>Implemented; route guards direct membership-free users to onboarding.</td><td>Complete</td></tr>
         <tr><td>7</td><td>No TOTP/2FA library configured (<code>django-two-factor-auth</code> not in <code>requirements.txt</code>). No recovery code model exists.</td><td>Blocker for admin/approver 2FA enforcement</td><td>Auth developer</td></tr>
         <tr><td>8</td><td>No brute-force protection (<code>django-axes</code> or equivalent not configured). Login endpoint has no lockout mechanism.</td><td>High &mdash; vulnerable to credential stuffing</td><td>Auth developer</td></tr>
       </tbody>

@@ -6,6 +6,9 @@
  * readable csrftoken cookie as X-CSRFToken.
  */
 
+import { apiRequest } from './client'
+import { bootstrapCsrfCookie, CsrfBootstrapError, getCsrfToken } from './csrf'
+
 export interface HeadlessFlow {
   id: string
   is_pending?: boolean
@@ -38,7 +41,37 @@ export interface CurrentUser {
   last_name: string
   date_joined: string
   is_email_verified: boolean
-  memberships: Array<{ organization: string; role: string }>
+  memberships: OrganizationMembership[]
+  profile: AccountProfile | null
+}
+
+export type OrganizationRole = 'admin' | 'approver' | 'viewer'
+
+export interface OrganizationMembership {
+  organization_id: string
+  organization: string
+  role: OrganizationRole
+}
+
+export interface CreatedOrganization {
+  id: string
+  name: string
+  role: OrganizationRole
+}
+
+export interface AccountProfile {
+  full_name: string
+}
+
+export interface AuthOptions {
+  csrfToken: string
+  googleOAuthEnabled: boolean
+  githubOAuthEnabled: boolean
+}
+
+export interface DashboardSessionStatus {
+  authenticated: boolean
+  user?: { username: string }
 }
 
 export type AuthenticationState =
@@ -57,11 +90,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function getCookie(name: string): string | null {
-  if (typeof document === 'undefined') return null
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${escapedName}=([^;]*)`))
-  return match ? decodeURIComponent(match[1]) : null
+function isOrganizationRole(value: unknown): value is OrganizationRole {
+  return value === 'admin' || value === 'approver' || value === 'viewer'
 }
 
 function headlessBody(payload: unknown, status: number): HeadlessBody {
@@ -126,61 +156,22 @@ async function readBody(response: Response): Promise<HeadlessBody> {
   return headlessBody(payload, response.status)
 }
 
-async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text()
-  if (!text) return null
-  try {
-    return JSON.parse(text) as unknown
-  } catch {
-    throw createHeadlessError(
-      'The authentication service returned an invalid response.',
-      { status: response.status },
-    )
-  }
-}
-
 /**
- * Prime the browser's CSRF cookie using allauth's documented config endpoint.
- * The cookie itself is never persisted by this client.
+ * Prime the browser's CSRF cookie through the backend's public CSRF endpoint.
  */
 export async function bootstrapCsrf(): Promise<void> {
-  let response: Response
   try {
-    response = await fetch(`${HEADLESS_BASE}/config`, { credentials: 'include' })
-  } catch {
+    await bootstrapCsrfCookie()
+  } catch (error) {
+    if (error instanceof CsrfBootstrapError) {
+      throw createHeadlessError(error.message, { status: error.status })
+    }
+    if (error instanceof Error && error.name === 'AbortError') throw error
     throw createHeadlessError(
-      'Could not initialize authentication security. Check your connection and try again.',
+      'Could not initialize authentication security.',
       { status: 0 },
     )
   }
-
-  if (!response.ok) {
-    throw createHeadlessError(
-      `Could not initialize authentication security (HTTP ${response.status}).`,
-      { status: response.status },
-    )
-  }
-  if (!getCookie('csrftoken')) {
-    throw createHeadlessError(
-      'The authentication service did not set a CSRF cookie. Check that cookies are enabled.',
-      { status: response.status },
-    )
-  }
-}
-
-async function csrfToken(): Promise<string> {
-  const existing = getCookie('csrftoken')
-  if (existing) return existing
-
-  await bootstrapCsrf()
-  const token = getCookie('csrftoken')
-  if (!token) {
-    throw createHeadlessError(
-      'The authentication service did not set a CSRF cookie. Check that cookies are enabled.',
-      { status: 0 },
-    )
-  }
-  return token
 }
 
 /** Make a headless request, adding CSRF protection for every unsafe method. */
@@ -191,7 +182,14 @@ export async function headlessFetch(path: string, init: RequestInit = {}): Promi
     headers.set('Content-Type', 'application/json')
   }
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !headers.has('X-CSRFToken')) {
-    headers.set('X-CSRFToken', await csrfToken())
+    try {
+      headers.set('X-CSRFToken', await getCsrfToken())
+    } catch (error) {
+      if (error instanceof CsrfBootstrapError) {
+        throw createHeadlessError(error.message, { status: error.status })
+      }
+      throw error
+    }
   }
 
   try {
@@ -201,7 +199,10 @@ export async function headlessFetch(path: string, init: RequestInit = {}): Promi
       credentials: 'include',
       headers,
     })
-  } catch {
+  } catch (error) {
+    if (init.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      throw error
+    }
     throw createHeadlessError(
       'Cannot reach the authentication service. Check your connection and try again.',
       { status: 0 },
@@ -264,27 +265,7 @@ export async function getAuthenticationState(): Promise<AuthenticationState> {
 
 /** Fetch the authoritative dashboard profile after headless confirms a session. */
 export async function getCurrentUser(): Promise<CurrentUser> {
-  let response: Response
-  try {
-    response = await fetch('/api/auth/user/', { credentials: 'include' })
-  } catch {
-    throw createHeadlessError(
-      'Cannot reach the dashboard account service. Check your connection and try again.',
-      { status: 0 },
-    )
-  }
-
-  const payload = await readJson(response)
-  if (!response.ok) {
-    const body = isRecord(payload) ? payload : {}
-    const message =
-      typeof body.detail === 'string'
-        ? body.detail
-        : response.status === 401
-          ? 'Your dashboard session is no longer authenticated.'
-          : `Could not load the dashboard profile (HTTP ${response.status}).`
-    throw createHeadlessError(message, { status: response.status })
-  }
+  const payload = await apiRequest<unknown>('/api/auth/user/')
   if (
     !isRecord(payload) ||
     typeof payload.id !== 'string' ||
@@ -298,23 +279,42 @@ export async function getCurrentUser(): Promise<CurrentUser> {
   ) {
     throw createHeadlessError(
       'The dashboard account service returned an invalid profile.',
-      { status: response.status },
+      { status: 200 },
     )
+  }
+
+  let profile: AccountProfile | null = null
+  if (payload.profile !== null) {
+    if (
+      !isRecord(payload.profile) ||
+      typeof payload.profile.full_name !== 'string'
+    ) {
+      throw createHeadlessError(
+        'The dashboard account service returned an invalid profile.',
+        { status: 200 },
+      )
+    }
+    profile = { full_name: payload.profile.full_name }
   }
 
   const memberships: CurrentUser['memberships'] = []
   for (const membership of payload.memberships) {
     if (
       !isRecord(membership) ||
+      typeof membership.organization_id !== 'string' ||
       typeof membership.organization !== 'string' ||
-      typeof membership.role !== 'string'
+      !isOrganizationRole(membership.role)
     ) {
       throw createHeadlessError(
         'The dashboard account service returned an invalid profile.',
-        { status: response.status },
+        { status: 200 },
       )
     }
-    memberships.push({ organization: membership.organization, role: membership.role })
+    memberships.push({
+      organization_id: membership.organization_id,
+      organization: membership.organization,
+      role: membership.role,
+    })
   }
 
   return {
@@ -326,7 +326,60 @@ export async function getCurrentUser(): Promise<CurrentUser> {
     date_joined: payload.date_joined,
     is_email_verified: payload.is_email_verified,
     memberships,
+    profile,
   }
+}
+
+export async function createOrganization(name: string): Promise<CreatedOrganization> {
+  const payload = await apiRequest<unknown>('/api/auth/organizations/', {
+    method: 'POST',
+    body: { name },
+  })
+  if (
+    !isRecord(payload) ||
+    typeof payload.id !== 'string' ||
+    typeof payload.name !== 'string' ||
+    !isOrganizationRole(payload.role)
+  ) {
+    throw createHeadlessError(
+      'The workspace service returned an invalid response.',
+      { status: 201 },
+    )
+  }
+  return { id: payload.id, name: payload.name, role: payload.role }
+}
+
+export function getAuthOptions(signal?: AbortSignal): Promise<AuthOptions> {
+  return apiRequest<AuthOptions>('/api/auth/options/', { auth: 'none', signal })
+}
+
+export function getDashboardSessionStatus(
+  signal?: AbortSignal,
+): Promise<DashboardSessionStatus> {
+  return apiRequest<DashboardSessionStatus>('/api/auth/session/', { signal })
+}
+
+export function rememberSession(remember: boolean, signal?: AbortSignal): Promise<{ remember: boolean }> {
+  return apiRequest<{ remember: boolean }>('/api/auth/session/remember/', {
+    method: 'POST',
+    body: { remember },
+    signal,
+  })
+}
+
+export function getAccountProfile(signal?: AbortSignal): Promise<AccountProfile> {
+  return apiRequest<AccountProfile>('/api/auth/profile/', { signal })
+}
+
+export function updateAccountProfile(
+  input: Partial<AccountProfile>,
+  signal?: AbortSignal,
+): Promise<AccountProfile> {
+  return apiRequest<AccountProfile>('/api/auth/profile/', {
+    method: 'PATCH',
+    body: input,
+    signal,
+  })
 }
 
 export async function signIn(email: string, password: string): Promise<LoginResult> {

@@ -20,9 +20,8 @@ class CustomAccountAdapter(DefaultAccountAdapter):
 
     The allowlist is read from ``ACCOUNT_ALLOWED_SIGNUP_DOMAINS`` (a list of
     lower-cased domains). When the list is empty, every domain is accepted so
-    that the restriction is opt-in. This is intentionally separate from the
-    future org-auto-assignment step (AUTH-06): signup never grants an
-    organization membership or an elevated role.
+    that the restriction is opt-in. Signup never grants an organization
+    membership; users create a new workspace after authenticating.
     """
 
     def clean_email(self, email):
@@ -38,17 +37,12 @@ class CustomAccountAdapter(DefaultAccountAdapter):
         """Create the user, then ensure an AccountProfile exists.
 
         ``full_name`` from the signup payload is stored on the profile.
-        If an ``organization`` name is provided, an Organization and
-        OrgMembership are created through the domain models (not duplicated
-        on the profile).
         """
         user = super().save_user(request, user, form, commit)
 
         full_name = ""
-        org_name = None
         if hasattr(request, "data") and request.data:
             full_name = request.data.get("full_name", "") or ""
-            org_name = request.data.get("organization", "") or None
 
         profile, profile_created = AccountProfile.objects.get_or_create(
             user=user,
@@ -57,16 +51,6 @@ class CustomAccountAdapter(DefaultAccountAdapter):
         if not profile_created and full_name:
             profile.full_name = full_name
             profile.save(update_fields=["full_name"])
-
-        if org_name:
-            from .models import Organization, OrgMembership
-
-            organization, _ = Organization.objects.get_or_create(name=org_name.strip())
-            OrgMembership.objects.get_or_create(
-                user=user,
-                organization=organization,
-                defaults={"role": OrgMembership.Role.ADMIN},
-            )
 
         return user
 

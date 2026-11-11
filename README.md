@@ -72,7 +72,7 @@ TODO: list only what is actually used (for example Render, APIMatic, AG Grid, Po
 
 ## Security notes
 
-- `source=trusted` is self-reported by the caller. The API cannot prove that a request came from a trusted origin; the SDK or MCP wrapper must set it from the instruction's actual provenance. Missing provenance defaults to `untrusted` and needs approval.
+- Agent-key spend requests are assigned `untrusted` provenance by the server; clients cannot assert trusted provenance. Trusted provenance is reserved for trusted server-originated calls.
 - The audit log is append-only and hash-chained per organization. When `AUDIT_ANCHOR_PATH` points at storage outside the database host, the head hash is anchored hourly and verification checks the anchor; otherwise it is tamper-evident, not tamper-proof.
 - Spend requests require an `Idempotency-Key`. Replaying the same key and body returns the stored response with `Idempotent-Replayed: true`; reusing a key with a different body or destination returns 409.
 - Agent responses carry rule IDs and short messages only. Budgets, caps and spent amounts stay in the dashboard and audit log.
@@ -196,7 +196,7 @@ Create an agent (this prints its API key once), then submit spend requests:
     curl -s -X POST http://localhost:8000/v1/spend-requests/ \
       -H "Authorization: Bearer agk_YOUR_KEY" -H "Content-Type: application/json" \
       -H "Idempotency-Key: 7f2c9d1e-4a3b-4c5d-8e9f-0a1b2c3d4e5f" \
-      -d '{"amount":"10.00","currency":"USD","merchant":"acme.com","source":"trusted","destination_type":"paypal_email","destination_value":"seller@example.com"}'
+      -d '{"amount":"10.00","currency":"USD","merchant":"acme.com","destination_type":"paypal_email","destination_value":"seller@example.com"}'
 
 The response always has HTTP status 201; read the `decision` field (allow, deny or needs_approval) and `reasons`. Retries must reuse the same `Idempotency-Key` and body. Interactive docs are at http://localhost:8000/api/docs/ and the OpenAPI schema is at `/api/schema/`.
 

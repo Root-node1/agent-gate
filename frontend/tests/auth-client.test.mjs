@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import { afterEach, beforeEach, test } from 'node:test'
-import ts from 'typescript'
+import { loadTypeScriptModule } from './helpers/load-typescript.mjs'
 
-const source = await readFile(new URL('../src/api/auth.ts', import.meta.url), 'utf8')
-const javascript = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-}).outputText
-const auth = await import(
-  `data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`
-)
+const csrf = await loadTypeScriptModule('../../src/api/csrf.ts')
+const client = await loadTypeScriptModule('../../src/api/client.ts', {
+  './csrf': csrf.url,
+})
+const { module: auth } = await loadTypeScriptModule('../../src/api/auth.ts', {
+  './client': client.url,
+  './csrf': csrf.url,
+})
 
 let originalFetch
 let originalDocument
@@ -42,12 +42,12 @@ afterEach(() => {
   else globalThis.document = originalDocument
 })
 
-test('CSRF bootstrap calls headless config with cookies and requires its cookie', async () => {
+test('CSRF bootstrap uses the public account endpoint and requires its cookie', async () => {
   useFetch(async (url, init) => {
-    assert.equal(url, '/api/auth/headless/browser/v1/config')
+    assert.equal(url, '/api/auth/csrf/')
     assert.equal(init.credentials, 'include')
     globalThis.document.cookie = 'csrftoken=csrf-token'
-    return jsonResponse({ data: {} })
+    return jsonResponse({ csrfToken: 'csrf-token' })
   })
 
   await auth.bootstrapCsrf()
@@ -60,16 +60,16 @@ test('CSRF bootstrap reports failed requests and missing cookies', async () => {
   await assert.rejects(auth.bootstrapCsrf(), /HTTP 503/)
 
   globalThis.document.cookie = ''
-  useFetch(async () => jsonResponse({ data: {} }))
+  useFetch(async () => jsonResponse({ csrfToken: 'csrf-token' }))
   await assert.rejects(auth.bootstrapCsrf(), /did not set a CSRF cookie/)
 })
 
 test('unsafe requests bootstrap CSRF, send the header, and include credentials', async () => {
   globalThis.document.cookie = ''
   useFetch(async (url) => {
-    if (url.endsWith('/config')) {
+    if (url === '/api/auth/csrf/') {
       globalThis.document.cookie = 'csrftoken=csrf%2Ftoken'
-      return jsonResponse({ data: {} })
+      return jsonResponse({ csrfToken: 'csrf/token' })
     }
     return jsonResponse({ status: 200 })
   })
@@ -122,13 +122,54 @@ test('current user is fetched from the session-authenticated dashboard profile e
       last_name: 'User',
       date_joined: '2025-01-01T00:00:00Z',
       is_email_verified: true,
-      memberships: [{ organization: 'Example', role: 'admin' }],
+      memberships: [{
+        organization_id: '719ed6ba-cf5f-45a0-8227-00fa3f47fdba',
+        organization: 'Example',
+        role: 'admin',
+      }],
+      profile: { full_name: 'Test User' },
     })
   })
 
   const user = await auth.getCurrentUser()
   assert.equal(user.email, 'user@example.com')
+  assert.equal(
+    user.memberships[0].organization_id,
+    '719ed6ba-cf5f-45a0-8227-00fa3f47fdba',
+  )
   assert.equal(user.memberships[0].role, 'admin')
+})
+
+test('workspace creation sends a session-authenticated CSRF-protected request', async () => {
+  useFetch(async (url, init) => {
+    assert.equal(url, '/api/auth/organizations/')
+    assert.equal(init.method, 'POST')
+    assert.equal(init.credentials, 'include')
+    assert.equal(new Headers(init.headers).get('X-CSRFToken'), 'csrf-token')
+    assert.deepEqual(JSON.parse(init.body), { name: 'Northstar Studio' })
+    return jsonResponse({
+      id: '719ed6ba-cf5f-45a0-8227-00fa3f47fdba',
+      name: 'Northstar Studio',
+      role: 'admin',
+    }, 201)
+  })
+
+  assert.deepEqual(await auth.createOrganization('Northstar Studio'), {
+    id: '719ed6ba-cf5f-45a0-8227-00fa3f47fdba',
+    name: 'Northstar Studio',
+    role: 'admin',
+  })
+})
+
+test('workspace creation reports duplicate-name conflicts', async () => {
+  useFetch(async () => jsonResponse({
+    detail: 'A workspace with this name already exists.',
+  }, 409))
+
+  await assert.rejects(
+    auth.createOrganization('Northstar Studio'),
+    /A workspace with this name already exists/,
+  )
 })
 
 test('login accepts server-confirmed success including the tested 409 response', async () => {

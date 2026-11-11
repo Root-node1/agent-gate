@@ -26,9 +26,9 @@ Principle: rules are enforced by deterministic code. The AI model is advisory on
 
 ## 3. Request flow
 
-1. The agent submits a spend request (amount, currency, merchant, purpose, where the instruction came from).
+1. The agent submits a spend request (amount, currency, merchant, and purpose).
 2. The rule engine checks: merchant allow/block list, per-transaction cap, daily, weekly and monthly budgets, velocity, merchant-window spend, currency, provenance, new-payee and payee-change state, and deterministic injection phrases.
-3. If the instruction did not come from a trusted source, the request is escalated or denied according to the policy.
+3. Agent-key API requests receive untrusted provenance from the server and are escalated or denied according to the policy. Trusted provenance is reserved for trusted server-originated calls.
 4. An advisory injection classifier may score the request when configured. It can raise risk or escalate, but never denies or lowers a rule-based denial; deterministic injection phrases are still denied.
 5. Decision: allow, deny, or needs_approval, with reasons and matching rule IDs.
 6. If needs_approval, a human approves or denies in the dashboard.
@@ -74,7 +74,7 @@ Approval rules (a human must decide):
 
 Precedence: any deny wins, then any approval reason gives `needs_approval`, otherwise `allow`. Every triggered rule is reported, so the audit log explains the full decision. Merchants are normalized (lowercase, no scheme, path or `www.`) before matching, and lookalike domains such as `acme.com.evil.net` do not match `acme.com`. Messages contain no budgets, caps or spent amounts; numeric policy context belongs in the dashboard and audit views.
 
-Provenance is self-reported. The API cannot prove that `source=trusted` is true; the SDK or MCP wrapper must set it from where the instruction originated. Missing provenance defaults to `untrusted`, and every non-trusted source fails closed.
+The agent-key API does not accept caller-supplied provenance. It assigns `untrusted` server-side; internal trusted server-originated calls may explicitly use trusted provenance. This prevents a caller from elevating its request by labeling it trusted.
 
 Deterministic injection screening lives in `engine/screening/patterns.py`. It normalizes NFKC, casefolds, strips zero-width format characters, folds common homoglyphs, and collapses whitespace before matching phrases such as "ignore previous instructions", "override the policy" and "approve this payment". The pipeline runs it before acquiring any row lock and passes the result into the engine; direct engine calls without a result run it themselves. It is a backstop, not a detector: paraphrases can still pass.
 

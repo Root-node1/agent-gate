@@ -10,6 +10,12 @@ export type SessionResolution =
   | { status: 'unauthenticated' }
   | { status: 'pending'; flow: HeadlessFlow }
 
+export function authenticatedHomePath(
+  user: Pick<CurrentUser, 'memberships'>,
+): '/app' | '/onboarding' {
+  return user.memberships.length > 0 ? '/app' : '/onboarding'
+}
+
 export function pendingAuthenticationPath(flow: HeadlessFlow): '/mfa' | '/verify-email' | null {
   if (flow.id === 'mfa_authenticate') return '/mfa'
   if (flow.id === 'verify_email') return '/verify-email'
@@ -35,5 +41,12 @@ export async function resolveSession(
   if (authentication.status === 'pending') {
     return { status: 'pending', flow: authentication.flow }
   }
-  return { status: 'authenticated', user: await getCurrentUser() }
+  try {
+    return { status: 'authenticated', user: await getCurrentUser() }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'SessionExpiredError') {
+      return { status: 'unauthenticated' }
+    }
+    throw error
+  }
 }

@@ -4,12 +4,17 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
+from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
+from rest_framework.test import APIClient
 
 from apps.accounts.models import Organization
 from apps.agents.models import Agent
 from apps.approvals import services as approval_services
+from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
+from apps.payees.models import Payee, fingerprint
 from apps.payments import dispatch
 from apps.payments.checks import check_paypal_configuration
 from apps.payments.executors import (
@@ -36,6 +41,7 @@ from apps.payments.services import (
 )
 from apps.policies.models import Policy
 from apps.spend import pipeline
+from apps.spend.idempotency import request_hash
 from apps.spend.models import SpendRequest
 
 
@@ -340,7 +346,7 @@ class CountingExecutor:
 class ExecutionServiceTests(TestCase):
     def setUp(self):
         self.organization = Organization.objects.create(name="default")
-        self.agent, _ = Agent.create_with_key("shopper", self.organization)
+        self.agent, self.raw_key = Agent.create_with_key("shopper", self.organization)
         self.policy = Policy.objects.create(agent=self.agent)
 
     def spend(self, status=SpendRequest.Status.APPROVED, **overrides):
@@ -349,6 +355,7 @@ class ExecutionServiceTests(TestCase):
             "agent": self.agent,
             "policy": self.policy,
             "policy_version": self.policy.version,
+            "source_type": SpendRequest.SourceType.TRUSTED,
             "amount_minor": 1_000,
             "currency": "USD",
             "merchant_ref": "acme.com",
@@ -358,7 +365,34 @@ class ExecutionServiceTests(TestCase):
             "status": status,
         }
         values.update(overrides)
-        return SpendRequest.objects.create(**values)
+        values["destination_fingerprint"] = (
+            fingerprint(values["destination_type"], values["destination_value"])
+            if values["destination_type"] and values["destination_value"]
+            else ""
+        )
+        values["request_hash"] = request_hash(
+            amount_minor=values["amount_minor"],
+            currency=values["currency"],
+            merchant_ref=values["merchant_ref"],
+            purpose=values.get("purpose", ""),
+            source_type=values["source_type"],
+            source_ref=values.get("source_ref", ""),
+            evidence_excerpt=values.get("evidence_excerpt", ""),
+            destination_type=values["destination_type"],
+            destination_value=values["destination_value"],
+        )
+        spend = SpendRequest.objects.create(**values)
+        if spend.destination_type:
+            Payee.objects.get_or_create(
+                organization=self.organization,
+                merchant_ref=spend.merchant_ref,
+                defaults={
+                    "destination_type": spend.destination_type,
+                    "destination_value": spend.destination_value,
+                    "destination_fingerprint": spend.destination_fingerprint,
+                },
+            )
+        return spend
 
     def events(self, spend):
         return list(
@@ -478,6 +512,188 @@ class ExecutionServiceTests(TestCase):
         self.assertEqual(executor.calls, 0)
         spend.refresh_from_db()
         self.assertEqual(spend.status, SpendRequest.Status.PENDING_APPROVAL)
+
+    def assert_execution_blocked(self, spend, expected_reason):
+        executor = CountingExecutor(ExecutionResult("B-1", "COMPLETED"))
+
+        outcome = execute_spend_request(spend.pk, executor=executor)
+
+        self.assertEqual(outcome, ExecutionOutcome.EXECUTION_BLOCKED)
+        spend.refresh_from_db()
+        self.assertEqual(spend.status, SpendRequest.Status.EXECUTION_BLOCKED)
+        self.assertEqual(spend.status, "execution_blocked")
+        self.assertEqual(executor.calls, 0)
+        event = AuditEvent.objects.get(
+            spend_request=spend,
+            event_type=AuditEvent.EventType.EXECUTION_BLOCKED,
+        )
+        self.assertEqual(event.event_type, "execution.blocked")
+        self.assertIn(expected_reason, event.payload["reason_codes"])
+        if (
+            self.agent.status == Agent.Status.ACTIVE
+            and self.agent.api_keys.filter(revoked_at__isnull=True).exists()
+        ):
+            client = APIClient()
+            client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.raw_key}")
+            response = client.get(f"/v1/spend-requests/{spend.pk}/")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "execution_blocked")
+
+        repeated = execute_spend_request(spend.pk, executor=executor)
+
+        self.assertEqual(repeated, ExecutionOutcome.SKIPPED)
+        self.assertEqual(executor.calls, 0)
+
+    def test_suspended_agent_blocks_execution(self):
+        spend = self.spend()
+        self.agent.status = Agent.Status.SUSPENDED
+        self.agent.save(update_fields=["status"])
+
+        self.assert_execution_blocked(spend, "agent_inactive")
+
+    def test_revoked_agent_key_blocks_execution(self):
+        spend = self.spend()
+        self.agent.revoke_current_key()
+
+        self.assert_execution_blocked(spend, "agent_unauthorized")
+
+    def test_current_policy_deny_blocks_execution(self):
+        spend = self.spend(decision=SpendRequest.Decision.NEEDS_APPROVAL)
+        approver = get_user_model().objects.create_user("policy-denial-approver")
+        Approval.objects.create(
+            organization=self.organization,
+            spend_request=spend,
+            outcome=Approval.Outcome.APPROVED,
+            approver=approver,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            decided_at=timezone.now(),
+        )
+        Policy.objects.create(
+            agent=self.agent,
+            version=self.policy.version + 1,
+            per_transaction_cap_minor=500,
+            approval_threshold_minor=500,
+        )
+
+        self.assert_execution_blocked(spend, "policy_denied")
+
+    def test_new_current_approval_requirement_blocks_without_approval(self):
+        spend = self.spend()
+        Policy.objects.create(
+            agent=self.agent,
+            version=self.policy.version + 1,
+            approval_threshold_minor=500,
+        )
+
+        self.assert_execution_blocked(spend, "approval_required")
+
+    def test_exhausted_current_budget_blocks_execution(self):
+        spend = self.spend()
+        Policy.objects.create(
+            agent=self.agent,
+            version=self.policy.version + 1,
+            daily_budget_minor=1_500,
+        )
+        self.spend(status=SpendRequest.Status.SUCCEEDED, amount_minor=1_000)
+
+        self.assert_execution_blocked(spend, "policy_denied")
+
+    def test_changed_payee_destination_blocks_execution(self):
+        spend = self.spend()
+        payee = Payee.objects.get(
+            organization=self.organization, merchant_ref=spend.merchant_ref
+        )
+        payee.destination_value = "different@example.com"
+        payee.destination_fingerprint = fingerprint(
+            payee.destination_type, payee.destination_value
+        )
+        payee.save(update_fields=["destination_value", "destination_fingerprint"])
+
+        self.assert_execution_blocked(spend, "destination_changed")
+
+    def test_new_current_payee_cooldown_blocks_execution(self):
+        spend = self.spend()
+        payee = Payee.objects.get(
+            organization=self.organization, merchant_ref=spend.merchant_ref
+        )
+        payee.trusted_at = timezone.now()
+        payee.save(update_fields=["trusted_at", "updated_at"])
+        Policy.objects.create(
+            agent=self.agent,
+            version=self.policy.version + 1,
+            new_payee_cooldown_hours=24,
+        )
+
+        self.assert_execution_blocked(spend, "R11_NEW_PAYEE")
+
+    def test_new_payee_approval_requirement_cannot_be_bypassed(self):
+        spend = self.spend()
+        payee = Payee.objects.get(
+            organization=self.organization, merchant_ref=spend.merchant_ref
+        )
+        payee.first_seen_at = timezone.now() - timezone.timedelta(days=2)
+        payee.save(update_fields=["first_seen_at", "updated_at"])
+        Policy.objects.create(
+            agent=self.agent,
+            version=self.policy.version + 1,
+            new_payee_cooldown_hours=24,
+        )
+
+        self.assert_execution_blocked(spend, "R11_NEW_PAYEE")
+
+    def test_missing_required_approval_blocks_execution(self):
+        spend = self.spend(decision=SpendRequest.Decision.NEEDS_APPROVAL)
+
+        self.assert_execution_blocked(spend, "approval_required")
+
+    def test_pending_required_approval_blocks_execution(self):
+        spend = self.spend(decision=SpendRequest.Decision.NEEDS_APPROVAL)
+        Approval.objects.create(
+            organization=self.organization,
+            spend_request=spend,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+        )
+
+        self.assert_execution_blocked(spend, "approval_required")
+
+    def test_approved_request_amount_is_not_counted_twice(self):
+        spend = self.spend()
+        Policy.objects.create(
+            agent=self.agent,
+            version=self.policy.version + 1,
+            daily_budget_minor=1_000,
+        )
+        executor = CountingExecutor(ExecutionResult("B-1", "COMPLETED"))
+
+        outcome = execute_spend_request(spend.pk, executor=executor)
+
+        self.assertEqual(outcome, ExecutionOutcome.SUCCEEDED)
+        self.assertEqual(executor.calls, 1)
+
+    def test_valid_human_approval_remains_executable(self):
+        spend = self.spend(decision=SpendRequest.Decision.NEEDS_APPROVAL)
+        approver = get_user_model().objects.create_user("execution-approver")
+        Approval.objects.create(
+            organization=self.organization,
+            spend_request=spend,
+            outcome=Approval.Outcome.APPROVED,
+            approver=approver,
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+            decided_at=timezone.now(),
+        )
+        executor = CountingExecutor(ExecutionResult("B-1", "COMPLETED"))
+
+        outcome = execute_spend_request(spend.pk, executor=executor)
+
+        self.assertEqual(outcome, ExecutionOutcome.SUCCEEDED)
+        self.assertEqual(executor.calls, 1)
+
+    def test_modified_request_snapshot_blocks_execution(self):
+        spend = self.spend()
+        spend.amount_minor += 1
+        spend.save(update_fields=["amount_minor", "updated_at"])
+
+        self.assert_execution_blocked(spend, "request_snapshot_mismatch")
 
 
 class DispatchTests(TestCase):

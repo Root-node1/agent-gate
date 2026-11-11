@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { useSession } from './context'
-import { pendingAuthenticationPath } from './sessionModel'
+import { authenticatedHomePath, pendingAuthenticationPath } from './sessionModel'
 
 function SessionProblem() {
   const { authenticationError, refreshSession } = useSession()
@@ -20,7 +20,7 @@ function SessionProblem() {
 }
 
 export function ProtectedDashboard() {
-  const { authenticationStatus, pendingFlow } = useSession()
+  const { authenticationStatus, currentUser, pendingFlow } = useSession()
   const location = useLocation()
   if (authenticationStatus === 'loading') {
     return <p className="session-gate" role="status">Checking your session…</p>
@@ -33,16 +33,26 @@ export function ProtectedDashboard() {
   if (authenticationStatus !== 'authenticated') {
     return <Navigate to="/login" replace state={{ from: location }} />
   }
+  if (currentUser && authenticatedHomePath(currentUser) !== '/app') {
+    return <Navigate to={authenticatedHomePath(currentUser)} replace />
+  }
   return <Outlet />
 }
 
 export function PublicAuthentication() {
-  const { authenticationStatus, pendingFlow } = useSession()
+  const { authenticationStatus, currentUser, pendingFlow } = useSession()
   if (authenticationStatus === 'loading') {
     return <p className="session-gate" role="status">Checking your session…</p>
   }
   if (authenticationStatus === 'error') return <SessionProblem />
-  if (authenticationStatus === 'authenticated') return <Navigate to="/app" replace />
+  if (authenticationStatus === 'authenticated') {
+    return (
+      <Navigate
+        to={currentUser ? authenticatedHomePath(currentUser) : '/onboarding'}
+        replace
+      />
+    )
+  }
   if (authenticationStatus === 'pending' && pendingFlow) {
     const destination = pendingAuthenticationPath(pendingFlow)
     if (destination) return <Navigate to={destination} replace />

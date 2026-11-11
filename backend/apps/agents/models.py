@@ -50,15 +50,17 @@ class Agent(models.Model):
 
         Returns (new_api_key, raw_key). The raw key is returned only to the caller.
         """
-        current = self.current_key
+        agent = type(self).objects.select_for_update().get(pk=self.pk)
+        current = agent.current_key
         if current is not None:
             current.revoke()
-        return ApiKey.create_key(self)
+        return ApiKey.create_key(agent)
 
     @transaction.atomic
     def revoke_current_key(self):
         """Revoke the current non-revoked key. Returns the revoked key or None."""
-        current = self.current_key
+        agent = type(self).objects.select_for_update().get(pk=self.pk)
+        current = agent.current_key
         if current is None:
             return None
         current.revoke()

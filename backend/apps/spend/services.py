@@ -62,28 +62,33 @@ def build_limits(policy: Policy) -> engine.PolicyLimits:
     )
 
 
-def counted_spend(agent, currency: str, since) -> Decimal:
+def counted_spend(agent, currency: str, since, *, exclude_request_id=None) -> Decimal:
     """Money counted against budgets: requests that are approved, executing, or succeeded."""
-    total = (
-        SpendRequest.objects.filter(
-            agent=agent,
-            currency=currency,
-            status__in=SpendRequest.BUDGET_STATUSES,
-            created_at__gte=since,
-        ).aggregate(total=Sum("amount_minor"))["total"]
-        or 0
-    )
-    return to_major(total, currency)
-
-
-def window_usage(agent, currency: str, merchant_ref: str, since) -> tuple[int, Decimal]:
-    """Return budget-consuming request count and merchant spend since a cutoff."""
-    usage = SpendRequest.objects.filter(
+    requests = SpendRequest.objects.filter(
         agent=agent,
         currency=currency,
         status__in=SpendRequest.BUDGET_STATUSES,
         created_at__gte=since,
-    ).aggregate(
+    )
+    if exclude_request_id is not None:
+        requests = requests.exclude(pk=exclude_request_id)
+    total = requests.aggregate(total=Sum("amount_minor"))["total"] or 0
+    return to_major(total, currency)
+
+
+def window_usage(
+    agent, currency: str, merchant_ref: str, since, *, exclude_request_id=None
+) -> tuple[int, Decimal]:
+    """Return budget-consuming request count and merchant spend since a cutoff."""
+    requests = SpendRequest.objects.filter(
+        agent=agent,
+        currency=currency,
+        status__in=SpendRequest.BUDGET_STATUSES,
+        created_at__gte=since,
+    )
+    if exclude_request_id is not None:
+        requests = requests.exclude(pk=exclude_request_id)
+    usage = requests.aggregate(
         velocity_count=Count("id"),
         merchant_total=Sum("amount_minor", filter=Q(merchant_ref=merchant_ref)),
     )
@@ -104,7 +109,15 @@ def budget_period_starts(policy: Policy, now) -> tuple:
     )
 
 
-def build_spent(agent, policy: Policy, currency: str, merchant_ref: str, now=None) -> engine.Spent:
+def build_spent(
+    agent,
+    policy: Policy,
+    currency: str,
+    merchant_ref: str,
+    now=None,
+    *,
+    exclude_request_id=None,
+) -> engine.Spent:
     """Collect the budget and window usage used by both submission and recheck."""
     now = now or timezone.now()
     day_start, week_start, month_start = budget_period_starts(policy, now)
@@ -113,12 +126,22 @@ def build_spent(agent, policy: Policy, currency: str, merchant_ref: str, now=Non
     if policy.velocity_max_count or policy.merchant_window_cap_minor:
         window_start = now - timedelta(seconds=policy.velocity_window_seconds)
         velocity_count, merchant_window_spend = window_usage(
-            agent, currency, merchant_ref, window_start
+            agent,
+            currency,
+            merchant_ref,
+            window_start,
+            exclude_request_id=exclude_request_id,
         )
     return engine.Spent(
-        today=counted_spend(agent, currency, day_start),
-        this_week=counted_spend(agent, currency, week_start),
-        this_month=counted_spend(agent, currency, month_start),
+        today=counted_spend(
+            agent, currency, day_start, exclude_request_id=exclude_request_id
+        ),
+        this_week=counted_spend(
+            agent, currency, week_start, exclude_request_id=exclude_request_id
+        ),
+        this_month=counted_spend(
+            agent, currency, month_start, exclude_request_id=exclude_request_id
+        ),
         velocity_count=velocity_count,
         merchant_window_spend=merchant_window_spend,
     )

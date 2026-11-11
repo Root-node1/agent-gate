@@ -85,6 +85,10 @@
   border-left-color: var(--color-approval);
 }
 
+.decision-execution_blocked {
+  border-left-color: var(--color-deny);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -107,6 +111,34 @@
 .badge-needs_approval {
   color: var(--color-approval);
   background: var(--color-approval-bg);
+}
+
+.execution-status {
+  margin: var(--space-4) 0;
+  padding: var(--space-3);
+  border-left: 4px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.execution-status p {
+  margin: var(--space-1) 0 0;
+}
+
+.execution-status-execution_blocked,
+.execution-status-denied,
+.execution-status-failed,
+.execution-status-rejected,
+.execution-status-expired {
+  border-left-color: var(--color-deny);
+}
+
+.execution-status-succeeded,
+.execution-status-reversed {
+  border-left-color: var(--color-allow);
+}
+
+.execution-status-pending_approval {
+  border-left-color: var(--color-approval);
 }
 
 .decision-summary {
@@ -260,4 +292,3 @@
     margin-top: 0;
   }
 }
-

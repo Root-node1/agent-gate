@@ -6,11 +6,22 @@ from .models import AccountProfile, OrgMembership, User
 
 
 class MembershipSerializer(serializers.ModelSerializer):
+    organization_id = serializers.UUIDField(read_only=True)
     organization = serializers.CharField(source="organization.name")
 
     class Meta:
         model = OrgMembership
-        fields = ["organization", "role"]
+        fields = ["organization_id", "organization", "role"]
+
+
+class OrganizationCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(min_length=2, max_length=200)
+
+
+class OrganizationCreateResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    role = serializers.ChoiceField(choices=OrgMembership.Role.choices)
 
 
 class AccountProfileSerializer(serializers.ModelSerializer):

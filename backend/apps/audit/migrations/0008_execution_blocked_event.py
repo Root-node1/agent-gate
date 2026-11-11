@@ -1,0 +1,41 @@
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("audit", "0007_agent_activated_event"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="auditevent",
+            name="event_type",
+            field=models.CharField(
+                choices=[
+                    ("request.received", "Request received"),
+                    ("decision.made", "Decision made"),
+                    ("approval.requested", "Approval requested"),
+                    ("approval.approved", "Approval approved"),
+                    ("approval.denied", "Approval denied"),
+                    ("approval.expired", "Approval expired"),
+                    ("payment.executing", "Payment executing"),
+                    ("execution.blocked", "Execution blocked"),
+                    ("payment.reserved", "Payment reserved"),
+                    ("payment.succeeded", "Payment succeeded"),
+                    ("payment.failed", "Payment failed"),
+                    ("payment.reversed", "Payment reversed"),
+                    ("webhook.received", "Webhook received"),
+                    ("policy.changed", "Policy changed"),
+                    ("agent.created", "Agent created"),
+                    ("agent.updated", "Agent updated"),
+                    ("agent.suspended", "Agent suspended"),
+                    ("agent.activated", "Agent activated"),
+                    ("key.created", "Key created"),
+                    ("key.revoked", "Key revoked"),
+                    ("demo.reset", "Demo reset"),
+                ],
+                max_length=50,
+            ),
+        ),
+    ]

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import {
   ApiError,
   submitSpendRequest,
@@ -14,7 +14,6 @@ const EMPTY_INPUT: SpendRequestInput = {
   currency: 'USD',
   merchant: '',
   purpose: '',
-  source: 'unknown',
 }
 
 interface Props {
@@ -28,6 +27,7 @@ export default function SpendRequestForm({ onResult }: Props) {
   const [keyError, setKeyError] = useState('')
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const requestKey = useRef<{ fingerprint: string; value: string } | null>(null)
 
   function update<K extends keyof SpendRequestInput>(field: K, value: SpendRequestInput[K]) {
     setInput((prev) => ({ ...prev, [field]: value }))
@@ -42,9 +42,20 @@ export default function SpendRequestForm({ onResult }: Props) {
       setKeyError('Paste the agent key first.')
       return
     }
+    if (!crypto.randomUUID) {
+      setFormError('This browser cannot create a secure request identifier. Update your browser and retry.')
+      return
+    }
     setSubmitting(true)
     try {
-      onResult(await submitSpendRequest(agentKey, input))
+      const fingerprint = JSON.stringify({ agentKey, input })
+      let requestIdentity = requestKey.current
+      if (requestIdentity?.fingerprint !== fingerprint) {
+        requestIdentity = { fingerprint, value: crypto.randomUUID() }
+        requestKey.current = requestIdentity
+      }
+      onResult(await submitSpendRequest(agentKey, input, requestIdentity.value))
+      requestKey.current = null
     } catch (err) {
       if (err instanceof ApiError) {
         setFormError(err.message)
@@ -121,20 +132,6 @@ export default function SpendRequestForm({ onResult }: Props) {
           required
         />
         {errorFor('merchant')}
-      </div>
-
-      <div className="field">
-        <label htmlFor="source">Where did the instruction come from?</label>
-        <select
-          {...fieldProps('source')}
-          value={input.source}
-          onChange={(e) => update('source', e.target.value as SpendRequestInput['source'])}
-        >
-          <option value="trusted">Trusted: operator or user</option>
-          <option value="untrusted">Untrusted: web page, email or invoice</option>
-          <option value="unknown">Unknown</option>
-        </select>
-        {errorFor('source')}
       </div>
 
       <div className="field">

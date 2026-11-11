@@ -8,7 +8,6 @@ operations the payment executor needs.
 from __future__ import annotations
 
 import base64
-
 import threading
 import time
 from collections.abc import Callable
@@ -18,12 +17,14 @@ import httpx
 from .config import get_paypal_config
 from .exceptions import (
     PayPalAmbiguousResponse,
-    PayPalError,
     PayPalAuthenticationError,
     PayPalConfigurationError,
     PayPalResponseError,
     PayPalTimeoutError,
     PayPalTransientError,
+)
+from .exceptions import (
+    PayPalError as PayPalError,
 )
 
 SANDBOX_BASE_URL = "https://api-m.sandbox.paypal.com"
@@ -172,11 +173,16 @@ class PayPalClient:
     def _decode_json(self, response: httpx.Response) -> dict:
         if response.status_code >= 400:
             code = self._error_code(response)
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
             raise PayPalResponseError(
                 f"PayPal rejected the request ({response.status_code}: "
                 f"{code or 'error'}).",
                 status_code=response.status_code,
                 code=code,
+                body=body if isinstance(body, dict) else None,
             )
         try:
             payload = response.json()

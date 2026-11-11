@@ -8,6 +8,7 @@ import {
   type CurrentUser,
   type HeadlessFlow,
 } from '../api/auth'
+import { SESSION_EXPIRED_EVENT } from '../api/client'
 import type { SpendRequest } from '../api/spendRequests'
 import { SessionContext } from './context'
 import {
@@ -62,6 +63,14 @@ export default function SessionProvider({ children }: { children: ReactNode }) {
       throw error
     }
   }, [])
+
+  useEffect(() => {
+    const handleExpiredSession = () => {
+      void refreshSession().catch(() => undefined)
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleExpiredSession)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleExpiredSession)
+  }, [refreshSession])
 
   useEffect(() => {
     let request = initialRequest.current

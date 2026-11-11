@@ -17,6 +17,7 @@ const router = createBrowserRouter(
       <Route path="downloads" lazy={page(() => import('./pages/DownloadsPage'))} />
       <Route path="system-requirements" lazy={page(() => import('./pages/SystemRequirementsPage'))} />
       <Route path="install" lazy={page(() => import('./pages/InstallationPage'))} />
+      <Route path="onboarding" lazy={page(() => import('./pages/auth/OnboardingPage'))} />
       <Route element={<ProtectedDashboard />}>
         <Route path="app" element={<AppLayout />}>
           <Route index lazy={page(() => import('./pages/app/OverviewPage'))} />

@@ -20,8 +20,7 @@ export default function CodeSample() {
           {'\n'}    <span className="lp-c-key">"amount"</span>: <span className="lp-c-str">"480.00"</span>,
           {'\n'}    <span className="lp-c-key">"currency"</span>: <span className="lp-c-str">"USD"</span>,
           {'\n'}    <span className="lp-c-key">"merchant"</span>: <span className="lp-c-str">"aws.amazon.com"</span>,
-          {'\n'}    <span className="lp-c-key">"purpose"</span>: <span className="lp-c-str">"Pay overdue invoice"</span>,
-          {'\n'}    <span className="lp-c-key">"source"</span>: <span className="lp-c-str">"untrusted"</span>
+          {'\n'}    <span className="lp-c-key">"purpose"</span>: <span className="lp-c-str">"Pay overdue invoice"</span>
           {'\n'}  <span className="lp-c-str">{'}'}'</span>
           {'\n'}
           {'\n'}<span className="lp-c-cmt"># AgentGate answers with a decision and its reasons</span>

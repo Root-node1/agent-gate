@@ -1,0 +1,2 @@
+[    1847ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=88ee1ebd:15804
+[    2116ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://127.0.0.1:5173/api/auth/headless/browser/v1/auth/session:0

@@ -54,6 +54,6 @@ export function curlSnippet(rawKey: string) {
     `  -H "Authorization: Bearer ${rawKey}" \\`,
     '  -H "Content-Type: application/json" \\',
     `  -d '{"amount": "25.00", "currency": "USD", "merchant": "github.com",`,
-    `       "purpose": "Team seats", "source": "trusted"}'`,
+    `       "purpose": "Team seats"}'`,
   ].join('\n')
 }

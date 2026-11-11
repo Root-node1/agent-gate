@@ -23,12 +23,15 @@ SpendRequest at reservation time.
 
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
+from urllib.parse import urlsplit
 
 from django.db import transaction
 from django.utils import timezone
 
 import engine
 from apps.accounts.models import Organization
+from apps.agents.models import Agent
 from apps.approvals.models import Approval
 from apps.audit.models import AuditEvent
 from apps.common.money import to_major
@@ -36,21 +39,22 @@ from apps.payees.models import DestinationType, Payee
 from apps.payments.paypal.client import (
     PayPalAPIError,
     PayPalClient,
-    PayPalError,
-    PayPalTimeoutError,
     PayPalClientError,
     PayPalConflictError,
+    PayPalError,
     PayPalRateLimitError,
-    PayPalTransportError,
+    PayPalTimeoutError,
     PayPalTransientError,
+    PayPalTransportError,
     PayPalUncertainOutcomeError,
 )
 from apps.payments.paypal.config import PayPalConfigError, get_paypal_config
+from apps.payments.paypal.exceptions import PayPalResponseError
 from apps.policies.models import Policy
 from apps.spend import services as spend_services
 from apps.spend.models import SpendRequest
 
-from .models import PayoutReservation
+from .models import PayoutReservation, SpendExecutionClaim
 
 
 class PayoutReservationError(Exception):
@@ -170,7 +174,20 @@ def reserve_payout(
     """
     _require_payouts_enabled(django_settings)
 
-    # --- 1. Lock and load the SpendRequest --------------------------------
+    # --- 1. Lock controls and load the SpendRequest in the shared lock order
+    agent_id = (
+        SpendRequest.objects.filter(
+            pk=spend_request_id,
+            organization=organization,
+        )
+        .values_list("agent_id", flat=True)
+        .first()
+    )
+    if agent_id is None:
+        raise PayoutNotEligible("SpendRequest not found or not in this organization.")
+
+    agent = Agent.objects.select_for_update().get(pk=agent_id)
+    policy = spend_services.current_policy(agent, for_update=True)
     try:
         spend_request = (
             SpendRequest.objects.select_for_update(of=("self",))
@@ -199,7 +216,7 @@ def reserve_payout(
 
     # --- 4. Active same-organization Payee with PAYPAL_EMAIL destination ---
     try:
-        payee = Payee.objects.get(
+        payee = Payee.objects.select_for_update().get(
             organization=organization,
             merchant_ref=spend_request.merchant_ref,
         )
@@ -220,8 +237,6 @@ def reserve_payout(
         )
 
     # --- 5. Budget and spend-limit recheck --------------------------------
-    agent = spend_request.agent
-    policy = spend_services.current_policy(agent, for_update=True)
     if policy is None:
         raise PayoutNotEligible("This agent has no current policy.")
     now = timezone.now()
@@ -245,6 +260,10 @@ def reserve_payout(
         raise PayoutAlreadyReserved(
             "A payout reservation already exists for this SpendRequest."
         )
+    if SpendExecutionClaim.objects.filter(spend_request=spend_request).exists():
+        raise PayoutAlreadyReserved(
+            "This SpendRequest already has an execution claim."
+        )
 
     # --- 8. Create the immutable reservation ------------------------------
     now = timezone.now()
@@ -259,6 +278,12 @@ def reserve_payout(
         destination_fingerprint=spend_request.destination_fingerprint,
         idempotency_key=idempotency_key,
         status=PayoutReservation.Status.RESERVED,
+    )
+    SpendExecutionClaim.objects.create(
+        spend_request=spend_request,
+        path=SpendExecutionClaim.Path.MANUAL,
+        status=SpendExecutionClaim.Status.CLAIMED,
+        payout_reservation=reservation,
     )
 
     # --- 9. Audit the reservation -----------------------------------------
@@ -371,9 +396,63 @@ def _parse_payout_response(body: dict) -> tuple[str, str, str]:
     return batch_id, item_id, batch_status
 
 
-@transaction.atomic
+def _duplicate_batch_path(error: PayPalResponseError) -> str | None:
+    """Return a validated sandbox batch path from PayPal's duplicate response."""
+    body = error.body or {}
+    details = body.get("details", []) or []
+    duplicate = str(body.get("name", "")).upper() in {
+        "DUPLICATE_BATCH_ID",
+        "DUPLICATE_REQUEST_ID",
+    }
+    duplicate = duplicate or any(
+        str(detail.get("issue", "")).upper() == "DUPLICATE_BATCH_ID"
+        for detail in details
+        if isinstance(detail, dict)
+    )
+    if error.status_code != 400 or not duplicate:
+        return None
+
+    for link in body.get("links", []) or []:
+        if not isinstance(link, dict) or str(link.get("method", "")).upper() != "GET":
+            continue
+        try:
+            href = urlsplit(str(link.get("href", "")))
+        except ValueError:
+            continue
+        path_parts = href.path.split("/")
+        batch_id = path_parts[-1] if path_parts else ""
+        if (
+            href.scheme == "https"
+            and href.hostname == "api-m.sandbox.paypal.com"
+            and href.netloc in {
+                "api-m.sandbox.paypal.com",
+                "api-m.sandbox.paypal.com:443",
+            }
+            and not href.query
+            and not href.fragment
+            and len(path_parts) == 5
+            and path_parts[:4] == ["", "v1", "payments", "payouts"]
+            and batch_id
+            and batch_id.isascii()
+            and all(character.isalnum() or character in "-_" for character in batch_id)
+        ):
+            return href.path
+    return None
+
+
+def _response_body(response) -> dict:
+    if isinstance(response, dict):
+        return response
+    body = response.json()
+    if not isinstance(body, dict):
+        raise PayPalUncertainOutcomeError(
+            "PayPal returned an unexpected payout response."
+        )
+    return body
+
+
 def _transition_to_submission_pending(reservation: PayoutReservation) -> None:
-    """Persist sender_batch_id and transition to SUBMISSION_PENDING, then commit."""
+    """Persist the stable provider identity before any submission request."""
     if not reservation.sender_batch_id:
         reservation.sender_batch_id = uuid.uuid4()
     reservation.status = PayoutReservation.Status.SUBMISSION_PENDING
@@ -398,6 +477,7 @@ def _transition_to_failed(reservation: PayoutReservation, error: str) -> None:
     reservation.status = PayoutReservation.Status.FAILED
     reservation.submission_error = error[:1000]
     reservation.save()
+    _update_execution_claim(reservation, SpendExecutionClaim.Status.FAILED)
 
 
 @transaction.atomic
@@ -405,6 +485,39 @@ def _transition_to_uncertain(reservation: PayoutReservation) -> None:
     """Mark the outcome as uncertain; the reservation stays recoverable."""
     reservation.status = PayoutReservation.Status.UNCERTAIN
     reservation.save()
+    _update_execution_claim(reservation, SpendExecutionClaim.Status.UNCERTAIN)
+
+
+def _update_execution_claim(reservation: PayoutReservation, status: str) -> None:
+    claim = (
+        SpendExecutionClaim.objects.select_for_update()
+        .filter(payout_reservation=reservation)
+        .first()
+    )
+    if claim is not None and claim.status != status:
+        claim.status = status
+        claim.save(update_fields=["status", "updated_at"])
+
+
+def _existing_submission_result(
+    reservation: PayoutReservation,
+) -> SubmissionResult | None:
+    if reservation.status == PayoutReservation.Status.SUBMITTED:
+        outcome = "already_submitted"
+    elif reservation.status in (
+        PayoutReservation.Status.COMPLETED,
+        PayoutReservation.Status.FAILED,
+    ):
+        outcome = "terminal"
+    else:
+        return None
+    return SubmissionResult(
+        reservation,
+        outcome,
+        paypal_batch_id=reservation.paypal_payout_batch_id,
+        paypal_item_id=reservation.paypal_payout_item_id,
+        error=reservation.submission_error,
+    )
 
 
 def _submit_to_paypal(
@@ -415,48 +528,85 @@ def _submit_to_paypal(
     Returns (batch_id, item_id, batch_status).  Raises
     PayPalUncertainOutcomeError on timeout/5xx, PayPalAPIError on 4xx.
     """
-    client = PayPalClient.from_settings(django_settings, session=session)
     payload = _build_payout_payload(reservation, reservation.sender_batch_id)
     try:
-        response = client.post(
-            "/v1/payments/payouts",
-            json=payload,
-            request_id=str(reservation.sender_batch_id),
-        )
-    except (PayPalTransportError, PayPalTimeoutError, PayPalTransientError) as exc:
-        raise PayPalUncertainOutcomeError(f"PayPal transport error: {exc}") from exc
-    # PayPalClient._request raises on non-2xx in production; when mocked,
-    # check status codes here to surface the same exceptions.
-    status = getattr(response, "status_code", 200) or 200
-    if status >= 500:
-        raise PayPalUncertainOutcomeError(
-            f"PayPal returned HTTP {status}; outcome uncertain."
-        )
-    if status == 429:
-        raise PayPalUncertainOutcomeError(
-            "PayPal rate-limited the request; outcome uncertain."
-        )
-    if status >= 400:
-        body = None
-        try:
-            body = response.json()
-        except Exception:
-            body = None
+        with PayPalClient.from_settings(
+            django_settings, session=session
+        ) as client:
+            response = client.post(
+                "/v1/payments/payouts",
+                json=payload,
+                request_id=str(reservation.sender_batch_id),
+            )
+    except PayPalResponseError as exc:
+        duplicate_path = _duplicate_batch_path(exc)
+        if duplicate_path is not None:
+            try:
+                with PayPalClient.from_settings(
+                    django_settings, session=session
+                ) as client:
+                    body = _response_body(client.get(duplicate_path))
+            except PayPalError as lookup_error:
+                raise PayPalUncertainOutcomeError(
+                    "PayPal identified the prior payout but it could not be retrieved."
+                ) from lookup_error
+            batch_id, item_id, batch_status = _parse_payout_response(body)
+            if not batch_id:
+                raise PayPalUncertainOutcomeError(
+                    "PayPal's prior payout response did not include a batch id."
+                )
+            return batch_id, item_id, batch_status
+        if exc.status_code == 429 or exc.status_code >= 500:
+            raise PayPalUncertainOutcomeError(
+                f"PayPal returned HTTP {exc.status_code}; outcome uncertain."
+            ) from exc
+        body = exc.body or {}
         structured = isinstance(body, dict) and bool(
             body.get("name") or body.get("message") or body.get("details")
         )
         if structured:
-            exc = PayPalAPIError(f"PayPal returned HTTP {status}.")
-            exc.status_code = status
-            if isinstance(body, dict):
+            api_error = PayPalAPIError(
+                f"PayPal returned HTTP {exc.status_code}."
+            )
+            api_error.status_code = exc.status_code
+            api_error.error_name = body.get("name")
+            api_error.error_message = body.get("message")
+            api_error.details = body.get("details")
+            raise api_error from exc
+        raise PayPalUncertainOutcomeError(
+            f"PayPal returned HTTP {exc.status_code}; outcome uncertain."
+        ) from exc
+    except (PayPalTransportError, PayPalTimeoutError, PayPalTransientError) as exc:
+        raise PayPalUncertainOutcomeError(f"PayPal transport error: {exc}") from exc
+    if not isinstance(response, dict):
+        # Compatibility for response-shaped test doubles.
+        status = getattr(response, "status_code", 200) or 200
+        if status >= 500 or status == 429:
+            raise PayPalUncertainOutcomeError(
+                f"PayPal returned HTTP {status}; outcome uncertain."
+            )
+        if status >= 400:
+            body = _response_body(response)
+            structured = isinstance(body, dict) and bool(
+                body.get("name") or body.get("message") or body.get("details")
+            )
+            if structured:
+                exc = PayPalAPIError(f"PayPal returned HTTP {status}.")
+                exc.status_code = status
                 exc.error_name = body.get("name")
                 exc.error_message = body.get("message")
                 exc.details = body.get("details")
-            raise exc
+                raise exc
+            raise PayPalUncertainOutcomeError(
+                f"PayPal returned HTTP {status}; outcome uncertain."
+            )
+    body = _response_body(response)
+    batch_id, item_id, batch_status = _parse_payout_response(body)
+    if not batch_id:
         raise PayPalUncertainOutcomeError(
-            f"PayPal returned HTTP {status}; outcome uncertain."
+            "PayPal accepted the request without returning a batch id."
         )
-    return _parse_payout_response(response.json())
+    return batch_id, item_id, batch_status
 
 
 def _is_definitive_rejection(exc) -> bool:
@@ -494,11 +644,15 @@ def _reconcile_with_paypal(
     """
     if not reservation.paypal_payout_batch_id:
         return None
-    client = PayPalClient.from_settings(django_settings, session=session)
     try:
-        body = client.get(
-            f"/v1/payments/payouts/{reservation.paypal_payout_batch_id}"
-        ).json()
+        with PayPalClient.from_settings(
+            django_settings, session=session
+        ) as client:
+            body = _response_body(
+                client.get(
+                    f"/v1/payments/payouts/{reservation.paypal_payout_batch_id}"
+                )
+            )
     except PayPalAPIError as exc:
         if isinstance(exc, PayPalConflictError):
             # 409 — duplicate batch id; treat as already submitted
@@ -523,16 +677,17 @@ def _reconcile_with_paypal(
     return batch_id, item_id, batch_status, item_transaction_status
 
 
-@transaction.atomic
 def submit_payout(
     reservation_id,
     django_settings,
     session=None,
 ):
-    """Submit an existing PayoutReservation to PayPal Payouts v1 sandbox.
+    """Submit or safely resume a PayoutReservation through PayPal Payouts v1.
 
     Durable submission state (sender_batch_id, SUBMISSION_PENDING) is committed
-    before any HTTP call.  Network calls happen outside the transaction.
+    before any HTTP call. Repeated POSTs reuse that identity within PayPal's
+    documented 30-day idempotency window. Network calls happen outside the
+    transaction.
 
     Returns a :class:`SubmissionResult`.
 
@@ -543,66 +698,86 @@ def submit_payout(
     """
     _require_payouts_enabled(django_settings)
 
-    # --- Phase 1: Lock, validate, transition to SUBMISSION_PENDING -------
-    try:
-        reservation = PayoutReservation.objects.select_for_update().get(
-            pk=reservation_id
-        )
-    except PayoutReservation.DoesNotExist:
-        raise PayoutNotReserved("Payout reservation not found.")
+    # Persist a stable provider identity before leaving the transaction.
+    with transaction.atomic():
+        try:
+            reservation = PayoutReservation.objects.select_for_update().get(
+                pk=reservation_id
+            )
+        except PayoutReservation.DoesNotExist:
+            raise PayoutNotReserved("Payout reservation not found.")
 
-    now = timezone.now()
+        now = timezone.now()
+        if reservation.status == PayoutReservation.Status.SUBMITTED:
+            return SubmissionResult(
+                reservation,
+                "already_submitted",
+                paypal_batch_id=reservation.paypal_payout_batch_id,
+                paypal_item_id=reservation.paypal_payout_item_id,
+            )
+        if reservation.status in (
+            PayoutReservation.Status.COMPLETED,
+            PayoutReservation.Status.FAILED,
+        ):
+            return SubmissionResult(
+                reservation,
+                "terminal",
+                paypal_batch_id=reservation.paypal_payout_batch_id,
+                paypal_item_id=reservation.paypal_payout_item_id,
+                error=reservation.submission_error,
+            )
 
-    if reservation.status == PayoutReservation.Status.SUBMITTED:
-        return SubmissionResult(
-            reservation,
-            "already_submitted",
-            paypal_batch_id=reservation.paypal_payout_batch_id,
-            paypal_item_id=reservation.paypal_payout_item_id,
-        )
-    if reservation.status in (
-        PayoutReservation.Status.COMPLETED,
-        PayoutReservation.Status.FAILED,
-    ):
-        return SubmissionResult(
-            reservation,
-            "terminal",
-            paypal_batch_id=reservation.paypal_payout_batch_id,
-            paypal_item_id=reservation.paypal_payout_item_id,
-            error=reservation.submission_error,
-        )
-    if reservation.status in (
-        PayoutReservation.Status.SUBMISSION_PENDING,
-        PayoutReservation.Status.UNCERTAIN,
-    ):
-        # A submission is already in flight or its outcome is uncertain.
-        # Never re-POST; direct the caller to reconcile instead.
-        return SubmissionResult(
-            reservation,
-            "pending",
-            paypal_batch_id=reservation.paypal_payout_batch_id,
-            paypal_item_id=reservation.paypal_payout_item_id,
-        )
+        if reservation.status == PayoutReservation.Status.RESERVED:
+            _validate_submission_eligibility(reservation, now)
+            _transition_to_submission_pending(reservation)
+        elif reservation.status in (
+            PayoutReservation.Status.SUBMISSION_PENDING,
+            PayoutReservation.Status.UNCERTAIN,
+        ):
+            retry_until = (
+                reservation.submission_attempted_at + timedelta(days=30)
+                if reservation.submission_attempted_at
+                else None
+            )
+            if (
+                not reservation.sender_batch_id
+                or retry_until is None
+                or now >= retry_until
+            ):
+                return SubmissionResult(
+                    reservation,
+                    "pending",
+                    paypal_batch_id=reservation.paypal_payout_batch_id,
+                    paypal_item_id=reservation.paypal_payout_item_id,
+                    error=(
+                        "Provider idempotency window elapsed or identity is "
+                        "missing; manual review required."
+                    ),
+                )
+            if reservation.status == PayoutReservation.Status.UNCERTAIN:
+                reservation.status = PayoutReservation.Status.SUBMISSION_PENDING
+                reservation.save(update_fields=["status", "updated_at"])
+        else:
+            raise PayoutNotReserved(
+                f"Unsupported payout reservation state: {reservation.status!r}."
+            )
 
-    if reservation.status == PayoutReservation.Status.RESERVED:
-        # Re-validate eligibility before committing to submission.
-        _validate_submission_eligibility(reservation, now)
-        _transition_to_submission_pending(reservation)
-
-    # --- Phase 2: Call PayPal (outside the transaction) ------------------
+    # The committed sender_batch_id is reused for every safe retry.
     try:
         batch_id, item_id, batch_status = _submit_to_paypal(
             reservation, django_settings, session=session
         )
     except PayPalUncertainOutcomeError:
         # Timeout, connection loss, or 5xx: we cannot prove whether PayPal
-        # processed the request.  Transition to UNCERTAIN so the reservation
-        # is recoverable via reconciliation or manual investigation.  Never
-        # auto-retry POST.
+        # processed the request. Keep the reservation recoverable through a
+        # same-identity retry inside the provider's idempotency window.
         with transaction.atomic():
             reservation = PayoutReservation.objects.select_for_update().get(
                 pk=reservation_id
             )
+            existing_result = _existing_submission_result(reservation)
+            if existing_result is not None:
+                return existing_result
             _transition_to_uncertain(reservation)
             AuditEvent.record(
                 AuditEvent.EventType.PAYMENT_FAILED,
@@ -636,6 +811,9 @@ def submit_payout(
             reservation = PayoutReservation.objects.select_for_update().get(
                 pk=reservation_id
             )
+            existing_result = _existing_submission_result(reservation)
+            if existing_result is not None:
+                return existing_result
             if uncertain:
                 _transition_to_uncertain(reservation)
                 AuditEvent.record(
@@ -681,6 +859,20 @@ def submit_payout(
         reservation = PayoutReservation.objects.select_for_update().get(
             pk=reservation_id
         )
+        existing_result = _existing_submission_result(reservation)
+        if existing_result is not None:
+            if (
+                reservation.status == PayoutReservation.Status.SUBMITTED
+                and reservation.paypal_payout_batch_id != batch_id
+            ):
+                return SubmissionResult(
+                    reservation,
+                    "uncertain",
+                    paypal_batch_id=reservation.paypal_payout_batch_id,
+                    paypal_item_id=reservation.paypal_payout_item_id,
+                    error="PayPal returned a batch id that conflicts with the persisted payout.",
+                )
+            return existing_result
         _transition_to_submitted(reservation, batch_id, item_id)
         AuditEvent.record(
             AuditEvent.EventType.PAYMENT_EXECUTING,
@@ -709,7 +901,6 @@ def submit_payout(
     )
 
 
-@transaction.atomic
 def reconcile_payout(
     reservation_id,
     django_settings,
@@ -718,35 +909,43 @@ def reconcile_payout(
     """Reconcile a pending/uncertain submission with PayPal.
 
     Queries PayPal batch/item status and advances the reservation to an
-    authoritative state.  Unknown statuses keep the reservation recoverable.
+    authoritative state. Unknown statuses keep the reservation recoverable.
+    The provider query is made after the reservation lock is released.
 
     Returns a :class:`SubmissionResult`.
     """
     _require_payouts_enabled(django_settings)
 
-    try:
-        reservation = PayoutReservation.objects.select_for_update().get(
-            pk=reservation_id
-        )
-    except PayoutReservation.DoesNotExist:
-        raise PayoutNotReserved("Payout reservation not found.")
+    with transaction.atomic():
+        try:
+            reservation = PayoutReservation.objects.select_for_update().get(
+                pk=reservation_id
+            )
+        except PayoutReservation.DoesNotExist:
+            raise PayoutNotReserved("Payout reservation not found.")
 
-    if reservation.status in (
-        PayoutReservation.Status.COMPLETED,
-        PayoutReservation.Status.FAILED,
-    ):
-        return SubmissionResult(
-            reservation,
-            "reconciled",
-            paypal_batch_id=reservation.paypal_payout_batch_id,
-            paypal_item_id=reservation.paypal_payout_item_id,
-            error=reservation.submission_error,
-        )
-    if reservation.status == PayoutReservation.Status.RESERVED:
-        # Never submitted; nothing to reconcile.
-        return SubmissionResult(reservation, "not_submitted")
+        if reservation.status in (
+            PayoutReservation.Status.COMPLETED,
+            PayoutReservation.Status.FAILED,
+        ):
+            return SubmissionResult(
+                reservation,
+                "reconciled",
+                paypal_batch_id=reservation.paypal_payout_batch_id,
+                paypal_item_id=reservation.paypal_payout_item_id,
+                error=reservation.submission_error,
+            )
+        if reservation.status == PayoutReservation.Status.RESERVED:
+            return SubmissionResult(reservation, "not_submitted")
+        if not reservation.paypal_payout_batch_id:
+            return SubmissionResult(
+                reservation,
+                "pending",
+                paypal_item_id=reservation.paypal_payout_item_id,
+                error="No provider batch id is available; retry submission with the stable idempotency key.",
+            )
 
-    # SUBMISSION_PENDING or UNCERTAIN: query PayPal.
+    # Query the provider after releasing the row lock and transaction.
     try:
         result = _reconcile_with_paypal(reservation, django_settings, session=session)
     except (PayPalClientError, PayPalError) as exc:
@@ -777,6 +976,17 @@ def reconcile_payout(
         reservation = PayoutReservation.objects.select_for_update().get(
             pk=reservation_id
         )
+        if reservation.status in (
+            PayoutReservation.Status.COMPLETED,
+            PayoutReservation.Status.FAILED,
+        ):
+            return SubmissionResult(
+                reservation,
+                "reconciled",
+                paypal_batch_id=reservation.paypal_payout_batch_id,
+                paypal_item_id=reservation.paypal_payout_item_id,
+                error=reservation.submission_error,
+            )
         reservation.paypal_payout_batch_id = (
             batch_id or reservation.paypal_payout_batch_id
         )
@@ -873,6 +1083,12 @@ def reconcile_payout(
             "item_transaction_status": item_transaction_status,
         }
         reservation.save()
+        if reservation.status == PayoutReservation.Status.COMPLETED:
+            _update_execution_claim(reservation, SpendExecutionClaim.Status.SUCCEEDED)
+        elif reservation.status == PayoutReservation.Status.FAILED:
+            _update_execution_claim(reservation, SpendExecutionClaim.Status.FAILED)
+        elif reservation.status == PayoutReservation.Status.UNCERTAIN:
+            _update_execution_claim(reservation, SpendExecutionClaim.Status.UNCERTAIN)
 
     return SubmissionResult(
         reservation,

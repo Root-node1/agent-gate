@@ -138,14 +138,15 @@ class AgentDetailView(APIView):
 
     @extend_schema(request=AgentUpdateSerializer, responses={200: AgentSerializer})
     def patch(self, request, pk):
-        agent = get_object_or_404(agent_queryset(request.user), pk=pk)
-        old_name = agent.name
-        old_status = agent.status
-
-        serializer = AgentUpdateSerializer(agent, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-
         with transaction.atomic():
+            agent = get_object_or_404(
+                agent_queryset(request.user).select_for_update(of=("self",)), pk=pk
+            )
+            old_name = agent.name
+            old_status = agent.status
+
+            serializer = AgentUpdateSerializer(agent, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
             serializer.save()
             validated = serializer.validated_data
 

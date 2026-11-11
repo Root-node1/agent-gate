@@ -84,6 +84,5 @@ export const CURL_EXAMPLE = `curl -X POST ${BACKEND_DEV_URL}/v1/spend-requests/ 
     "amount": "42.00",
     "currency": "USD",
     "merchant": "openai.com",
-    "purpose": "API credits for the research agent",
-    "source": "trusted"
+    "purpose": "API credits for the research agent"
   }'`

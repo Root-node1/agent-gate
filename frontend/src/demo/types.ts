@@ -1,9 +1,10 @@
 // Demo data model. Mirrors backend/gate/models.py, plus the pieces the
 // dashboard needs that the backend does not have yet (marked "planned").
 
-import type { Decision, Reason, Source } from '../api/spendRequests'
+import type { Decision as ApiDecision, Reason, Source } from '../api/spendRequests'
 
-export type { Decision, Reason, Source }
+export type Decision = ApiDecision | 'pending'
+export type { Reason, Source }
 
 export type AgentStatus = 'active' | 'suspended'
 

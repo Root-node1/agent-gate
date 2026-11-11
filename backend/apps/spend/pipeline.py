@@ -252,6 +252,7 @@ def _record_decision(
             merchant_ref=prepared.merchant_ref,
             defaults=defaults,
         )
+        payee = Payee.objects.select_for_update().get(pk=payee.pk)
         if not created and payee.destination_fingerprint != prepared.destination_fingerprint:
             for field, value in defaults.items():
                 setattr(payee, field, value)

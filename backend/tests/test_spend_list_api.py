@@ -340,12 +340,13 @@ class SpendListRegressionTests(SpendListApiBase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.key}")
         response = self.client.post(
             URL,
-            {"amount": "10.00", "currency": "USD", "merchant": "acme.com", "source": "trusted"},
+            {"amount": "10.00", "currency": "USD", "merchant": "acme.com"},
             format="json",
             HTTP_IDEMPOTENCY_KEY=str(uuid4()),
         )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["decision"], "allow")
+        self.assertEqual(response.json()["decision"], "needs_approval")
+        self.assertEqual(response.json()["source"], "untrusted")
 
     def test_detail_still_works_with_agent_key(self):
         spend_request = self.create_request()

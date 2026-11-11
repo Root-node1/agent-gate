@@ -16,12 +16,6 @@ class SpendRequestCreateSerializer(serializers.Serializer):
     currency = serializers.CharField(min_length=3, max_length=3)
     merchant = NeutralizedCharField(max_length=255, allow_newlines=False)
     purpose = NeutralizedCharField(required=False, allow_blank=True, default="", max_length=2_000)
-    source = serializers.ChoiceField(
-        choices=SpendRequest.SourceType.choices,
-        source="source_type",
-        default=SpendRequest.SourceType.UNTRUSTED,
-        error_messages={"invalid_choice": "Select a valid choice."},
-    )
     source_ref = NeutralizedCharField(
         required=False, allow_blank=True, default="", max_length=500, allow_newlines=False
     )

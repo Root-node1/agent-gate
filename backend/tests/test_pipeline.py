@@ -38,6 +38,13 @@ class PipelineTests(TestCase):
             **values,
         )
 
+    def test_server_originated_trusted_provenance_remains_supported(self):
+        spend_request, replayed = self.submit()
+
+        self.assertFalse(replayed)
+        self.assertEqual(spend_request.source_type, SpendRequest.SourceType.TRUSTED)
+        self.assertEqual(spend_request.decision, SpendRequest.Decision.ALLOW)
+
     def test_screening_runs_before_any_row_lock(self):
         locked_before_screening = []
 

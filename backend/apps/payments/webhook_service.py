@@ -11,22 +11,23 @@ from django.utils import timezone
 from apps.audit.models import AuditEvent
 from apps.payments.paypal.client import (
     PayPalAPIError,
-    PayPalTimeoutError,
     PayPalClient,
     PayPalClientError,
+    PayPalTimeoutError,
     PayPalTransportError,
 )
 from apps.payments.paypal.config import PayPalConfigError, get_paypal_config
 from apps.spend.models import SpendRequest
 
 from .models import WebhookEvent
+from .payouts.models import SpendExecutionClaim
 from .paypal.webhooks import (
     OUTCOME_FAILED,
     OUTCOME_REVERSED,
     OUTCOME_SUCCEEDED,
     parse_payout_event,
 )
-from .services import lock_agent_and_spend
+from .services import _update_execution_claim, lock_agent_and_spend
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,20 @@ def apply_webhook_event(webhook_event_id) -> str:
                     "updated_at",
                 ]
             )
+            if target_status in TERMINAL_STATUSES:
+                claim = SpendExecutionClaim.objects.filter(
+                    spend_request=spend_request
+                ).first()
+                if claim is not None and claim.status in (
+                    SpendExecutionClaim.Status.CLAIMED,
+                    SpendExecutionClaim.Status.UNCERTAIN,
+                ):
+                    _update_execution_claim(
+                        spend_request,
+                        SpendExecutionClaim.Status.SUCCEEDED
+                        if target_status == SpendRequest.Status.SUCCEEDED
+                        else SpendExecutionClaim.Status.FAILED,
+                    )
             AuditEvent.record(
                 OUTCOME_AUDIT[parsed.outcome],
                 organization=spend_request.organization,

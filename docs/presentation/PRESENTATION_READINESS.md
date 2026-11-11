@@ -13,7 +13,7 @@
 | AccountProfile (linked to accounts.User) | VERIFIED | `backend/apps/accounts/models.py`; migration `0002_accountprofile.py`; tests pass | Integrated and tested |
 | Authentication contract alignment | VERIFIED | `frontend/src/api/auth.ts`; backend custom endpoints; TypeScript + build pass | Frontend ↔ backend contract established |
 | Dashboard and auth pages | VERIFIED | LoginPage, RegisterPage, MfaPage, VerifyEmailPage; frontend build passes | All pages render |
-| Registration with organization onboarding | VERIFIED | `CustomAccountAdapter.save_user` creates Org + OrgMembership | Backend logic implemented; frontend submits org name |
+| Organization onboarding | VERIFIED | Backend onboarding regressions (5 passed); frontend auth/session regressions (20 passed); TypeScript build and ESLint pass | Signup does not create or join an organization by name; authenticated users create a new workspace and become its initial administrator |
 | User profile management | VERIFIED | `GET/PATCH /api/auth/profile/`; `AccountProfileSerializer` | Endpoint implemented and tested |
 | MFA and recovery flows | PARTIAL | SecuritySection UI; backend MFA endpoints exist; `MFA_ENCRYPTION_KEY` not configured | UI complete; enrollment blocked without key |
 | Backend tests | VERIFIED | 694 tests pass, 30 skipped, 0 failures | Full suite green |

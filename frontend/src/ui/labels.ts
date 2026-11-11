@@ -70,6 +70,10 @@ export const AGENT_STATUS: Record<AgentStatus, StatusLabel> = {
 export const SOURCE: Record<Source, { label: string; short: string }> = {
   trusted: { label: 'Trusted (operator or user)', short: 'Trusted' },
   untrusted: { label: 'Untrusted (web page, email or invoice)', short: 'Untrusted' },
+  web_page: { label: 'Web page', short: 'Web page' },
+  email: { label: 'Email', short: 'Email' },
+  invoice: { label: 'Invoice', short: 'Invoice' },
+  tool_output: { label: 'Tool output', short: 'Tool output' },
   unknown: { label: 'Unknown', short: 'Unknown' },
 }
 

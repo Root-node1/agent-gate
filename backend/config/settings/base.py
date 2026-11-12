@@ -488,4 +488,4 @@ CORS_ALLOW_LIST_ORIGINS_ENV = os.environ.get("CORS_ALLOW_LIST_ORIGINS", "").stri
 if not CORS_ALLOW_LIST_ORIGINS_ENV:
     # Same-origin deployment: allow the frontend origin (FRONTEND_ORIGIN).
     # This covers both the production Caddy setup and local dev.
-    CORS_ALLOW_LIST_ORIGINS = [FRONTEND_ORIGIN]  # noqa: F405 — FRONTEND_ORIGIN defined above
+    CORS_ALLOW_LIST_ORIGINS = [FRONTEND_ORIGIN]

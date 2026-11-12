@@ -58,7 +58,7 @@ async function openRequest(page: Page, status: 'execution_blocked' | 'succeeded'
     }),
   )
 
-  await page.goto(`http://127.0.0.1:5173/app/live/requests/${requestId}`)
+  await page.goto(`/app/live/requests/${requestId}`)
   await page.getByLabel('Agent key').fill('agk_test-key')
   await expect(page.getByRole('heading', { name: 'Policy decision at submission' })).toBeVisible()
 }

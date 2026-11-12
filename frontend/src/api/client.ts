@@ -2,6 +2,25 @@ import { CsrfBootstrapError, getCsrfToken } from './csrf'
 
 export const SESSION_EXPIRED_EVENT = 'agentgate:session-expired'
 
+/**
+ * Production API base URL (e.g. https://api.agentgate.zindika.app).
+ * When unset the client falls back to relative paths so that the Vite
+ * dev-proxy keeps local development working without configuration.
+ *
+ * import.meta.env is only available in Vite builds. In Node.js test
+ * environments it is undefined, so we guard against that case.
+ */
+const API_BASE = ((typeof import.meta !== 'undefined'
+  ? import.meta.env?.VITE_API_BASE_URL
+  : undefined) as string | undefined)?.replace(/\/+$/, '') ?? ''
+
+function apiPath(path: string) {
+  if (!API_BASE) return path
+  // Ensure the path starts with a single slash after the base.
+  const clean = path.replace(/^\/+/, '')
+  return `${API_BASE}/${clean}`
+}
+
 export type ApiDetails = Record<string, unknown>
 export type ApiFieldErrors = Record<string, string[]>
 
@@ -144,7 +163,7 @@ export async function apiRequest<T>(
 
   let response: Response
   try {
-    response = await fetch(path, {
+    response = await fetch(apiPath(path), {
       method,
       headers,
       body,

@@ -79,7 +79,8 @@
   transition: color var(--duration) var(--ease), background var(--duration) var(--ease);
 }
 
-.lp-nav a:hover {
+.lp-nav a:hover,
+.lp-nav a:focus-visible {
   color: var(--color-text);
   background: var(--color-surface-2);
 }
@@ -100,7 +101,8 @@
   text-decoration: none;
 }
 
-.lp-header-signin:hover {
+.lp-header-signin:hover,
+.lp-header-signin:focus-visible {
   color: var(--color-text);
 }
 
@@ -372,7 +374,8 @@
   transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
 }
 
-.lp-tab:hover {
+.lp-tab:hover,
+.lp-tab:focus-visible {
   color: var(--color-text);
   background: var(--color-surface);
   border-color: var(--color-border-subtle);

@@ -237,6 +237,8 @@
 .st-link-card:hover {
   border-color: var(--color-primary);
   background: var(--color-surface-2);
+  transition: border-color var(--duration) var(--ease),
+    background var(--duration) var(--ease);
 }
 
 .st-link-card:focus-visible {
@@ -366,8 +368,8 @@
 }
 
 .st-notice-warn {
-  border-color: color-mix(in srgb, var(--color-danger, #b42318) 35%, transparent);
-  background: color-mix(in srgb, var(--color-danger, #b42318) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
 }
 
 .st-conn-meta {

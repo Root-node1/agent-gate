@@ -5,8 +5,8 @@
   display: flex;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
-  background: var(--color-info-bg, #eff6ff);
-  border: 1px solid var(--color-info-border, #bfdbfe);
+  background: var(--color-info-bg);
+  border: 1px solid var(--color-info-border);
   border-radius: var(--radius-lg);
   color: var(--color-text);
   line-height: 1.6;
@@ -15,11 +15,11 @@
 .dl-notice > svg {
   flex-shrink: 0;
   margin-top: 2px;
-  color: var(--color-info, #3b82f6);
+  color: var(--color-info);
 }
 
 .dl-notice-title {
-  font-size: var(--font-size-base);
+  font-size: var(--text-base);
   font-weight: 600;
   margin: 0 0 var(--space-1);
 }
@@ -32,11 +32,11 @@
 }
 
 .dl-notice-warn {
-  background: var(--color-warn-bg, #fffbeb);
-  border-color: var(--color-warn-border, #fcd34d);
+  background: var(--color-warn-bg);
+  border-color: var(--color-warn-border);
 }
 .dl-notice-warn > svg {
-  color: var(--color-warn, #f59e0b);
+  color: var(--color-warn);
 }
 
 /* ── Platform group ──────────────────────────────────────────────────────── */
@@ -52,7 +52,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--font-size-xl, 1.25rem);
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--color-heading);
   margin: 0 0 var(--space-5);
@@ -75,11 +75,15 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  transition: box-shadow 0.15s ease;
+  transition: box-shadow var(--duration) var(--ease),
+    border-color var(--duration) var(--ease),
+    transform var(--duration) var(--ease);
 }
 
 .dl-asset:hover {
-  box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,.08));
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-primary);
+  transform: translateY(-2px);
 }
 
 .dl-asset-header {
@@ -102,7 +106,7 @@
 
 .dl-asset-label {
   font-weight: 600;
-  font-size: var(--font-size-base);
+  font-size: var(--text-base);
   color: var(--color-heading);
   flex: 1;
   min-width: 0;
@@ -111,7 +115,7 @@
 .dl-asset-desc {
   margin: 0;
   color: var(--color-muted);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -128,17 +132,17 @@
 }
 
 .dl-badge-available {
-  background: var(--color-allow-bg, #d1fae5);
-  color: var(--color-allow-text, #065f46);
+  background: var(--color-allow-bg);
+  color: var(--color-allow-text);
 }
 
 .dl-badge-pending {
-  background: var(--color-approval-bg, #fef9c3);
-  color: var(--color-approval-text, #713f12);
+  background: var(--color-approval-bg);
+  color: var(--color-approval-text);
 }
 
 .dl-badge-soon {
-  background: var(--color-neutral-bg, #f3f4f6);
+  background: var(--color-neutral-bg);
   color: var(--color-muted);
 }
 
@@ -149,7 +153,7 @@
   column-gap: var(--space-3);
   row-gap: 2px;
   margin: 0;
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
 }
 
 .dl-asset-meta dt {
@@ -174,11 +178,19 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   color: var(--color-text);
   list-style: none;
+  transition: background var(--duration) var(--ease),
+    color var(--duration) var(--ease);
+  border-radius: var(--radius-sm);
+}
+
+.dl-checksum summary:hover {
+  background: var(--color-surface-2);
+  color: var(--color-heading);
 }
 .dl-checksum summary::-webkit-details-marker { display: none; }
 .dl-checksum summary::before {
@@ -192,7 +204,7 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
 .dl-sha {
   display: block;
   padding: var(--space-2) var(--space-3);
-  background: var(--color-code-bg, var(--color-surface-alt, #f9fafb));
+  background: var(--color-code-bg);
   font-size: 0.72rem;
   word-break: break-all;
   font-family: var(--font-mono, monospace);
@@ -210,7 +222,7 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
 
 .dl-sha-instructions code {
   font-family: var(--font-mono, monospace);
-  background: var(--color-code-bg, #f3f4f6);
+  background: var(--color-code-bg);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.7rem;
@@ -218,7 +230,7 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
 
 /* ── Release notes ───────────────────────────────────────────────────────── */
 .dl-release-notes {
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--color-muted);
   margin: 0;
   font-style: italic;
@@ -237,10 +249,10 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  background: var(--color-neutral-bg, #f9fafb);
+  background: var(--color-neutral-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--color-muted);
   margin-top: auto;
 }
@@ -250,9 +262,9 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
 }
 
 .dl-unavailable-pending {
-  background: var(--color-approval-bg, #fef9c3);
-  border-color: var(--color-approval-border, #fde68a);
-  color: var(--color-approval-text, #713f12);
+  background: var(--color-approval-bg);
+  border-color: var(--color-approval-border);
+  color: var(--color-approval-text);
 }
 
 /* ── Desktop/backend separation grid ────────────────────────────────────── */
@@ -281,7 +293,7 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
 }
 
 .dl-sep-icon {
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary);
   margin-bottom: var(--space-3);
 }
 
@@ -291,7 +303,7 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
 
 .dl-sep-card p {
   color: var(--color-muted);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   line-height: 1.6;
   margin: 0 0 var(--space-3);
 }
@@ -299,7 +311,7 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
 .dl-sep-list {
   margin: 0;
   padding-left: var(--space-5);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--color-muted);
   line-height: 2;
 }
@@ -321,8 +333,8 @@ details[open] .dl-checksum summary::before { transform: rotate(90deg); }
 .dl-code {
   display: block;
   padding: var(--space-3) var(--space-4);
-  background: var(--color-code-bg, #1e293b);
-  color: #e2e8f0;
+  background: var(--color-inverse-bg);
+  color: var(--color-inverse-text);
   border-radius: var(--radius-md);
   font-family: var(--font-mono, monospace);
   font-size: 0.8rem;

@@ -4,14 +4,14 @@
 .inst-toc {
   margin-top: var(--space-6);
   padding: var(--space-4) var(--space-5);
-  background: var(--color-surface-alt, #f9fafb);
+  background: var(--color-surface-alt);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   max-width: 480px;
 }
 
 .inst-toc-title {
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-heading);
   margin: 0 0 var(--space-3);
@@ -22,13 +22,13 @@
 .inst-toc-list {
   margin: 0;
   padding-left: var(--space-5);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--color-text);
   line-height: 2;
 }
 
 .inst-toc-list a {
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary);
   text-decoration: none;
 }
 .inst-toc-list a:hover {
@@ -40,10 +40,10 @@
   display: flex;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
-  background: var(--color-info-bg, #eff6ff);
-  border: 1px solid var(--color-info-border, #bfdbfe);
+  background: var(--color-info-bg);
+  border: 1px solid var(--color-info-border);
   border-radius: var(--radius-lg);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--color-text);
   line-height: 1.6;
 }
@@ -51,7 +51,7 @@
 .inst-notice > svg {
   flex-shrink: 0;
   margin-top: 2px;
-  color: var(--color-info, #3b82f6);
+  color: var(--color-info);
 }
 
 .inst-notice strong {
@@ -59,7 +59,7 @@
 }
 
 .inst-notice a {
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary);
 }
 
 .inst-notice-sm {
@@ -67,11 +67,11 @@
 }
 
 .inst-notice-warn {
-  background: var(--color-warn-bg, #fffbeb);
-  border-color: var(--color-warn-border, #fcd34d);
+  background: var(--color-warn-bg);
+  border-color: var(--color-warn-border);
 }
 .inst-notice-warn > svg {
-  color: var(--color-warn, #f59e0b);
+  color: var(--color-warn);
 }
 
 /* ── Steps container ─────────────────────────────────────────────────────── */
@@ -98,11 +98,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-primary, #2563eb);
+  background: var(--color-primary);
   color: white;
   border-radius: 50%;
   font-weight: 700;
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   margin-top: 2px;
 }
 
@@ -112,7 +112,7 @@
 }
 
 .inst-step-title {
-  font-size: var(--font-size-lg, 1.125rem);
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--color-heading);
   margin: 0 0 var(--space-3);
@@ -144,8 +144,15 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   flex-wrap: wrap;
+  transition: border-color var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
+}
+
+.inst-platform-choice:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .inst-platform-choice strong {
@@ -157,7 +164,7 @@
   font-family: var(--font-mono, monospace);
   font-size: 0.8rem;
   color: var(--color-text);
-  background: var(--color-code-bg, #f3f4f6);
+  background: var(--color-code-bg);
   padding: 1px 6px;
   border-radius: 3px;
   flex: 1;
@@ -165,7 +172,7 @@
 
 .inst-platform-choice-disabled {
   opacity: 0.6;
-  background: var(--color-surface-alt, #f9fafb);
+  background: var(--color-surface-alt);
 }
 
 .inst-tag {
@@ -173,14 +180,14 @@
   font-weight: 500;
   padding: 1px 8px;
   border-radius: 999px;
-  background: var(--color-neutral-bg, #f3f4f6);
+  background: var(--color-neutral-bg);
   color: var(--color-muted);
   white-space: nowrap;
 }
 
 .inst-tag-ready {
-  background: var(--color-allow-bg, #d1fae5);
-  color: var(--color-allow-text, #065f46);
+  background: var(--color-allow-bg);
+  color: var(--color-allow-text);
 }
 
 /* ── Platform tabs in step 4 ─────────────────────────────────────────────── */
@@ -206,7 +213,7 @@
 
 /* ── Code blocks ─────────────────────────────────────────────────────────── */
 .inst-code-block {
-  background: var(--color-code-bg, #1e293b);
+  background: var(--color-code-bg);
   border-radius: var(--radius-md);
   overflow: hidden;
   margin: var(--space-3) 0;
@@ -216,7 +223,7 @@
   padding: var(--space-2) var(--space-4);
   font-size: 0.7rem;
   font-weight: 500;
-  color: #94a3b8;
+  color: var(--color-text);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   border-bottom: 1px solid rgba(255,255,255,0.08);
@@ -232,20 +239,20 @@
 .inst-code-block code {
   font-family: var(--font-mono, monospace);
   font-size: 0.82rem;
-  color: #e2e8f0;
+  color: var(--color-text);
   line-height: 1.65;
 }
 
 /* ── Notes ───────────────────────────────────────────────────────────────── */
 .inst-note {
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--color-muted);
   line-height: 1.6;
   margin: var(--space-2) 0 0;
 }
 
 .inst-note a {
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary);
 }
 
 /* ── List ────────────────────────────────────────────────────────────────── */
@@ -253,7 +260,7 @@
   margin: var(--space-3) 0;
   padding-left: var(--space-5);
   color: var(--color-text);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   line-height: 2;
 }
 
@@ -261,12 +268,12 @@
   margin: var(--space-3) 0;
   padding-left: var(--space-5);
   color: var(--color-text);
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   line-height: 2.2;
 }
 
 .inst-ordered-list a {
-  color: var(--color-primary, #2563eb);
+  color: var(--color-primary);
 }
 
 /* ── Link with arrow ─────────────────────────────────────────────────────── */
@@ -274,14 +281,18 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  color: var(--color-primary, #2563eb);
-  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-primary);
+  font-size: var(--text-sm);
   font-weight: 500;
   text-decoration: none;
   margin-top: var(--space-2);
+  transition: color var(--duration) var(--ease);
 }
-.inst-link:hover {
+
+.inst-link:hover,
+.inst-link:focus-visible {
   text-decoration: underline;
+  color: var(--color-primary-hover);
 }
 
 /* ── Error cases ─────────────────────────────────────────────────────────── */
@@ -303,18 +314,18 @@
   align-items: center;
   gap: var(--space-2);
   font-weight: 600;
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--color-heading);
   margin-bottom: var(--space-2);
 }
 
 .inst-error-label > svg {
-  color: var(--color-warn, #f59e0b);
+  color: var(--color-warn);
   flex-shrink: 0;
 }
 
 .inst-error-fix {
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--color-muted);
   line-height: 1.6;
 }

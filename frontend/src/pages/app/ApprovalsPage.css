@@ -50,6 +50,7 @@
 
 .ap-item:hover {
   box-shadow: var(--shadow-md);
+  transition: box-shadow var(--duration) var(--ease);
 }
 
 .ap-item:has(.ap-item-link:focus-visible) {

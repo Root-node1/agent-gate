@@ -201,9 +201,15 @@ code {
   transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
 }
 
-.side-link:hover {
+.side-link:hover,
+.side-link:focus-visible {
   color: var(--color-text);
   background: var(--color-surface-2);
+}
+
+.side-link:focus-visible {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: -2px;
 }
 
 /* Active: color, background and a left bar, so it does not rely on color alone */
@@ -504,6 +510,8 @@ code {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   padding: var(--space-5);
+  transition: box-shadow var(--duration) var(--ease),
+    border-color var(--duration) var(--ease);
 }
 
 /* For cards holding a table or list edge to edge */
@@ -680,8 +688,15 @@ code {
   border: 1px solid transparent;
   border-radius: var(--radius);
   cursor: pointer;
-  transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease),
-    box-shadow var(--duration) var(--ease);
+  transition: background var(--duration) var(--ease),
+    border-color var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease),
+    color var(--duration) var(--ease),
+    transform var(--duration) var(--ease);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .btn:disabled {
@@ -768,11 +783,17 @@ code {
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
+  transition: background var(--duration) var(--ease),
+    color var(--duration) var(--ease);
 }
 
 .icon-button:hover {
   color: var(--color-text);
   background: var(--color-neutral-bg);
+}
+
+.icon-button:active {
+  transform: scale(0.93);
 }
 
 /* ==========================================================================
@@ -960,6 +981,9 @@ code {
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
+  transition: background var(--duration) var(--ease),
+    color var(--duration) var(--ease),
+    box-shadow var(--duration) var(--ease);
 }
 
 .tab:hover {
@@ -1020,6 +1044,11 @@ code {
 
 .table tr.row-link:hover {
   background: var(--color-surface-2);
+}
+
+.table tr.row-link:focus-visible {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: -3px;
 }
 
 .row-link a.row-anchor {
@@ -1353,6 +1382,17 @@ dialog.modal[open] {
   animation: modal-in 180ms var(--ease);
 }
 
+dialog.modal.closing {
+  animation: modal-out 120ms var(--ease) forwards;
+}
+
+@keyframes modal-out {
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
 dialog.drawer {
   position: fixed;
   inset: 0 0 0 auto;
@@ -1365,6 +1405,17 @@ dialog.drawer {
 
 dialog.drawer[open] {
   animation: drawer-in 220ms var(--ease);
+}
+
+dialog.drawer.closing {
+  animation: drawer-out 140ms var(--ease) forwards;
+}
+
+@keyframes drawer-out {
+  to {
+    transform: translateX(40px);
+    opacity: 0;
+  }
 }
 
 @keyframes modal-in {
@@ -1482,6 +1533,8 @@ dialog.drawer[open] {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   cursor: pointer;
+  transition: border-color var(--duration) var(--ease),
+    background var(--duration) var(--ease);
 }
 
 .display-choice:has(input:checked) {
@@ -1551,7 +1604,25 @@ dialog.drawer[open] {
   background: var(--color-inverse-bg);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
-  animation: modal-in 200ms var(--ease);
+  animation: toast-in 200ms var(--ease);
+}
+
+.toast.toast-exit {
+  animation: toast-out 150ms var(--ease) forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
 }
 
 .toast-success svg {

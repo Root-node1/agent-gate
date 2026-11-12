@@ -9,6 +9,8 @@ export const LINKS = {
   simulate: '/app/simulate',
   approvals: '/app/approvals',
   audit: '/app/audit',
+  howItWorks: '/how-it-works',
+  features: '/features',
   downloads: '/downloads',
   systemRequirements: '/system-requirements',
   install: '/install',

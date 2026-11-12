@@ -2,34 +2,37 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: var(--color-bg-base, #1e1e24);
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--color-border, #333);
-  margin-top: 0.25rem;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.8125rem;
+  background-color: var(--color-code-bg);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
   overflow-x: auto;
 }
 
 .paypal-hub .copy-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-1);
   background: transparent;
-  border: 1px solid var(--color-border, #444);
-  color: var(--color-text, #ccc);
-  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
   padding: 0.2rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   cursor: pointer;
-  margin-left: 0.5rem;
+  margin-left: var(--space-2);
   flex-shrink: 0;
+  transition: background var(--duration) var(--ease),
+    border-color var(--duration) var(--ease),
+    color var(--duration) var(--ease);
 }
 
 .paypal-hub .copy-btn:hover {
-  background-color: var(--color-bg-hover, #2a2a32);
-  color: #fff;
+  background-color: var(--color-surface-2);
+  color: var(--color-text);
 }
 
 .paypal-hub .badge-row {

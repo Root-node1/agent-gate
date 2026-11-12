@@ -17,6 +17,8 @@ export default function LandingFooter() {
         <nav className="lp-footer-nav" aria-label="Footer">
           <h2 className="lp-footer-heading">Product</h2>
           <ul>
+            <li><Link to={LINKS.howItWorks}>How it works</Link></li>
+            <li><Link to={LINKS.features}>Features</Link></li>
             <li><Link to={LINKS.demo}>Demo dashboard</Link></li>
             <li><Link to={LINKS.simulate}>Simulator</Link></li>
             <li><Link to={LINKS.audit}>Audit log</Link></li>

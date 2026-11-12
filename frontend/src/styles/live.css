@@ -50,10 +50,17 @@
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
+  transition: background var(--duration) var(--ease),
+    opacity var(--duration) var(--ease),
+    transform var(--duration) var(--ease);
 }
 
-.button:hover {
+.button:hover:not(:disabled) {
   background: var(--color-primary-hover);
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .button:disabled {

@@ -207,6 +207,8 @@
 .po-chip-remove:hover {
   color: var(--color-deny);
   background: var(--color-surface);
+  transition: color var(--duration) var(--ease),
+    background var(--duration) var(--ease);
 }
 
 @keyframes po-chip-in {

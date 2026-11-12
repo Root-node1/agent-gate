@@ -14,9 +14,27 @@ from apps.spend.models import SpendRequest
 
 from .executors import build_paypal_client
 from .paypal import PayPalError, get_payout_batch
+from .paypal.config import PayPalConfigError, get_paypal_config
 from .services import ExecutionOutcome, reconcile_spend_request
 
 logger = logging.getLogger(__name__)
+
+
+def _paypal_execution_enabled(settings) -> bool:
+    """Return True when PayPal execution is enabled.
+
+    Honours both the legacy ``PAYMENT_EXECUTOR=paypal`` setting and the
+    current feature-flag contract (``PAYPAL_CHECKOUT_ENABLED`` /
+    ``PAYPAL_PAYOUTS_ENABLED``).
+    """
+    if getattr(settings, "PAYMENT_EXECUTOR", "fake") == "paypal":
+        return True
+    try:
+        config = get_paypal_config(settings)
+    except PayPalConfigError:
+        return False
+    return config.checkout_enabled or config.payouts_enabled
+
 
 DEFAULT_LIMIT = 100
 DEFAULT_OLDER_THAN_MINUTES = 5
@@ -68,7 +86,7 @@ def reconcile_payments(
     executing and is reported for operator follow-up because a webhook is the
     only safe way to resolve it.
     """
-    if getattr(settings, "PAYMENT_EXECUTOR", "fake") != "paypal":
+    if not _paypal_execution_enabled(settings):
         return ReconciliationSummary(skipped_reason="executor_not_paypal")
 
     unreferenced, candidates = find_candidates(

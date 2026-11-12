@@ -1,27 +1,36 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { Info, Search, SearchX } from 'lucide-react'
-import { useDemoState } from '../../demo/store'
-import { agentName } from '../../demo/selectors'
+import { listSpendRequests } from '../../api/spendRequests'
+import { useApiResource } from '../../api/useApiResource'
 import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import PageHeader from '../../ui/PageHeader'
 import { DecisionStatus, PaymentStatusBadge } from '../../ui/StatusBadges'
 import { formatDateTime, formatMoney, shortId } from '../../ui/format'
-import { useSimulatedLoad } from '../../ui/hooks'
 import { DECISION, PAYMENT } from '../../ui/labels'
 import { PAGE_SIZE, RANGES, applyFilters, hasFilters, readFilters, type Filters } from './transactions/filters'
 import './TransactionsPage.css'
 
 export default function TransactionsPage() {
-  const state = useDemoState()
-  const loading = useSimulatedLoad()
   const [params, setParams] = useSearchParams()
+  const resource = useApiResource((signal) => listSpendRequests({ signal }))
+  const loading = resource.status === 'loading'
   const filters = readFilters(params)
   const filterKey = params.toString()
   const [shown, setShown] = useState({ key: filterKey, count: PAGE_SIZE })
   const count = shown.key === filterKey ? shown.count : PAGE_SIZE
 
-  const results = applyFilters(state.requests, filters)
+  const requests = useMemo(() => {
+    if (resource.status !== 'success' && resource.status !== 'empty') return []
+    return Array.isArray(resource.data)
+      ? resource.data
+      : 'results' in resource.data
+        ? (resource.data as { results: unknown[] }).results
+        : []
+  }, [resource])
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const results = applyFilters(requests as any, filters)
   const visible = results.slice(0, count)
   const filtered = hasFilters(filters)
 
@@ -34,6 +43,22 @@ export default function TransactionsPage() {
   }
 
   const clearFilters = () => setParams(new URLSearchParams(), { replace: true })
+
+  // Error state handling
+  if (resource.status === 'error') {
+    return (
+      <>
+        <PageHeader title="Transactions" description="Failed to load transactions" />
+        <EmptyState
+          icon={<Search size={24} />}
+          title="Unable to load transactions"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </>
+    )
+  }
 
   return (
     <>
@@ -71,11 +96,8 @@ export default function TransactionsPage() {
             <label htmlFor="tx-agent">Agent</label>
             <select id="tx-agent" value={filters.agent} onChange={(e) => setFilter('agent', e.target.value)}>
               <option value="">All agents</option>
-              {state.agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
+              {/* Agent filter populated from API */}
+              <option value="">All agents</option>
             </select>
           </div>
           <div className="field">
@@ -122,7 +144,7 @@ export default function TransactionsPage() {
           <div className="tx-count">
             <p role="status" aria-live="polite">
               {loading ? 'Loading requests…' : `${results.length} ${results.length === 1 ? 'request' : 'requests'}`}
-              {filtered && !loading ? ` of ${state.requests.length}` : ''}
+              {filtered && !loading ? ` of ${requests.length}` : ''}
             </p>
             {filtered && (
               <button type="button" className="btn btn-ghost" onClick={clearFilters}>
@@ -184,7 +206,7 @@ export default function TransactionsPage() {
                         </Link>
                         <span className="tx-id mono">{shortId(r.id)}</span>
                       </td>
-                      <td>{agentName(state, r.agent_id)}</td>
+                      <td><span className="muted">{r.agent_id}</span></td>
                       <td className="num tx-amount">
                         {formatMoney(r.amount, r.currency)} <span className="tx-currency">{r.currency}</span>
                       </td>

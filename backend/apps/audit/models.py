@@ -25,6 +25,8 @@ class AuditEvent(models.Model):
         APPROVAL_DENIED = "approval.denied", "Approval denied"
         APPROVAL_EXPIRED = "approval.expired", "Approval expired"
         PAYMENT_EXECUTING = "payment.executing", "Payment executing"
+        EXECUTION_BLOCKED = "execution.blocked", "Execution blocked"
+        PAYMENT_RESERVED = "payment.reserved", "Payment reserved"
         PAYMENT_SUCCEEDED = "payment.succeeded", "Payment succeeded"
         PAYMENT_FAILED = "payment.failed", "Payment failed"
         PAYMENT_REVERSED = "payment.reversed", "Payment reversed"
@@ -37,6 +39,7 @@ class AuditEvent(models.Model):
         KEY_CREATED = "key.created", "Key created"
         KEY_REVOKED = "key.revoked", "Key revoked"
         DEMO_RESET = "demo.reset", "Demo reset"
+        INTEGRATION_PROBED = "integration.probed", "Integration probed"
 
     class ActorType(models.TextChoices):
         AGENT = "agent", "Agent"

@@ -63,11 +63,11 @@ export default function ResultPanel({ state, checking, requestId, error, label, 
             </p>
             <div className="sim-statuses">
               <div className="sim-status">
-                <span className="sim-status-label">AgentGate decided</span>
+                <span className="sim-status-label">Demo policy decided</span>
                 <DecisionStatus decision={request.decision} />
               </div>
               <div className="sim-status">
-                <span className="sim-status-label">PayPal payment</span>
+                <span className="sim-status-label">Simulated PayPal result</span>
                 <PaymentStatusBadge status={request.payment_status} />
               </div>
             </div>

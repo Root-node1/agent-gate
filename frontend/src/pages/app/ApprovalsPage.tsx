@@ -1,14 +1,12 @@
 import { Link, useSearchParams } from 'react-router'
-import { AlertTriangle, CircleCheckBig, Clock, Inbox } from 'lucide-react'
-import { useDemoState } from '../../demo/store'
-import { agentName, requestById, riskIndicators } from '../../demo/selectors'
-import type { Approval, ApprovalOutcome, DemoState } from '../../demo/types'
+import { CircleCheckBig, Clock, Inbox } from 'lucide-react'
+import { listApprovals, type Approval as ApiApproval, type ApprovalOutcome } from '../../api/approvals'
+import { useApiResource } from '../../api/useApiResource'
 import PageHeader from '../../ui/PageHeader'
 import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import { ApprovalStatus } from '../../ui/StatusBadges'
 import { formatDateTime, formatMoney, timeAgo } from '../../ui/format'
-import { useNow, useSimulatedLoad } from '../../ui/hooks'
-import { effectiveOutcome, escalationLabels, expiresIn, highRisk, isTab, personName, TABS } from './approvals/helpers'
+import { isTab, TABS } from './approvals/helpers'
 import './ApprovalsPage.css'
 
 const EMPTY: Record<ApprovalOutcome, { title: string; text: string }> = {
@@ -22,21 +20,45 @@ const EMPTY: Record<ApprovalOutcome, { title: string; text: string }> = {
 }
 
 export default function ApprovalsPage() {
-  const state = useDemoState()
-  const now = useNow(15_000)
-  const loading = useSimulatedLoad()
   const [params, setParams] = useSearchParams()
   const raw = params.get('status')
   const tab: ApprovalOutcome = isTab(raw) ? raw : 'pending'
 
-  const groups: Record<ApprovalOutcome, Approval[]> = { pending: [], approved: [], denied: [], expired: [] }
-  for (const approval of state.approvals) groups[effectiveOutcome(approval, now)].push(approval)
-  // The queue is worked oldest first; decided items show the latest decision first.
-  groups.pending.sort((a, b) => a.created_at.localeCompare(b.created_at))
-  for (const key of ['approved', 'denied', 'expired'] as const) {
-    groups[key].sort((a, b) => (b.decided_at ?? b.expires_at).localeCompare(a.decided_at ?? a.expires_at))
+  const resource = useApiResource((signal) => listApprovals({ outcome: tab, signal }))
+
+  if (resource.status === 'loading') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Approvals" description="Loading approvals…" />
+        <div className="card">
+          <SkeletonRows rows={4} />
+        </div>
+      </div>
+    )
   }
-  const items = groups[tab]
+
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Approvals" description="Failed to load approvals" />
+        <div className="card">
+          <EmptyState
+            icon={<Inbox size={24} />}
+            title="Unable to load approvals"
+            action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+          >
+            <span role="alert">{resource.error.message}</span>
+          </EmptyState>
+        </div>
+      </div>
+    )
+  }
+
+  const items = Array.isArray(resource.data)
+    ? resource.data
+    : 'results' in resource.data
+      ? (resource.data as { results: ApiApproval[] }).results
+      : []
 
   return (
     <div className="stack-lg">
@@ -55,16 +77,11 @@ export default function ApprovalsPage() {
             onClick={() => setParams(t.id === 'pending' ? {} : { status: t.id }, { replace: true })}
           >
             {t.label}
-            <span className="ap-tab-count">{groups[t.id].length}</span>
           </button>
         ))}
       </div>
 
-      {loading ? (
-        <div className="card">
-          <SkeletonRows rows={4} />
-        </div>
-      ) : items.length === 0 ? (
+      {items.length === 0 ? (
         <div className="card">
           <EmptyState
             icon={tab === 'pending' ? <CircleCheckBig size={24} /> : <Inbox size={24} />}
@@ -88,8 +105,8 @@ export default function ApprovalsPage() {
             </p>
           )}
           <ul className="ap-list" aria-label={`${TABS.find((t) => t.id === tab)?.label} approvals`}>
-            {items.map((approval) => (
-              <ApprovalItem key={approval.id} state={state} approval={approval} tab={tab} now={now} />
+            {items.map((approval: ApiApproval) => (
+              <ApprovalItem key={approval.id} approval={approval} tab={tab} />
             ))}
           </ul>
         </>
@@ -99,54 +116,37 @@ export default function ApprovalsPage() {
 }
 
 function ApprovalItem({
-  state,
   approval,
   tab,
-  now,
 }: {
-  state: DemoState
-  approval: Approval
+  approval: ApiApproval
   tab: ApprovalOutcome
-  now: number
 }) {
-  const request = requestById(state, approval.spend_request_id)
-  if (!request) return null
-  const reasons = escalationLabels(request)
-  const risky = highRisk(riskIndicators(state, request))
-  const expiry = expiresIn(approval.expires_at, now)
-  const agent = agentName(state, request.agent_id)
-
   return (
-    <li className={`card ap-item ${risky && tab === 'pending' ? 'ap-item-risky' : ''}`}>
+    <li className="card ap-item">
       <div className="ap-item-main">
         <div className="ap-item-title">
           <Link to={`/app/approvals/${approval.id}`} className="ap-item-link">
-            <span className="ap-merchant">{request.merchant}</span>
+            <span className="ap-merchant">{approval.merchant}</span>
             <span className="visually-hidden">
-              , {formatMoney(request.amount, request.currency)} from {agent}
+              , {formatMoney(Number(approval.amount), approval.currency)} from {approval.agent_name}
             </span>
           </Link>
-          {risky && (
-            <span className="pill pill-solid tone-deny">
-              <AlertTriangle size={14} aria-hidden="true" />
-              High risk
-            </span>
-          )}
         </div>
         <p className="ap-item-meta">
-          <span className="ap-agent">{agent}</span>
+          <span className="ap-agent">{approval.agent_name}</span>
           <span aria-hidden="true"> · </span>
           <span>
-            Requested <time dateTime={request.created_at} title={formatDateTime(request.created_at)}>
-              {timeAgo(request.created_at, now)}
+            Requested <time dateTime={approval.requested_at} title={formatDateTime(approval.requested_at)}>
+              {timeAgo(approval.requested_at)}
             </time>
           </span>
         </p>
-        {reasons.length > 0 && (
+        {approval.reasons.length > 0 && (
           <ul className="ap-reasons" aria-label="Why it needs approval">
-            {reasons.map((label) => (
-              <li key={label} className="ap-reason">
-                {label}
+            {approval.reasons.map((r) => (
+              <li key={r.code} className="ap-reason">
+                {r.message}
               </li>
             ))}
           </ul>
@@ -154,19 +154,17 @@ function ApprovalItem({
       </div>
 
       <div className="ap-item-side">
-        <span className="ap-amount num">{formatMoney(request.amount, request.currency)}</span>
+        <span className="ap-amount num">{formatMoney(Number(approval.amount), approval.currency)}</span>
         {tab === 'pending' ? (
-          <span className={`ap-expiry ${expiry.urgent ? 'ap-expiry-urgent' : ''}`}>
+          <span className="ap-expiry">
             <Clock size={14} aria-hidden="true" />
-            {expiry.text}
+            Expires {formatDateTime(approval.expires_at)}
           </span>
         ) : (
           <span className="ap-outcome">
             <ApprovalStatus outcome={tab} />
             <span className="muted small">
-              {tab === 'expired'
-                ? `${timeAgo(approval.expires_at, now)}`
-                : `${personName(state, approval.approver)} · ${timeAgo(approval.decided_at ?? approval.created_at, now)}`}
+              {approval.decided_at ? timeAgo(approval.decided_at) : timeAgo(approval.expires_at)}
             </span>
           </span>
         )}

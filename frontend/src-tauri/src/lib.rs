@@ -1,4 +1,4 @@
-mod server;
+pub mod server;
 
 #[cfg(not(debug_assertions))]
 use tauri::Manager;

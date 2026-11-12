@@ -49,8 +49,8 @@ export default function GateDiagram() {
   return (
     <figure className="lp-diagram" aria-labelledby="lp-diagram-caption">
       <figcaption id="lp-diagram-caption" className="visually-hidden">
-        Diagram: an AI agent sends a payment request to AgentGate. AgentGate either passes it on to
-        PayPal, blocks it, or sends it to a human approver.
+        Illustrative diagram: an AI agent sends a sample request to AgentGate. The demo shows an
+        allow, deny, or approval outcome; it does not call PayPal.
       </figcaption>
 
       <div className="lp-diagram-bar">

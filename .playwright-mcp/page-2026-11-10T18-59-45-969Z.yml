@@ -1,0 +1,6 @@
+- generic [ref=f7e2]:
+  - main [ref=f7e3]:
+    - heading "Could not verify your session" [level=1] [ref=f7e4]
+    - alert [ref=f7e5]: Could not verify the authentication session.
+    - button "Try again" [ref=f7e6] [cursor=pointer]
+  - status

@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { Bot, KeyRound, Pause, Play, RefreshCw, ShieldOff, Trash2 } from 'lucide-react'
-import { DemoError, revokeKey, rotateKey, setAgentStatus, useDemoState } from '../../demo/store'
+import { DemoError, getDemoState, revokeKey, rotateKey, setAgentStatus } from '../../demo/store'
+import { getAgent } from '../../api/agents'
+import { useApiResource } from '../../api/useApiResource'
 import { agentById, budgetUsage, decisionTotals, policyForAgent } from '../../demo/selectors'
 import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import { describeEvent } from '../../ui/events'
 import { formatDate, formatDateTime, formatMoney, shortId, timeAgo } from '../../ui/format'
-import { useNow, useSimulatedLoad } from '../../ui/hooks'
+import { useNow } from '../../ui/hooks'
 import { DECISION, EVENT } from '../../ui/labels'
 import Meter from '../../ui/Meter'
 import Modal from '../../ui/Modal'
@@ -23,12 +25,30 @@ const EVENT_ROWS = 8
 
 export default function AgentDetailPage() {
   const { id } = useParams()
-  const state = useDemoState()
-  const loading = useSimulatedLoad()
+  const state = getDemoState()
+  const resource = useApiResource((signal) => id ? getAgent(id, signal) : Promise.reject(new Error('No agent ID')))
+  const loading = resource.status === 'loading'
   const now = useNow()
   const toast = useToast()
+
   const [dialog, setDialog] = useState<Dialog>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Error state handling
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Agent" description="Failed to load agent details" />
+        <EmptyState
+          icon={<Bot size={24} />}
+          title="Unable to load agent"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
 
   const agent = agentById(state, Number(id))
 

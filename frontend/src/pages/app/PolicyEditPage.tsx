@@ -1,17 +1,36 @@
 import { Link, useParams } from 'react-router'
 import { ShieldQuestion } from 'lucide-react'
-import { useDemoState } from '../../demo/store'
+import { getDemoState } from '../../demo/store'
+import { getPolicy } from '../../api/policies'
+import { useApiResource } from '../../api/useApiResource'
 import { agentName } from '../../demo/selectors'
 import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
-import { useSimulatedLoad } from '../../ui/hooks'
 import PageHeader from '../../ui/PageHeader'
 import PolicyForm from './policies/PolicyForm'
 import './PoliciesPage.css'
 
 export default function PolicyEditPage() {
   const { id } = useParams()
-  const state = useDemoState()
-  const loading = useSimulatedLoad()
+  const state = getDemoState()
+  const resource = useApiResource((signal) => id ? getPolicy(id, signal) : Promise.reject(new Error('No policy ID')))
+  const loading = resource.status === 'loading'
+
+  // Error state handling
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Edit policy" description="Failed to load policy" back={{ to: '/app/policies', label: 'Policies' }} />
+        <EmptyState
+          icon={<ShieldQuestion size={24} />}
+          title="Unable to load policy"
+          action={<Link to="/app/policies" className="btn btn-secondary">Back to policies</Link>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
+
   const policy = state.policies.find((p) => p.id === Number(id))
   const back = { to: '/app/policies', label: 'Policies' }
 

@@ -1,7 +1,13 @@
 import type { ReactNode } from 'react'
 import type { SpendRequest } from '../api/spendRequests'
 import DecisionBadge from './DecisionBadge'
-import { APPROVAL_LABELS, DECISION_LABELS, SOURCE_LABELS, formatTime } from './labels'
+import {
+  APPROVAL_LABELS,
+  DECISION_LABELS,
+  SOURCE_LABELS,
+  SPEND_STATUS_LABELS,
+  formatTime,
+} from './labels'
 
 interface Props {
   request: SpendRequest
@@ -9,13 +15,27 @@ interface Props {
 }
 
 export default function DecisionCard({ request, actions }: Props) {
+  const executionStatus = SPEND_STATUS_LABELS[request.status]
   return (
     <section
-      className={`panel decision decision-${request.decision}`}
+      className={`panel decision decision-${request.status === 'execution_blocked' ? 'execution_blocked' : request.decision}`}
       aria-live="polite"
-      aria-label="Decision"
+      aria-label="Spend request outcome"
     >
-      <DecisionBadge decision={request.decision} />
+      <h3>Policy decision at submission</h3>
+      <DecisionBadge
+        decision={request.decision}
+        label={`${DECISION_LABELS[request.decision].label} at submission`}
+      />
+
+      <div
+        className={`execution-status execution-status-${request.status}`}
+        role={request.status === 'execution_blocked' ? 'status' : undefined}
+        aria-label="Execution status"
+      >
+        <strong>{executionStatus.label}</strong>
+        <p>{executionStatus.description}</p>
+      </div>
 
       <div className="decision-summary">
         <p className="amount">

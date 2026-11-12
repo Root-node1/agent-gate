@@ -35,7 +35,7 @@ const FEATURES = [
   {
     icon: UserCheck,
     title: 'Human approvals',
-    body: 'Large or unusual payments wait in a queue. A person approves or denies, and only then does money move.',
+    body: 'Large or unusual requests wait in a queue. A person approves or denies; payment execution is separate and defaults to a fake executor.',
     codes: ['OVER_APPROVAL_THRESHOLD'],
   },
   {
@@ -47,7 +47,7 @@ const FEATURES = [
   {
     icon: FileClock,
     title: 'Audit trail',
-    body: 'Every request, decision, approval and payment is written to an append-only log you can review later.',
+    body: 'Backend API events are written to an append-only log. The built-in dashboard demo timeline is sample data.',
     codes: [],
   },
 ]
@@ -66,7 +66,7 @@ const DETAILS = [
   {
     icon: SplitSquareHorizontal,
     title: 'Decision and payment kept apart',
-    body: '"Allowed" and "Paid" are separate statuses, so you always know what PayPal confirmed.',
+    body: 'Backend policy decisions and payment execution are separate. The built-in dashboard shows simulated payment outcomes and makes no PayPal calls.',
   },
 ]
 

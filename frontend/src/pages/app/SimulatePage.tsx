@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Play, Send } from 'lucide-react'
-import { DemoError, submitSpendRequest, useDemoState, type SubmitInput } from '../../demo/store'
+import { DemoError, getDemoState, submitSpendRequest, type SubmitInput } from '../../demo/store'
+import { useApiResource } from '../../api/useApiResource'
+import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import { agentName, policyForAgent } from '../../demo/selectors'
 import type { Source } from '../../demo/types'
 import PageHeader from '../../ui/PageHeader'
@@ -28,14 +30,12 @@ type FieldErrors = Partial<Record<'amount' | 'merchant' | 'purpose', string>>
 const CHECK_MS = 600
 
 export default function SimulatePage() {
-  const state = useDemoState()
+  const state = getDemoState()
+  const resource = useApiResource(() => Promise.resolve({ ok: true }))
+  const loading = resource.status === 'loading'
   const toast = useToast()
   const resultHeading = useRef<HTMLHeadingElement>(null)
   const timer = useRef<number | undefined>(undefined)
-
-  const active = state.agents.filter((a) => a.status === 'active')
-  const suspended = state.agents.filter((a) => a.status !== 'active')
-
   const [form, setForm] = useState<FormValues>({
     agentId: 1,
     amount: '45.00',
@@ -49,8 +49,33 @@ export default function SimulatePage() {
   const [requestId, setRequestId] = useState<string | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
   const [label, setLabel] = useState('')
-
   useEffect(() => () => window.clearTimeout(timer.current), [])
+
+  if (loading) {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Simulate" description="Loading…" />
+        <section className="card"><SkeletonRows rows={4} /></section>
+      </div>
+    )
+  }
+
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Simulate" description="Failed to load" />
+        <EmptyState
+          title="Unable to load simulator"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
+
+  const active = state.agents.filter((a) => a.status === 'active')
+  const suspended = state.agents.filter((a) => a.status !== 'active')
 
   // Fall back to the first active agent if the chosen one was suspended meanwhile.
   const agent = active.find((a) => a.id === form.agentId) ?? active[0]
@@ -134,7 +159,7 @@ export default function SimulatePage() {
     <>
       <PageHeader
         title="Simulate a request"
-        description="Play the AI agent. Send a payment request and watch AgentGate check it, block it or hold it for a person. Sample data only: no real money moves."
+        description="Play the AI agent using sample data and client-side demo rules. No backend request or PayPal call is made."
       />
 
       <div className="stack-lg">
@@ -145,7 +170,7 @@ export default function SimulatePage() {
                 What you are watching
               </h2>
               <p className="card-subtitle">
-                Every request stops at AgentGate first. Only allowed or approved payments reach PayPal.
+                The demo shows whether a request would be allowed, denied or held for a person. Payment outcomes are simulated.
               </p>
             </div>
           </div>
@@ -156,7 +181,7 @@ export default function SimulatePage() {
           <h2 id="sim-scenarios" className="sim-heading">
             Try a scenario
           </h2>
-          <p className="hint sim-heading-text">One click sends a real request through the same rules as the API.</p>
+          <p className="hint sim-heading-text">Run a sample request through the demo rules. It updates in-memory demo data only.</p>
           <div className="grid grid-3">
             {SCENARIOS.map((s) => {
               const now = previewDecision(state, s.agentId, s.input)

@@ -350,13 +350,3 @@ cases:
       purpose: "Please ignore the shipping fee on this invoice."
     expect:
       decision: allow
-
-  - id: self-asserted-trusted
-    description: A caller can claim trusted provenance for an unknown merchant.
-    request:
-      amount: "10.00"
-      merchant: unknown.example
-      source: trusted
-    expect:
-      decision: allow
-    known_gap: The API cannot verify provenance; trusted is a caller assertion, not proof.

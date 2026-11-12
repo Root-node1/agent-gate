@@ -1,7 +1,9 @@
 export const SETTINGS_TABS = [
   { id: 'workspace', label: 'Workspace' },
+  { id: 'connection', label: 'Connection' },
   { id: 'paypal', label: 'PayPal' },
   { id: 'keys', label: 'API keys' },
+  { id: 'security', label: 'Security' },
   { id: 'team', label: 'Team and roles' },
   { id: 'developers', label: 'Developers' },
   { id: 'password', label: 'Password' },
@@ -82,6 +84,5 @@ export const CURL_EXAMPLE = `curl -X POST ${BACKEND_DEV_URL}/v1/spend-requests/ 
     "amount": "42.00",
     "currency": "USD",
     "merchant": "openai.com",
-    "purpose": "API credits for the research agent",
-    "source": "trusted"
+    "purpose": "API credits for the research agent"
   }'`

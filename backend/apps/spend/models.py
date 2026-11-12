@@ -36,6 +36,7 @@ class SpendRequest(models.Model):
         EXECUTING = "executing", "Executing"
         SUCCEEDED = "succeeded", "Succeeded"
         FAILED = "failed", "Failed"
+        EXECUTION_BLOCKED = "execution_blocked", "Execution blocked"
         REJECTED = "rejected", "Rejected"
         EXPIRED = "expired", "Expired"
         REVERSED = "reversed", "Reversed"

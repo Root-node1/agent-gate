@@ -10,6 +10,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import HttpRequest
 
 from .mfa_crypto import get_mfa_fernet
+from .models import AccountProfile
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +20,8 @@ class CustomAccountAdapter(DefaultAccountAdapter):
 
     The allowlist is read from ``ACCOUNT_ALLOWED_SIGNUP_DOMAINS`` (a list of
     lower-cased domains). When the list is empty, every domain is accepted so
-    that the restriction is opt-in. This is intentionally separate from the
-    future org-auto-assignment step (AUTH-06): signup never grants an
-    organization membership or an elevated role.
+    that the restriction is opt-in. Signup never grants an organization
+    membership; users create a new workspace after authenticating.
     """
 
     def clean_email(self, email):
@@ -32,6 +32,27 @@ class CustomAccountAdapter(DefaultAccountAdapter):
             if domain not in {d.lower() for d in allowed}:
                 raise ValidationError("Signups from this email domain are not allowed.")
         return email
+
+    def save_user(self, request, user, form, commit=True):
+        """Create the user, then ensure an AccountProfile exists.
+
+        ``full_name`` from the signup payload is stored on the profile.
+        """
+        user = super().save_user(request, user, form, commit)
+
+        full_name = ""
+        if hasattr(request, "data") and request.data:
+            full_name = request.data.get("full_name", "") or ""
+
+        profile, profile_created = AccountProfile.objects.get_or_create(
+            user=user,
+            defaults={"full_name": full_name},
+        )
+        if not profile_created and full_name:
+            profile.full_name = full_name
+            profile.save(update_fields=["full_name"])
+
+        return user
 
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):

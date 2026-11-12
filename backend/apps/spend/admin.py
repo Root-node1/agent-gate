@@ -8,4 +8,10 @@ class SpendRequestAdmin(admin.ModelAdmin):
     list_display = ("created_at", "agent", "amount_minor", "currency", "merchant_ref", "decision", "status", "risk_score")
     list_filter = ("decision", "status", "source_type")
     search_fields = ("merchant_ref", "purpose")
-    readonly_fields = ("id", "created_at", "updated_at")
+    readonly_fields = tuple(field.name for field in SpendRequest._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

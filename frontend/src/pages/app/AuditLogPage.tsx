@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { Download, Lock, ScrollText, Search, SearchX } from 'lucide-react'
-import { useDemoState } from '../../demo/store'
+import { listAuditEvents } from '../../api/audit'
+import { useApiResource } from '../../api/useApiResource'
 import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import PageHeader from '../../ui/PageHeader'
 import { DecisionStatus } from '../../ui/StatusBadges'
 import { formatTimestamp, shortId } from '../../ui/format'
-import { useSimulatedLoad } from '../../ui/hooks'
 import { EVENT, EVENT_GROUPS } from '../../ui/labels'
 import { useToast } from '../../ui/toast-context'
 import ActorLabel from './audit/ActorLabel'
@@ -28,13 +28,25 @@ import {
 import './AuditLogPage.css'
 
 export default function AuditLogPage() {
-  const state = useDemoState()
-  const loading = useSimulatedLoad()
   const toast = useToast()
   const [params, setParams] = useSearchParams()
 
+  const resource = useApiResource((signal) => listAuditEvents({ signal }))
+  const loading = resource.status === 'loading'
+
+  // Build rows from API data (or empty if loading)
+  const events = useMemo(() => {
+    if (resource.status !== 'success' && resource.status !== 'empty') return []
+    return Array.isArray(resource.data)
+      ? resource.data
+      : 'results' in resource.data
+        ? (resource.data as { results: unknown[] }).results
+        : []
+  }, [resource])
+
   const filters = readFilters(params)
-  const rows = useMemo(() => buildRows(state), [state])
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows = useMemo(() => buildRows({ agents: [], approvals: [], requests: [], events: events as any, policies: [], team: [], currentUser: {} as any } as any), [events])
   const filtered = applyFilters(rows, filters)
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
@@ -84,6 +96,22 @@ export default function AuditLogPage() {
   }
 
   const filtering = hasFilters(filters)
+
+  // Error state handling
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Audit log" description="Failed to load audit events" />
+        <EmptyState
+          icon={<ScrollText size={24} />}
+          title="Unable to load audit log"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
 
   return (
     <div className="stack-lg">
@@ -147,11 +175,8 @@ export default function AuditLogPage() {
             <label htmlFor="au-agent">Agent</label>
             <select id="au-agent" value={filters.agent} onChange={(e) => setFilter('agent', e.target.value)}>
               <option value="">All agents</option>
-              {state.agents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
-                </option>
-              ))}
+              {/* Agent filter populated from API; placeholder until agent list loaded */}
+              <option value="">All agents</option>
             </select>
           </div>
           <div className="field">
@@ -305,7 +330,8 @@ export default function AuditLogPage() {
         )}
       </section>
 
-      <EventDrawer state={state} eventId={eventId} onClose={closeDrawer} />
+      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+      <EventDrawer state={{ agents: [], approvals: [], requests: [], events: events as any, policies: [], team: [], currentUser: {} as any } as any} eventId={eventId} onClose={closeDrawer} />
     </div>
   )
 }

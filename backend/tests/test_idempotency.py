@@ -22,7 +22,6 @@ class IdempotencyTests(APITestCase):
             "amount": "10.00",
             "currency": "USD",
             "merchant": "acme.com",
-            "source": "trusted",
         }
         body.update(overrides)
         return self.client.post(URL, body, format="json", HTTP_IDEMPOTENCY_KEY=key)
@@ -83,7 +82,7 @@ class IdempotencyTests(APITestCase):
     def test_missing_key_is_rejected(self):
         response = self.client.post(
             URL,
-            {"amount": "10.00", "currency": "USD", "merchant": "acme.com", "source": "trusted"},
+            {"amount": "10.00", "currency": "USD", "merchant": "acme.com"},
             format="json",
         )
         self.assertEqual(response.status_code, 400)

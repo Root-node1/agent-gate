@@ -19,6 +19,8 @@ from .models import Agent, ApiKey
 from .serializers import (
     AgentCreateSerializer,
     AgentListSerializer,
+    AgentRevokeKeyResponseSerializer,
+    AgentRotateKeyResponseSerializer,
     AgentSerializer,
     AgentUpdateSerializer,
 )
@@ -136,14 +138,15 @@ class AgentDetailView(APIView):
 
     @extend_schema(request=AgentUpdateSerializer, responses={200: AgentSerializer})
     def patch(self, request, pk):
-        agent = get_object_or_404(agent_queryset(request.user), pk=pk)
-        old_name = agent.name
-        old_status = agent.status
-
-        serializer = AgentUpdateSerializer(agent, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-
         with transaction.atomic():
+            agent = get_object_or_404(
+                agent_queryset(request.user).select_for_update(of=("self",)), pk=pk
+            )
+            old_name = agent.name
+            old_status = agent.status
+
+            serializer = AgentUpdateSerializer(agent, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
             serializer.save()
             validated = serializer.validated_data
 
@@ -184,7 +187,10 @@ class AgentRotateKeyView(APIView):
     authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsOrganizationAdmin]
 
-    @extend_schema(request=None, responses={200: dict, 400: dict})
+    @extend_schema(
+        request=None,
+        responses={200: AgentRotateKeyResponseSerializer},
+    )
     def post(self, request, pk):
         agent = get_object_or_404(agent_queryset(request.user), pk=pk)
         old_key = agent.current_key
@@ -235,7 +241,16 @@ class AgentRevokeKeyView(APIView):
     authentication_classes = [DashboardSessionAuthentication]
     permission_classes = [IsOrganizationAdmin]
 
-    @extend_schema(request=None, responses={200: dict, 400: dict})
+    @extend_schema(
+        request=None,
+        responses={
+            200: AgentRevokeKeyResponseSerializer,
+            400: {
+                "type": "object",
+                "properties": {"detail": {"type": "string"}},
+            },
+        },
+    )
     def post(self, request, pk):
         agent = get_object_or_404(agent_queryset(request.user), pk=pk)
         revoked_key = agent.revoke_current_key()

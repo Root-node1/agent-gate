@@ -11,7 +11,7 @@ export default function LandingFooter() {
           <Logo />
           <p>Built for the PayPal AI Hackathon.</p>
           <p className="lp-footer-note">
-            The demo runs on sample data. PayPal payments use the sandbox; no real money moves.
+            Built-in dashboard scenarios use sample data and make no PayPal calls. Backend payment execution is separate and defaults to a fake executor.
           </p>
         </div>
         <nav className="lp-footer-nav" aria-label="Footer">
@@ -20,6 +20,9 @@ export default function LandingFooter() {
             <li><Link to={LINKS.demo}>Demo dashboard</Link></li>
             <li><Link to={LINKS.simulate}>Simulator</Link></li>
             <li><Link to={LINKS.audit}>Audit log</Link></li>
+            <li><Link to={LINKS.downloads}>Downloads</Link></li>
+            <li><Link to={LINKS.systemRequirements}>System requirements</Link></li>
+            <li><Link to={LINKS.install}>Installation guide</Link></li>
           </ul>
         </nav>
         <nav className="lp-footer-nav" aria-label="Resources">

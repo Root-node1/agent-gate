@@ -1,69 +1,61 @@
-"""Django system checks for payment execution configuration."""
+"""Django system checks for payment execution configuration.
+
+Validates the PayPal sandbox configuration contract
+(``PAYPAL_ENV``, ``PAYPAL_CHECKOUT_ENABLED``, ``PAYPAL_PAYOUTS_ENABLED``)
+through :func:`apps.payments.paypal.config.get_paypal_config`.
+"""
 
 from django.conf import settings
 from django.core.checks import Error, Tags, register
+
+from apps.payments.paypal.config import PayPalConfigError, get_paypal_config
 
 
 @register(Tags.security)
 def check_paypal_configuration(app_configs, **kwargs):
     """Fail closed when PayPal is selected without usable, non-live credentials."""
     errors = []
-    executor = getattr(settings, "PAYMENT_EXECUTOR", "fake")
-    mode = getattr(settings, "PAYPAL_MODE", "sandbox")
+    try:
+        get_paypal_config(settings)
+    except PayPalConfigError as exc:
+        errors.append(Error(str(exc), id="payments.E001"))
+        return errors
 
-    if executor not in {"fake", "paypal"}:
+    # Webhook ID is required when either PayPal feature is enabled, for
+    # signature verification of incoming webhook events.
+    checkout_enabled = _parse_bool(
+        getattr(settings, "PAYPAL_CHECKOUT_ENABLED", "false"),
+        "PAYPAL_CHECKOUT_ENABLED",
+    )
+    payouts_enabled = _parse_bool(
+        getattr(settings, "PAYPAL_PAYOUTS_ENABLED", "false"),
+        "PAYPAL_PAYOUTS_ENABLED",
+    )
+    if (checkout_enabled or payouts_enabled) and not getattr(
+        settings, "PAYPAL_WEBHOOK_ID", ""
+    ):
         errors.append(
             Error(
-                f"PAYMENT_EXECUTOR must be 'fake' or 'paypal', not {executor!r}.",
+                "PayPal execution requires PAYPAL_WEBHOOK_ID for signature "
+                "verification.",
                 id="payments.E001",
             )
         )
 
-    if mode not in {"sandbox", "live"}:
-        errors.append(
-            Error(
-                f"PAYPAL_MODE must be 'sandbox' or 'live', not {mode!r}.",
-                id="payments.E002",
-            )
-        )
-
-    if mode == "live" and not getattr(settings, "PAYPAL_ALLOW_LIVE", False):
-        errors.append(
-            Error(
-                "Live PayPal credentials are disabled; set PAYPAL_ALLOW_LIVE=1 "
-                "only when live movement is intentional.",
-                id="payments.E003",
-            )
-        )
-
-    if executor == "paypal":
-        missing = [
-            name
-            for name in ("PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET")
-            if not getattr(settings, name, "")
-        ]
-        if missing:
-            errors.append(
-                Error(
-                    f"PAYMENT_EXECUTOR=paypal requires {', '.join(missing)}.",
-                    id="payments.E004",
-                )
-            )
-        if not getattr(settings, "PAYPAL_WEBHOOK_ID", ""):
-            errors.append(
-                Error(
-                    "PAYMENT_EXECUTOR=paypal requires PAYPAL_WEBHOOK_ID for "
-                    "signature verification.",
-                    id="payments.E005",
-                )
-            )
-
-    if getattr(settings, "WEBHOOK_RETENTION_DAYS", 0) < 1:
-        errors.append(
-            Error(
-                "WEBHOOK_RETENTION_DAYS must be at least 1.",
-                id="payments.E006",
-            )
-        )
-
     return errors
+
+
+def _parse_bool(raw_value, label):
+    """Parse a feature-flag value from raw string input."""
+    if raw_value is None:
+        return False
+    normalized = str(raw_value).strip().lower()
+    if normalized in {"true", "yes", "1"}:
+        return True
+    if normalized in {"false", "no", "0", ""}:
+        return False
+    return False
+
+
+# Backwards-compatible alias used by tests.
+check_paypal_config = check_paypal_configuration

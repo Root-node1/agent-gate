@@ -24,7 +24,7 @@ class ThrottleTests(APITestCase):
     def post(self):
         return self.client.post(
             URL,
-            {"amount": "1.00", "currency": "USD", "merchant": "acme.com", "source": "trusted"},
+            {"amount": "1.00", "currency": "USD", "merchant": "acme.com"},
             format="json",
             HTTP_IDEMPOTENCY_KEY=str(uuid4()),
         )
@@ -53,7 +53,6 @@ class ThrottleTests(APITestCase):
                 "amount": "1.00",
                 "currency": "USD",
                 "merchant": "acme.com",
-                "source": "trusted",
                 "purpose": "x" * 4_096,
             }
         )

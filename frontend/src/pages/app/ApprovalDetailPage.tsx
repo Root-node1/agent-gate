@@ -2,6 +2,7 @@ import { useId, useRef, useState, type RefObject } from 'react'
 import { Link, useParams } from 'react-router'
 import {
   AlertTriangle,
+  Inbox,
   ArrowRight,
   Check,
   CircleCheck,
@@ -12,7 +13,9 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react'
-import { DemoError, decideApproval, useDemoState } from '../../demo/store'
+import { DemoError, decideApproval, getDemoState } from '../../demo/store'
+import { getApproval } from '../../api/approvals'
+import { useApiResource } from '../../api/useApiResource'
 import {
   agentById,
   budgetUsage,
@@ -30,7 +33,7 @@ import ReasonList, { RiskList } from '../../ui/ReasonList'
 import Timeline from '../../ui/Timeline'
 import { AgentStatusBadge, ApprovalStatus, PaymentStatusBadge } from '../../ui/StatusBadges'
 import { formatDateTime, formatMoney, shortId, timeAgo } from '../../ui/format'
-import { useNow, useSimulatedLoad } from '../../ui/hooks'
+import { useNow } from '../../ui/hooks'
 import { PAYMENT, SOURCE } from '../../ui/labels'
 import { useToast } from '../../ui/toast-context'
 import { effectiveOutcome, expiresIn, highRisk, mainRisk, personName, whySentences } from './approvals/helpers'
@@ -40,9 +43,26 @@ const BACK = { to: '/app/approvals', label: 'Approvals' }
 
 export default function ApprovalDetailPage() {
   const { id } = useParams()
-  const state = useDemoState()
+  const state = getDemoState()
+  const resource = useApiResource((signal) => id ? getApproval(id, signal) : Promise.reject(new Error('No approval ID')))
   const now = useNow(15_000)
-  const loading = useSimulatedLoad()
+  const loading = resource.status === 'loading'
+
+  // Error state handling
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Approval" description="Failed to load approval details" />
+        <EmptyState
+          icon={<Inbox size={24} />}
+          title="Unable to load approval"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
 
   if (loading) {
     return (
@@ -309,8 +329,8 @@ function DecisionPanel({
       setConfirming(null)
       toast.show(
         confirming === 'approved'
-          ? `Approved. Sending ${amount} to ${request.merchant} through PayPal.`
-          : `Denied. ${request.merchant} will not be paid.`,
+          ? 'Approved in demo. Simulated result only; no PayPal call was made.'
+          : 'Denied in demo. No payment was sent.',
       )
       onDecided()
     } catch (e) {
@@ -332,7 +352,7 @@ function DecisionPanel({
         </span>
       </div>
       <p className="muted small">
-        Approving sends the payment to PayPal right away. Denying blocks it; the agent is told and nothing is paid.
+        This browser demo records a simulated approval or denial. It does not send a payment to PayPal.
       </p>
       <div className="field">
         <label htmlFor={noteId}>Note for the audit log (optional)</label>
@@ -386,8 +406,8 @@ function DecisionPanel({
           )}
           <p>
             {approving
-              ? 'AgentGate will send this payment to PayPal now. This cannot be undone here.'
-              : 'The payment will be blocked and the agent told why.'}
+              ? 'This demo records the approval and simulates a payment result. No PayPal request is sent.'
+              : 'This demo records the denial. No payment is sent.'}
           </p>
           <dl className="kv">
             <dt>Amount</dt>

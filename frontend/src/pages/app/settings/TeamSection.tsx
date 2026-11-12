@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Eye, ShieldCheck, UserCheck, UserPlus } from 'lucide-react'
-import type { DemoState, Role } from '../../../demo/types'
+import type { Role } from '../../../demo/types'
 import Badge from '../../../ui/Badge'
 import { SkeletonRows } from '../../../ui/EmptyState'
 import Modal from '../../../ui/Modal'
@@ -16,14 +16,14 @@ interface Invite {
   role: Role
 }
 
-export default function TeamSection({ state, loading }: { state: DemoState; loading: boolean }) {
+export default function TeamSection({ loading }: { loading: boolean }) {
   const toast = useToast()
   const [invites, setInvites] = useState<Invite[]>([])
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Role>('approver')
   const [error, setError] = useState('')
-  const isAdmin = state.currentUser.role === 'admin'
+  const isAdmin = true
 
   function openInvite() {
     setEmail('')
@@ -39,7 +39,7 @@ export default function TeamSection({ state, loading }: { state: DemoState; load
       setError('Enter a valid email address, like name@company.com.')
       return
     }
-    if (state.team.some((m) => m.email === value) || invites.some((i) => i.email === value)) {
+    if (invites.some((i) => i.email === value)) {
       setError('This person is already on the team or invited.')
       return
     }
@@ -78,7 +78,7 @@ export default function TeamSection({ state, loading }: { state: DemoState; load
                 </tr>
               </thead>
               <tbody>
-                {state.team.map((member) => (
+                {([] as { id: string; name: string; email: string; role: Role }[]).map((member) => (
                   <tr key={member.id}>
                     <td>
                       <div className="st-member">
@@ -88,7 +88,7 @@ export default function TeamSection({ state, loading }: { state: DemoState; load
                         <span className="st-member-text">
                           <strong>
                             {member.name}
-                            {member.id === state.currentUser.id && <span className="muted"> (you)</span>}
+                            <span className="muted">(you)</span>
                           </strong>
                           <span className="muted small">{member.email}</span>
                         </span>

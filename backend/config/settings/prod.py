@@ -5,7 +5,12 @@ import os
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F403
-from .base import env_int
+from .base import (
+    PAYMENTS_EXECUTION_ENABLED,
+    PAYPAL_CHECKOUT_ENABLED,
+    PAYPAL_PAYOUTS_ENABLED,
+    env_int,
+)
 
 DEBUG = False
 
@@ -58,10 +63,11 @@ if prod_email_host:
 else:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
-if PAYMENT_EXECUTOR != "paypal" and PAYMENTS_EXECUTION_ENABLED:  # noqa: F405
+if PAYMENTS_EXECUTION_ENABLED and not PAYPAL_CHECKOUT_ENABLED and not PAYPAL_PAYOUTS_ENABLED:
     raise ImproperlyConfigured(
-        "Production payment execution requires PAYMENT_EXECUTOR=paypal; "
-        "set PAYMENTS_EXECUTION_ENABLED=false to leave execution off."
+        "Production payment execution requires PAYPAL_CHECKOUT_ENABLED or "
+        "PAYPAL_PAYOUTS_ENABLED; set PAYMENTS_EXECUTION_ENABLED=false to "
+        "leave execution off."
     )
 
 STATIC_ROOT = BASE_DIR / "staticfiles"  # noqa: F405

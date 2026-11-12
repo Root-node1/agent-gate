@@ -123,6 +123,7 @@ class SpendRequestCreateView(APIView):
         try:
             spend_request, replayed = pipeline.submit_spend_request(
                 request.user.agent,
+                source_type=SpendRequest.SourceType.UNTRUSTED,
                 idempotency_key=idempotency_key,
                 **serializer.validated_data,
             )

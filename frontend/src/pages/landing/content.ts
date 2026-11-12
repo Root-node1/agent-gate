@@ -9,6 +9,9 @@ export const LINKS = {
   simulate: '/app/simulate',
   approvals: '/app/approvals',
   audit: '/app/audit',
+  downloads: '/downloads',
+  systemRequirements: '/system-requirements',
+  install: '/install',
 }
 
 export type Outcome = 'allow' | 'deny' | 'needs_approval'
@@ -26,8 +29,7 @@ export interface Scenario {
   explain: string
 }
 
-// Example requests, checked against a policy with a $500 per-transaction cap,
-// a $100 approval threshold and paypa1-secure.net on the block list.
+// Illustrative landing-page requests; no backend request or payment is made.
 export const SCENARIOS: Scenario[] = [
   {
     outcome: 'allow',
@@ -38,8 +40,8 @@ export const SCENARIOS: Scenario[] = [
     sourceLabel: 'Trusted (user prompt)',
     purpose: 'GitHub Team seat',
     codes: [],
-    result: 'Sent to PayPal',
-    explain: 'Trusted source, known merchant, under every limit. The payment goes ahead.',
+    result: 'Would be allowed',
+    explain: 'This illustrative sample passes the example policy. No backend request or PayPal call is made.',
   },
   {
     outcome: 'deny',
@@ -50,8 +52,8 @@ export const SCENARIOS: Scenario[] = [
     sourceLabel: 'Untrusted (web page)',
     purpose: 'Verify account',
     codes: ['MERCHANT_BLOCKED', 'UNTRUSTED_SOURCE'],
-    result: 'Blocked at the gate',
-    explain: 'A lookalike domain on the block list. Hard rules win, so no human is even asked.',
+    result: 'Blocked by demo policy',
+    explain: 'The example policy blocks this lookalike domain. This is a landing-page illustration, not a live payment request.',
   },
   {
     outcome: 'needs_approval',
@@ -62,26 +64,26 @@ export const SCENARIOS: Scenario[] = [
     sourceLabel: 'Untrusted (invoice email)',
     purpose: 'Pay overdue invoice',
     codes: ['UNTRUSTED_SOURCE', 'OVER_APPROVAL_THRESHOLD'],
-    result: 'Held for a human',
-    explain: 'A real merchant, but the instruction came from an email and the amount is high. A person decides.',
+    result: 'Would need approval',
+    explain: 'The example policy holds this request because its source is untrusted and the amount is high. No backend request is made.',
   },
 ]
 
 export const STEPS = [
   {
     title: 'The agent asks first',
-    body: 'Before paying, your agent sends a spend request with its own API key: amount, merchant, purpose and where the instruction came from.',
+    body: 'The built-in dashboard demo uses sample requests. The separate Live API tester can send a request to a running AgentGate backend with an agent key.',
   },
   {
     title: 'Rules run in code',
-    body: 'AgentGate checks the request against the agent’s policy: budgets, caps, merchant lists and source. Same input, same answer, every time.',
+    body: 'Deterministic policy rules check budgets, caps, merchant lists and instruction source. The built-in demo runs these rules locally in the browser.',
   },
   {
     title: 'One clear decision',
-    body: 'Allow, deny, or needs approval, with a reason code for every rule that fired. Approvals wait in a queue for a person.',
+    body: 'The result is allow, deny, or needs approval, with reasons for the rules that fired. The demo approval queue is simulated in memory.',
   },
   {
     title: 'Pay and record',
-    body: 'Approved payments go to PayPal (sandbox today). Every decision and action is written to an append-only audit log.',
+    body: 'The dashboard demo simulates payment outcomes and sample audit activity. It makes no PayPal calls; backend payment execution is separate and defaults to a fake executor.',
   },
 ]

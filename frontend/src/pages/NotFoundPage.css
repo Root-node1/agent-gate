@@ -1,0 +1,64 @@
+/* NotFoundPage.css — 404 branded page styles */
+
+.nfp-main {
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.nfp-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.nfp-container {
+  text-align: center;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.nfp-kicker {
+  font-size: 4rem;
+  font-weight: 800;
+  color: var(--color-primary, #2563eb);
+  margin: 0 0 var(--space-3);
+  line-height: 1;
+}
+
+.nfp-heading {
+  margin: 0 0 var(--space-4);
+}
+
+.nfp-lede {
+  margin-bottom: var(--space-6);
+}
+
+.nfp-icon {
+  color: var(--color-muted);
+  margin-bottom: var(--space-6);
+}
+
+.nfp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: center;
+}
+
+@media (max-width: 480px) {
+  .nfp-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .nfp-kicker {
+    font-size: 3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nfp-actions .btn {
+    transition: none;
+  }
+}

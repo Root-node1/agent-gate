@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, intergration]
+    branches: [main, integration/agentgate-dashboard]
   pull_request:
   workflow_dispatch:
 
@@ -36,6 +36,7 @@ jobs:
       DJANGO_SETTINGS_MODULE: config.settings.test
       DJANGO_SECRET_KEY: ci-only-not-a-real-secret-but-long-enough-for-checks
       TEST_DATABASE_URL: postgresql://agentgate:agentgate@localhost:5432/agentgate
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
     defaults:
       run:
         working-directory: backend
@@ -80,6 +81,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+      - run: node --test tests/*.test.mjs
 
   security-audit:
     runs-on: ubuntu-latest

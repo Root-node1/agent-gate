@@ -1,0 +1,328 @@
+/* InstallationPage.css — extends the LandingPage design system */
+
+/* ── Table of contents ───────────────────────────────────────────────────── */
+.inst-toc {
+  margin-top: var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface-alt, #f9fafb);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  max-width: 480px;
+}
+
+.inst-toc-title {
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: 600;
+  color: var(--color-heading);
+  margin: 0 0 var(--space-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.inst-toc-list {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text);
+  line-height: 2;
+}
+
+.inst-toc-list a {
+  color: var(--color-primary, #2563eb);
+  text-decoration: none;
+}
+.inst-toc-list a:hover {
+  text-decoration: underline;
+}
+
+/* ── Notice ──────────────────────────────────────────────────────────────── */
+.inst-notice {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-info-bg, #eff6ff);
+  border: 1px solid var(--color-info-border, #bfdbfe);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text);
+  line-height: 1.6;
+}
+
+.inst-notice > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-info, #3b82f6);
+}
+
+.inst-notice strong {
+  font-weight: 600;
+}
+
+.inst-notice a {
+  color: var(--color-primary, #2563eb);
+}
+
+.inst-notice-sm {
+  margin-top: var(--space-4);
+}
+
+.inst-notice-warn {
+  background: var(--color-warn-bg, #fffbeb);
+  border-color: var(--color-warn-border, #fcd34d);
+}
+.inst-notice-warn > svg {
+  color: var(--color-warn, #f59e0b);
+}
+
+/* ── Steps container ─────────────────────────────────────────────────────── */
+.inst-steps-container {
+  max-width: 760px;
+}
+
+/* ── Individual step ─────────────────────────────────────────────────────── */
+.inst-step {
+  display: flex;
+  gap: var(--space-5);
+  margin-bottom: var(--space-10);
+  scroll-margin-top: var(--space-8);
+}
+
+.inst-step:last-child {
+  margin-bottom: 0;
+}
+
+.inst-step-num {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary, #2563eb);
+  color: white;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: var(--font-size-sm, 0.875rem);
+  margin-top: 2px;
+}
+
+.inst-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.inst-step-title {
+  font-size: var(--font-size-lg, 1.125rem);
+  font-weight: 600;
+  color: var(--color-heading);
+  margin: 0 0 var(--space-3);
+}
+
+.inst-step-body p {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+  line-height: 1.65;
+}
+
+.inst-step-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── Platform choices ────────────────────────────────────────────────────── */
+.inst-platform-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+}
+
+.inst-platform-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm, 0.875rem);
+  flex-wrap: wrap;
+}
+
+.inst-platform-choice strong {
+  min-width: 120px;
+  font-weight: 600;
+}
+
+.inst-platform-choice code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  color: var(--color-text);
+  background: var(--color-code-bg, #f3f4f6);
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex: 1;
+}
+
+.inst-platform-choice-disabled {
+  opacity: 0.6;
+  background: var(--color-surface-alt, #f9fafb);
+}
+
+.inst-tag {
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--color-neutral-bg, #f3f4f6);
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.inst-tag-ready {
+  background: var(--color-allow-bg, #d1fae5);
+  color: var(--color-allow-text, #065f46);
+}
+
+/* ── Platform tabs in step 4 ─────────────────────────────────────────────── */
+.inst-platform-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: var(--space-4);
+}
+
+.inst-platform-section {}
+
+.inst-platform-section-disabled {
+  opacity: 0.65;
+}
+
+.inst-platform-heading {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-heading);
+  margin: 0 0 var(--space-2);
+}
+
+/* ── Code blocks ─────────────────────────────────────────────────────────── */
+.inst-code-block {
+  background: var(--color-code-bg, #1e293b);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin: var(--space-3) 0;
+}
+
+.inst-code-label {
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  margin: 0;
+}
+
+.inst-code-block pre {
+  margin: 0;
+  padding: var(--space-4);
+  overflow-x: auto;
+}
+
+.inst-code-block code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.82rem;
+  color: #e2e8f0;
+  line-height: 1.65;
+}
+
+/* ── Notes ───────────────────────────────────────────────────────────────── */
+.inst-note {
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-muted);
+  line-height: 1.6;
+  margin: var(--space-2) 0 0;
+}
+
+.inst-note a {
+  color: var(--color-primary, #2563eb);
+}
+
+/* ── List ────────────────────────────────────────────────────────────────── */
+.inst-list {
+  margin: var(--space-3) 0;
+  padding-left: var(--space-5);
+  color: var(--color-text);
+  font-size: var(--font-size-sm, 0.875rem);
+  line-height: 2;
+}
+
+.inst-ordered-list {
+  margin: var(--space-3) 0;
+  padding-left: var(--space-5);
+  color: var(--color-text);
+  font-size: var(--font-size-sm, 0.875rem);
+  line-height: 2.2;
+}
+
+.inst-ordered-list a {
+  color: var(--color-primary, #2563eb);
+}
+
+/* ── Link with arrow ─────────────────────────────────────────────────────── */
+.inst-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-primary, #2563eb);
+  font-size: var(--font-size-sm, 0.875rem);
+  font-weight: 500;
+  text-decoration: none;
+  margin-top: var(--space-2);
+}
+.inst-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Error cases ─────────────────────────────────────────────────────────── */
+.inst-errors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.inst-error-case {
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.inst-error-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-heading);
+  margin-bottom: var(--space-2);
+}
+
+.inst-error-label > svg {
+  color: var(--color-warn, #f59e0b);
+  flex-shrink: 0;
+}
+
+.inst-error-fix {
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-muted);
+  line-height: 1.6;
+}
+
+@media (max-width: 540px) {
+  .inst-step { gap: var(--space-3); }
+  .inst-step-num { width: 1.75rem; height: 1.75rem; font-size: 0.75rem; }
+  .inst-step-title { font-size: var(--font-size-base); }
+  .inst-platform-choice { flex-direction: column; align-items: flex-start; }
+  .inst-platform-choice code { max-width: 100%; }
+}

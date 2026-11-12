@@ -16,10 +16,18 @@ class PayPalAuthenticationError(PayPalError):
 class PayPalResponseError(PayPalError):
     """PayPal rejected a request. No money should have moved."""
 
-    def __init__(self, message: str, *, status_code: int, code: str = ""):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        code: str = "",
+        body: dict | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
+        self.body = body
 
 
 class PayPalTransientError(PayPalError):

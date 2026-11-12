@@ -23,7 +23,6 @@ class ApiErrorTests(APITestCase):
             "amount": "10.00",
             "currency": "USD",
             "merchant": "acme.com",
-            "source": "trusted",
         }
         body.update(overrides)
         return self.client.post(
@@ -56,7 +55,6 @@ class ApiErrorTests(APITestCase):
                 "amount": "-5",
                 "currency": "USD",
                 "merchant": "acme.com",
-                "source": "trusted",
             },
             format="json",
             HTTP_IDEMPOTENCY_KEY=str(uuid4()),
@@ -78,7 +76,6 @@ class ApiErrorTests(APITestCase):
             "amount": "10.00",
             "currency": "USD",
             "merchant": "acme.com",
-            "source": "trusted",
         }
         unknown = APIClient().post(
             URL,
@@ -113,7 +110,6 @@ class ApiErrorTests(APITestCase):
                 "amount": "10.00",
                 "currency": "USD",
                 "merchant": "acme.com",
-                "source": "trusted",
             },
             format="json",
         )

@@ -90,18 +90,15 @@ class PayPalExecutor:
 
 
 def build_paypal_client():
-    """Construct the client from settings without exposing credentials elsewhere."""
+    """Construct the client from settings without exposing credentials elsewhere.
+
+    Uses :meth:`PayPalClient.from_settings` which validates the full PayPal
+    sandbox configuration contract (``PAYPAL_ENV``, ``PAYPAL_CHECKOUT_ENABLED``,
+    ``PAYPAL_PAYOUTS_ENABLED``) before constructing the client.
+    """
     from .paypal import PayPalClient
 
-    return PayPalClient(
-        settings.PAYPAL_CLIENT_ID,
-        settings.PAYPAL_CLIENT_SECRET,
-        mode=settings.PAYPAL_MODE,
-        base_url=settings.PAYPAL_BASE_URL,
-        timeout=float(settings.PAYPAL_TIMEOUT_SECONDS),
-        max_retries=settings.PAYPAL_MAX_RETRIES,
-        allow_live=settings.PAYPAL_ALLOW_LIVE,
-    )
+    return PayPalClient.from_settings(settings)
 
 
 def get_executor() -> PaymentExecutor:

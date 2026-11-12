@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
-import { createAgent, DemoError, useDemoState } from '../../../demo/store'
+import { useApiResource } from '../../../api/useApiResource'
+import { createAgent, DemoError, getDemoState } from '../../../demo/store'
 import { policyForAgent } from '../../../demo/selectors'
 import type { Agent } from '../../../demo/types'
 import Modal from '../../../ui/Modal'
@@ -14,11 +15,13 @@ interface Props {
 }
 
 export default function RegisterAgentModal({ open, onClose }: Props) {
-  const state = useDemoState()
+  const state = getDemoState()
+  useApiResource(() => Promise.resolve({ ok: true }))
   const toast = useToast()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [touched, setTouched] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [created, setCreated] = useState<{ agent: Agent; rawKey: string } | null>(null)
 
@@ -38,6 +41,7 @@ export default function RegisterAgentModal({ open, onClose }: Props) {
     e.preventDefault()
     setTouched(true)
     if (nameError) return
+    setIsSubmitting(true)
     try {
       const result = createAgent(name, description)
       setCreated(result)
@@ -45,6 +49,8 @@ export default function RegisterAgentModal({ open, onClose }: Props) {
       toast.show(`${result.agent.name} registered.`, 'success')
     } catch (err) {
       setFormError(err instanceof DemoError ? err.message : 'Could not register the agent. Try again.')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -90,7 +96,7 @@ export default function RegisterAgentModal({ open, onClose }: Props) {
           <button type="button" className="btn btn-secondary" onClick={close}>
             Cancel
           </button>
-          <button type="submit" form="ag-register-form" className="btn btn-primary">
+          <button type="submit" form="ag-register-form" className="btn btn-primary" disabled={isSubmitting}>
             Register agent
           </button>
         </>

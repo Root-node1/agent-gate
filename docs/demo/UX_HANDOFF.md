@@ -23,7 +23,7 @@ The dashboard is the human operator's control panel: approve or deny pending req
 - **Git**
 - **Python 3.13+**
 - **Node.js 22+**
-- **Docker** (recommended) or **PostgreSQL 17** installed locally
+- **Docker** (required — starts the local PostgreSQL database automatically)
 - **Docker Compose** (for deployment testing)
 
 ## Repository Structure
@@ -52,10 +52,15 @@ agent-gate/
 │   └── deployment/       # Deployment guide
 ├── compose.yaml          # Docker Compose (Caddy, web, worker, Redis)
 ├── Dockerfile            # Backend production image
-└── run.sh                # Local dev startup script
+├── run.sh                # One-command local dev startup
+└── stop.sh               # Stop local dev servers
 ```
 
-## Installation
+## Quick Start
+
+The fastest way to run AgentGate locally is a single command. `run.sh` handles
+everything: installing dependencies, starting the database, running migrations,
+and launching both servers.
 
 ### 1. Clone the repository
 
@@ -65,43 +70,88 @@ cd agent-gate
 git checkout release/v0.1.0-ux-demo
 ```
 
-### 2. Start PostgreSQL 17
-
-**Option A — Docker (recommended):**
+### 2. Start the application
 
 ```bash
-docker run --rm -d --name agentgate-demo-pg17 \
-  -e POSTGRES_USER=agentgate \
-  -e POSTGRES_PASSWORD=agentgate-local-only \
-  -e POSTGRES_DB=agentgate \
-  -p 127.0.0.1:55432:5432 postgres:17
-
-export DATABASE_URL='postgresql://agentgate:agentgate-local-only@127.0.0.1:55432/agentgate'
-```
-
-**Option B — Host PostgreSQL 17:**
-
-```bash
-psql -h 127.0.0.1 -p 5432 -U postgres -c "CREATE ROLE agentgate WITH LOGIN PASSWORD 'agentgate-local-only';"
-psql -h 127.0.0.1 -p 5432 -U postgres -c "CREATE DATABASE agentgate OWNER agentgate;"
-export DATABASE_URL='postgresql://agentgate:agentgate-local-only@127.0.0.1:5432/agentgate'
-```
-
-### 3. Start the application
-
-```bash
+chmod +x run.sh stop.sh
 ./run.sh
 ```
 
-This creates the Python venv, installs dependencies, applies migrations, and starts both servers:
-- **Backend**: http://localhost:8000
-- **Frontend**: http://localhost:5173
+That's it. The script will:
 
-Press Ctrl+C to stop both servers.
+1. Check that Python 3.13+, Node.js 22+, and Docker are installed.
+2. Create a Python virtual environment and install backend dependencies (first run).
+3. Install frontend npm dependencies (first run).
+4. Create `backend/.env` with a random secret key (first run).
+5. Start a PostgreSQL 17 database container (reused on subsequent runs).
+6. Wait for the database to be ready.
+7. Apply database migrations.
+8. Start the Django backend on port 8000.
+9. Start the Vite frontend on port 5173.
+10. Display the URLs and confirm everything is running.
+
+Expected output:
+
+```
+AgentGate is running!
+
+  Frontend:  http://localhost:5173
+  Backend:   http://localhost:8000
+  Database:  PostgreSQL (Docker: agentgate-dev-pg)
+
+  Logs:    .run-pids/backend.log
+  Logs:    .run-pids/frontend.log
+
+  Stop:    Press Ctrl+C  or  ./stop.sh
+```
+
+### 3. Open the application
+
+Open **http://localhost:5173** in your browser.
+
+### Stop the application
+
+Press **Ctrl+C** in the terminal, or run in a second terminal:
+
+```bash
+./stop.sh
+```
+
+This stops the backend and frontend but leaves the PostgreSQL container running
+so your data persists between sessions. To also stop the database:
+
+```bash
+docker stop agentgate-dev-pg
+```
+
+### Alternative: Host-installed PostgreSQL
+
+If you prefer to run PostgreSQL on your host instead of via Docker, create the
+database manually and set `DATABASE_URL` in `backend/.env`:
+
+```bash
+psql -h 127.0.0.1 -p 5432 -U postgres <<SQL
+CREATE ROLE agentgate WITH LOGIN PASSWORD 'agentgate-local-only';
+CREATE DATABASE agentgate OWNER agentgate;
+SQL
+```
+
+Then edit `backend/.env` and set:
+
+```
+DATABASE_URL=postgresql://agentgate:agentgate-local-only@127.0.0.1:5432/agentgate
+```
+
+`run.sh` will detect the existing `DATABASE_URL` and skip starting the Docker
+container.
 
 ## Environment Configuration
 
-`run.sh` creates `backend/.env` from `backend/.env.example` on first run with a fresh `DJANGO_SECRET_KEY`. For manual setup:
+`run.sh` creates `backend/.env` from `backend/.env.example` on first run with a
+fresh `DJANGO_SECRET_KEY` and the default `DATABASE_URL`. No manual configuration
+is needed for basic local development.
+
+For manual setup:
 
 ```bash
 cp backend/.env.example backend/.env
@@ -111,7 +161,7 @@ Key settings in `backend/.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | *(required)* | PostgreSQL connection string |
+| `DATABASE_URL` | `postgresql://agentgate:agentgate-local-only@127.0.0.1:55432/agentgate` | PostgreSQL connection (auto-set by run.sh) |
 | `DJANGO_SECRET_KEY` | Auto-generated | Django secret key |
 | `DEMO_MODE` | `false` | Enable anonymous demo access |
 | `PAYMENT_EXECUTOR` | `fake` | Payment executor (`fake` = no PayPal calls) |
@@ -120,14 +170,18 @@ Key settings in `backend/.env`:
 
 ## Database Setup
 
-Migrations are applied automatically by `run.sh`. To run them manually:
+Migrations are applied automatically by `run.sh`. The PostgreSQL database runs in
+a Docker container with a named volume (`agentgate-dev-pg-data`), so your data
+persists between sessions.
+
+To run migrations manually:
 
 ```bash
 cd backend && source venv/bin/activate
 python manage.py migrate
 ```
 
-To create a demo agent with sample data:
+To create a demo agent with sample data (for the Live API tester):
 
 ```bash
 python manage.py seed_demo
@@ -137,6 +191,15 @@ To create an admin user for the Django admin:
 
 ```bash
 python manage.py createsuperuser
+```
+
+To reset the local database (destroys all local data):
+
+```bash
+docker stop agentgate-dev-pg
+docker rm agentgate-dev-pg
+docker volume rm agentgate-dev-pg-data
+# Then run ./run.sh again to start fresh
 ```
 
 ## Test Accounts
@@ -238,15 +301,91 @@ The design system is documented in [docs/design-system/OVERVIEW.md](design-syste
 
 ## Troubleshooting
 
+### Viewing logs
+
+When `run.sh` is running, logs are written to `.run-pids/`:
+
+```bash
+# Backend logs
+tail -f .run-pids/backend.log
+
+# Frontend logs
+tail -f .run-pids/frontend.log
+```
+
+### Common issues
+
 | Problem | Solution |
 |---|---|
-| `run.sh` fails on first run | Ensure Python 3.13+ and Node 22+ are installed |
-| Migration errors | Verify PostgreSQL 17 is running and `DATABASE_URL` is set |
-| Frontend won't start | Run `cd frontend && npm install` manually |
-| Backend port 8000 in use | Stop existing process or change port in `run.sh` |
-| Frontend can't reach API | Ensure backend is running on port 8000 |
-| Docker PostgreSQL not ready | Wait for `pg_isready` to succeed before starting app |
-| Email verification stuck | Check backend terminal for the verification code |
+| `run.sh` fails: Python not found | Install Python 3.13+: `https://www.python.org/downloads/` |
+| `run.sh` fails: Node not found | Install Node.js 22+: `https://nodejs.org/` |
+| `run.sh` fails: Docker not found | Install Docker: `https://docs.docker.com/get-docker/` |
+| `run.sh` fails: Docker daemon not running | Start the Docker Desktop application or `sudo systemctl start docker` |
+| Migration errors | Check `.run-pids/backend.log` for details; verify `DATABASE_URL` in `backend/.env` |
+| Frontend won't start | Check `.run-pids/frontend.log`; try `cd frontend && npm install` manually |
+| Backend port 8000 in use | Stop the existing process: `./stop.sh` |
+| Frontend port 5173 in use | Stop the existing process: `./stop.sh` |
+| Frontend can't reach API | Ensure backend is running on port 8000; check backend logs |
+| PostgreSQL container fails to start | Check `docker logs agentgate-dev-pg`; ensure port 55432 is free |
+| Email verification stuck | The verification code appears in the backend log: `tail -f .run-pids/backend.log` |
+| Database connection refused after restart | PostgreSQL may need a moment to start; wait and try `./run.sh` again |
+
+### Troubleshooting database startup
+
+```bash
+# Check if the container is running
+docker ps | grep agentgate-dev-pg
+
+# View database logs
+docker logs agentgate-dev-pg
+
+# Check database readiness
+docker exec agentgate-dev-pg pg_isready -U agentgate -d agentgate
+
+# Restart the database container
+docker restart agentgate-dev-pg
+```
+
+### Troubleshooting backend startup
+
+```bash
+# Check backend logs
+cat .run-pids/backend.log
+
+# Test backend health endpoint
+curl http://localhost:8000/healthz
+
+# Test database connectivity
+cd backend && source venv/bin/activate
+python manage.py check --deploy
+```
+
+### Troubleshooting frontend startup
+
+```bash
+# Check frontend logs
+cat .run-pids/frontend.log
+
+# Test frontend is serving
+curl -I http://localhost:5173/
+
+# Reinstall frontend dependencies
+cd frontend && rm -rf node_modules && npm install
+```
+
+### Resetting the local database
+
+If you need a completely fresh database:
+
+```bash
+./stop.sh
+docker stop agentgate-dev-pg
+docker rm agentgate-dev-pg
+docker volume rm agentgate-dev-pg-data
+./run.sh
+```
+
+⚠️ This destroys all local data, including any accounts or demo data you created.
 
 ## Documentation Links
 
@@ -265,7 +404,7 @@ The design system is documented in [docs/design-system/OVERVIEW.md](design-syste
 | Browser MFA enrollment and login | Not browser-tested | UX person / founder must run manually |
 | Browser logout + session invalidation | Not browser-tested | UX person / founder must run manually |
 | Browser password reset end-to-end | Not browser-tested | UX person / founder must run manually |
-| Full local app startup against PG 17 | Not tested (host has PG 18.6) | Use Docker option in LOCAL_SETUP.md |
+| Full local app startup against PG 17 | run.sh starts PG 17 via Docker automatically | Run `./run.sh` and verify both servers start |
 | Live PayPal Sandbox API operation | Not tested | Requires founder's PayPal sandbox credentials |
 | PayPal AI Toolkit installation | Not installed | UX person installs with their own account |
 | PayPal MCP connection | Not configured | UX person connects with their own token |

@@ -3,10 +3,8 @@ import {
   CheckCircle2,
   HardDrive,
   Info,
-  Laptop,
   Monitor,
   Network,
-  Server,
 } from 'lucide-react'
 import { Link } from 'react-router'
 import LandingHeader from './landing/LandingHeader'
@@ -86,29 +84,15 @@ export default function SystemRequirementsPage() {
   const macosRows: RequirementRow[] = [
     {
       label: 'Operating system',
-      value: SYSTEM_REQUIREMENTS.macos.os,
+      value: 'macOS 10.15 Catalina or later',
       verified: false,
       note: 'Build not yet produced — pending macOS CI runner',
     },
-    { label: 'Processor', value: SYSTEM_REQUIREMENTS.macos.cpu, verified: false },
-    { label: 'Memory', value: SYSTEM_REQUIREMENTS.macos.ram, verified: false, note: 'Estimated' },
-    { label: 'Storage', value: SYSTEM_REQUIREMENTS.macos.storage, verified: false, note: 'Estimated' },
-    { label: 'WebView engine', value: SYSTEM_REQUIREMENTS.macos.webview, verified: true, note: 'WKWebView ships with macOS' },
-    { label: 'Network', value: SYSTEM_REQUIREMENTS.macos.network, verified: false },
-  ]
-
-  const backendRows: RequirementRow[] = [
-    { label: 'Backend type', value: 'Self-hosted or provider-hosted Django service', verified: true },
-    { label: 'Web framework', value: 'Django 6 / Django REST Framework', verified: true },
-    { label: 'Database', value: 'PostgreSQL 17 (required — PG-specific migrations exist)', verified: true },
-    { label: 'Cache / queue broker', value: 'Redis 7', verified: true },
-    { label: 'Background worker', value: 'Procrastinate worker (same Docker image, different CMD)', verified: true },
-    { label: 'Python', value: 'Python 3.13 or later', verified: true },
-    { label: 'Node.js (build only)', value: 'Node.js 22 (for `npm run build`)', verified: true },
-    { label: 'Hosting', value: 'Docker + Docker Compose on any Linux host (e.g. Contabo VPS)', verified: true },
-    { label: 'Reverse proxy', value: 'Caddy 2 (TLS termination + static file serving)', verified: true },
-    { label: 'Public ports', value: '80 (HTTP) and 443 (HTTPS) — Caddy only', verified: true },
-    { label: 'Internal services', value: 'PostgreSQL 5432 and Redis 6379 — internal network only, never public', verified: true },
+    { label: 'Processor', value: '64-bit (x86_64 or Apple Silicon)', verified: false },
+    { label: 'Memory', value: '4 GB minimum', verified: false, note: 'Estimated' },
+    { label: 'Storage', value: '200 MB available', verified: false, note: 'Estimated' },
+    { label: 'WebView engine', value: 'Built-in WKWebView (no additional runtime needed)', verified: true, note: 'WKWebView ships with macOS' },
+    { label: 'Network', value: 'Internet access to reach the AgentGate backend', verified: false },
   ]
 
   return (
@@ -128,37 +112,6 @@ export default function SystemRequirementsPage() {
               AgentGate has two separate components: the desktop client and the backend service.
               They have different requirements and are installed independently.
             </p>
-          </div>
-        </section>
-
-        <section className="lp-section lp-section-alt" aria-labelledby="sr-sep-title">
-          <div className="lp-container">
-            <h2 id="sr-sep-title" className="lp-h2 visually-hidden">Components</h2>
-            <div className="sr-sep-row">
-              <div className="sr-component-card">
-                <Laptop size={24} aria-hidden="true" className="sr-component-icon" />
-                <div>
-                  <h3 className="lp-h3">AgentGate Desktop Client</h3>
-                  <p>
-                    A Tauri desktop application (Rust + WebView). Runs on your computer and connects
-                    to an AgentGate backend. Installing it does not set up a database, install Python,
-                    or configure any server.
-                  </p>
-                </div>
-              </div>
-              <div className="sr-sep-divider" aria-hidden="true">+</div>
-              <div className="sr-component-card">
-                <Server size={24} aria-hidden="true" className="sr-component-icon" />
-                <div>
-                  <h3 className="lp-h3">AgentGate Backend</h3>
-                  <p>
-                    A Django service with PostgreSQL, Redis, and a background worker. Deployed via
-                    Docker Compose on a Linux server. This is what AI agents connect to and what
-                    enforces spending rules.
-                  </p>
-                </div>
-              </div>
-            </div>
           </div>
         </section>
 
@@ -186,8 +139,8 @@ export default function SystemRequirementsPage() {
 
             <div className="sr-platform-block" id="sr-windows">
               <h3 className="sr-platform-title">⊞ Windows</h3>
-              <div className="sr-availability-badge sr-coming-soon">
-                Build not yet produced — coming soon
+              <div className="sr-availability-badge sr-available">
+                Artifacts built and verified (Nov 10 2026) — awaiting GitHub Release
               </div>
               <ReqTable rows={windowsRows} />
             </div>
@@ -211,21 +164,6 @@ export default function SystemRequirementsPage() {
           </div>
         </section>
 
-        <section className="lp-section lp-section-alt" aria-labelledby="sr-backend-title">
-          <div className="lp-container">
-            <div className="sr-section-head">
-              <Server size={22} aria-hidden="true" className="sr-section-icon" />
-              <h2 id="sr-backend-title" className="lp-h2">Backend Requirements</h2>
-            </div>
-            <p className="lp-section-lede">
-              The backend is hosted separately and is not bundled with the desktop client.
-              Requirements are verified from the actual repository configuration, Dockerfile,
-              and CI pipeline.
-            </p>
-            <ReqTable rows={backendRows} />
-          </div>
-        </section>
-
         <section className="lp-section" aria-labelledby="sr-network-title">
           <div className="lp-container sr-network-section">
             <Network size={22} aria-hidden="true" className="sr-section-icon" />
@@ -234,9 +172,7 @@ export default function SystemRequirementsPage() {
               <ul className="sr-network-list">
                 <li>The desktop client must be able to reach the backend over HTTP or HTTPS.</li>
                 <li>Default backend URL: configurable. Development default: <code>http://localhost:8000</code>.</li>
-                <li>Production: HTTPS with a valid TLS certificate (Caddy handles provisioning via Let's Encrypt).</li>
-                <li>No direct database or Redis connections are made from the desktop client.</li>
-                <li>PayPal Sandbox API: required only on the backend server, not the desktop.</li>
+                <li>No direct database connections are made from the desktop client.</li>
               </ul>
             </div>
           </div>
@@ -273,18 +209,13 @@ export default function SystemRequirementsPage() {
                   </tr>
                   <tr>
                     <td>Windows MSI/EXE</td>
-                    <td>Pending verification</td>
-                    <td>Build not yet produced</td>
+                    <td>MSI: 4.3 MB / EXE: 3.0 MB</td>
+                    <td>Verified from artifact (Nov 2026)</td>
                   </tr>
                   <tr>
                     <td>macOS DMG</td>
                     <td>Pending verification</td>
                     <td>Build not yet produced</td>
-                  </tr>
-                  <tr>
-                    <td>Backend (database)</td>
-                    <td>20–50 MB initial</td>
-                    <td>PostgreSQL — grows with audit trail and spend history</td>
                   </tr>
                 </tbody>
               </table>

@@ -99,14 +99,6 @@ class SessionRememberView(views.APIView):
     authentication_classes = [SessionAuthentication]
     permission_classes = [IsAuthenticatedOr401]
 
-    def handle_exception(self, exc):
-        if isinstance(exc, exceptions.NotAuthenticated):
-            return Response(
-                {"detail": exc.detail},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        return super().handle_exception(exc)
-
     @extend_schema(
         request=SessionRememberSerializer,
         responses={200: {"type": "object", "properties": {"remember": {"type": "boolean"}}}},
@@ -114,9 +106,10 @@ class SessionRememberView(views.APIView):
     def post(self, request):
         remember = request.data.get("remember")
         if not isinstance(remember, bool):
-            return Response(
-                {"detail": "A boolean remember value is required."},
-                status=status.HTTP_400_BAD_REQUEST,
+            raise ApiError(
+                "A boolean remember value is required.",
+                code=ErrorCode.BAD_REQUEST,
+                status_code=400,
             )
         if remember:
             request.session.set_expiry(60 * 60 * 24 * 30)
@@ -166,14 +159,6 @@ class ProfileView(views.APIView):
     authentication_classes = [SessionAuthentication]
     permission_classes = [IsAuthenticatedOr401]
 
-    def handle_exception(self, exc):
-        if isinstance(exc, exceptions.NotAuthenticated):
-            return Response(
-                {"detail": exc.detail},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        return super().handle_exception(exc)
-
     @extend_schema(responses=AccountProfileSerializer)
     def get(self, request):
         profile, _ = AccountProfile.objects.get_or_create(user=request.user)
@@ -194,14 +179,6 @@ class OrganizationCreateView(views.APIView):
     authentication_classes = [SessionAuthentication]
     permission_classes = [IsAuthenticatedOr401]
 
-    def handle_exception(self, exc):
-        if isinstance(exc, exceptions.NotAuthenticated):
-            return Response(
-                {"detail": exc.detail},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        return super().handle_exception(exc)
-
     @extend_schema(
         request=OrganizationCreateSerializer,
         responses={status.HTTP_201_CREATED: OrganizationCreateResponseSerializer},
@@ -211,9 +188,10 @@ class OrganizationCreateView(views.APIView):
         serializer.is_valid(raise_exception=True)
         name = serializer.validated_data["name"]
         if Organization.objects.filter(name=name).exists():
-            return Response(
-                {"detail": "A workspace with this name already exists."},
-                status=status.HTTP_409_CONFLICT,
+            raise ApiError(
+                "A workspace with this name already exists.",
+                code=ErrorCode.VALIDATION_ERROR,
+                status_code=409,
             )
 
         try:
@@ -226,9 +204,10 @@ class OrganizationCreateView(views.APIView):
                 )
         except IntegrityError:
             if Organization.objects.filter(name=name).exists():
-                return Response(
-                    {"detail": "A workspace with this name already exists."},
-                    status=status.HTTP_409_CONFLICT,
+                raise ApiError(
+                    "A workspace with this name already exists.",
+                    code=ErrorCode.VALIDATION_ERROR,
+                    status_code=409,
                 )
             raise
 

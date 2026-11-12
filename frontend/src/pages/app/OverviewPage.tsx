@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { Activity, CircleCheck, CircleX, Clock, FlaskConical, Inbox } from 'lucide-react'
-import { getDemoState, useDemoState } from '../../demo/store'
+import { getDemoState } from '../../demo/store'
+import { useApiResource } from '../../api/useApiResource'
 import { decisionsByDay, decisionTotals, pendingApprovals } from '../../demo/selectors'
 import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import PageHeader from '../../ui/PageHeader'
 import StatCard from '../../ui/StatCard'
 import { percent } from '../../ui/format'
-import { useNow, useSimulatedLoad } from '../../ui/hooks'
+import { useNow } from '../../ui/hooks'
 import ActivityFeed from './overview/ActivityFeed'
 import ApprovalsCallout from './overview/ApprovalsCallout'
 import BudgetCard from './overview/BudgetCard'
@@ -19,11 +20,28 @@ import './OverviewPage.css'
 const statSkeleton = <span className="skeleton ov-stat-skeleton" aria-label="Loading" />
 
 export default function OverviewPage() {
-  const state = useDemoState()
-  const loading = useSimulatedLoad()
+  const state = getDemoState()
+  const resource = useApiResource(() => Promise.resolve({ ok: true }))
+  const loading = resource.status === 'loading'
   const now = useNow(15_000)
   // Events after this id arrived while the page was open; the feed animates them in.
   const [baselineEventId] = useState(() => getDemoState().events[0]?.id ?? 0)
+
+  // Error state handling
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Overview" description="Failed to load overview data" />
+        <EmptyState
+          icon={<Activity size={24} />}
+          title="Unable to load overview"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
 
   const since = windowStart(now).toISOString()
   const inWindow = state.requests.filter((r) => r.created_at >= since)

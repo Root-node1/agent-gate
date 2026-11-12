@@ -949,7 +949,7 @@ class CheckoutCaptureViewTests(CheckoutViewBase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn("not enabled", response.json()["detail"])
+        self.assertIn("not enabled", response.json()["error"]["message"])
         mock_client.get.assert_not_called()
 
     # 12. Missing credentials --------------------------------------------------
@@ -969,7 +969,7 @@ class CheckoutCaptureViewTests(CheckoutViewBase):
         )
 
         self.assertEqual(response.status_code, 503)
-        self.assertIn("not configured", response.json()["detail"])
+        self.assertIn("not configured", response.json()["error"]["message"])
 
     # 14. Duplicate capture replay (view: Idempotent-Replayed header) ----------
     @patch("apps.payments.checkout.views.PayPalClient")
@@ -1128,7 +1128,7 @@ class CheckoutCaptureViewTests(CheckoutViewBase):
             format="json",
         )
 
-        detail = response.json()["detail"]
+        detail = response.json()["error"]["message"]
         self.assertNotIn("test-client-id", detail)
         self.assertNotIn("test-client-secret", detail)
 

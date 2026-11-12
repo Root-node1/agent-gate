@@ -36,6 +36,22 @@
   line-height: 1.6;
 }
 
+/* ── Hover and focus-visible for component cards (kept for dead-CSS safety) */
+.sr-component-card {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sr-component-card:hover,
+.sr-component-card:focus-visible {
+  border-color: var(--color-primary, #2563eb);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+}
+
+.sr-component-card:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: 2px;
+}
+
 .sr-sep-divider {
   align-self: center;
   font-size: 1.5rem;
@@ -134,8 +150,19 @@
   border-bottom: none;
 }
 
-.sr-table tr:hover td {
+/* ── Hover and focus-visible for table rows ─────────────────────────────── */
+.sr-table tr {
+  transition: background 0.15s ease;
+}
+
+.sr-table tr:hover td,
+.sr-table tr:focus-visible td {
   background: var(--color-surface-alt, #f9fafb);
+}
+
+.sr-table tr:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: -2px;
 }
 
 .sr-label {
@@ -216,4 +243,15 @@
   .sr-network-section { flex-direction: column; }
   .sr-table { font-size: 0.8rem; }
   .sr-label { white-space: normal; }
+}
+
+/* ── Accessibility: reduced motion preference ────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .sr-table tr,
+  .sr-component-card,
+  .sr-availability-badge,
+  .sr-notice {
+    transition: none;
+    animation: none;
+  }
 }

@@ -39,6 +39,7 @@ class AuditEvent(models.Model):
         KEY_CREATED = "key.created", "Key created"
         KEY_REVOKED = "key.revoked", "Key revoked"
         DEMO_RESET = "demo.reset", "Demo reset"
+        INTEGRATION_PROBED = "integration.probed", "Integration probed"
 
     class ActorType(models.TextChoices):
         AGENT = "agent", "Agent"

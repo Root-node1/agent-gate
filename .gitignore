@@ -1,21 +1,65 @@
+# ------------------------------------------------------------------
+# Python
+# ------------------------------------------------------------------
 __pycache__/
+*.py[cod]
 *.pyc
 venv/
 .venv/
-.env
-node_modules/
-dist/
-db.sqlite3
-.DS_Store
+.eggs/
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
 .ruff_cache/
-backend/docs/
+.hypothesis/
+.import_linter_cache/
+
+# ------------------------------------------------------------------
+# Node.js
+# ------------------------------------------------------------------
+node_modules/
+frontend/dist/
+frontend/build/
+
+# ------------------------------------------------------------------
+# Environment & secrets
+# ------------------------------------------------------------------
+.env
+.env.local
+.env.production
+.env.production.*
+!.env.production.example
 *.pem
 *.key
 
-# Local agent / IDE scratch
+# ------------------------------------------------------------------
+# Database
+# ------------------------------------------------------------------
+db.sqlite3
+*.db
+*.db-journal
+
+# ------------------------------------------------------------------
+# IDE & editor-local
+# ------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 .continue/
 
+# ------------------------------------------------------------------
+# OS-generated
+# ------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------------------------------------------------------------------
 # Desktop build outputs (never commit installers)
+# ------------------------------------------------------------------
 frontend/src-tauri/target/
 frontend/windows-artifacts/
 *.msi
@@ -25,14 +69,33 @@ frontend/windows-artifacts/
 *.rpm
 *.dmg
 
-# Production environment files (secrets)
-.env.production
-.env.production.*
-!.env.production.example
-
-# Playwright
+# ------------------------------------------------------------------
+# Playwright & test artifacts
+# ------------------------------------------------------------------
 /test-results/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+coverage/
+coverage.xml
+coverage.json
+.nyc_output/
+
+# ------------------------------------------------------------------
+# Logs & temp
+# ------------------------------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+
+# ------------------------------------------------------------------
+# Kiro (local agent workspace)
+# ------------------------------------------------------------------
+.kiro
+
+# ------------------------------------------------------------------
+# Backend generated docs
+# ------------------------------------------------------------------
+backend/docs/

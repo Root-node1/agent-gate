@@ -1,7 +1,7 @@
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
-from tests.base import PostgresTransactionTestCase
 
+from tests.base import PostgresTransactionTestCase
 
 MIGRATION_FROM = ("spend", "0003_source_untrusted")
 MIGRATION_TO = ("spend", "0004_spendrequest_blocked_status")

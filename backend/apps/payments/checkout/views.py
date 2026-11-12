@@ -22,6 +22,7 @@ from rest_framework.views import APIView
 from apps.accounts.models import Organization, OrgMembership
 from apps.accounts.permissions import IsOrganizationAdmin
 from apps.agents.authentication import DashboardSessionAuthentication
+from apps.common.errors import ApiError, ErrorCode
 from apps.common.money import to_minor
 from apps.payments.models import CheckoutOrder
 from apps.payments.paypal.client import PayPalAPIError, PayPalClient
@@ -59,15 +60,17 @@ class CheckoutOrderCreateView(APIView):
         try:
             config = get_paypal_config(settings)
         except PayPalConfigError:
-            return Response(
-                {"detail": "PayPal is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            raise ApiError(
+                "PayPal is not configured.",
+                code=ErrorCode.SERVICE_UNAVAILABLE,
+                status_code=503,
             )
 
         if not config.checkout_enabled:
-            return Response(
-                {"detail": "Checkout is not enabled."},
-                status=status.HTTP_403_FORBIDDEN,
+            raise ApiError(
+                "Checkout is not enabled.",
+                code=ErrorCode.PERMISSION_DENIED,
+                status_code=403,
             )
 
         # --- Organization scoping (admin-only; 404 hides existence) ----------
@@ -93,16 +96,14 @@ class CheckoutOrderCreateView(APIView):
                 client=client,
             )
         except services.CheckoutOperationConflict:
-            return Response(
-                {"detail": "Idempotency-Key was reused with a different request."},
-                status=status.HTTP_409_CONFLICT,
+            raise ApiError(
+                "Idempotency-Key was reused with a different request.",
+                code=ErrorCode.IDEMPOTENCY_CONFLICT,
+                status_code=409,
             )
         except PayPalAPIError as exc:
             # PayPal rejected the request; the order is already marked DECLINED.
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            raise ApiError(str(exc), code=ErrorCode.SERVICE_UNAVAILABLE, status_code=502)
 
         # --- Response ---------------------------------------------------------
         response = Response(
@@ -153,14 +154,16 @@ class CheckoutOrderCaptureView(APIView):
         try:
             config = get_paypal_config(settings)
         except PayPalConfigError:
-            return Response(
-                {"detail": "PayPal is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            raise ApiError(
+                "PayPal is not configured.",
+                code=ErrorCode.SERVICE_UNAVAILABLE,
+                status_code=503,
             )
         if not config.checkout_enabled:
-            return Response(
-                {"detail": "Checkout is not enabled."},
-                status=status.HTTP_403_FORBIDDEN,
+            raise ApiError(
+                "Checkout is not enabled.",
+                code=ErrorCode.PERMISSION_DENIED,
+                status_code=403,
             )
 
         # --- Organization scoping (admin-only; 404 hides existence) ----------
@@ -185,24 +188,18 @@ class CheckoutOrderCaptureView(APIView):
                 client=client,
             )
         except services.CaptureConflict:
-            return Response(
-                {
-                    "detail": "A capture operation is already in progress for this order."
-                },
-                status=status.HTTP_409_CONFLICT,
+            raise ApiError(
+                "A capture operation is already in progress for this order.",
+                code=ErrorCode.APPROVAL_CONFLICT,
+                status_code=409,
             )
         except services.CaptureNotApproved as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            raise ApiError(str(exc), code=ErrorCode.APPROVAL_CONFLICT, status_code=409)
         except services.CaptureVerificationError as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+            raise ApiError(str(exc), code=ErrorCode.RECHECK_FAILED, status_code=422)
         except PayPalAPIError as exc:
             # PayPal rejected the attempt; the order is already marked DECLINED.
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            raise ApiError(str(exc), code=ErrorCode.SERVICE_UNAVAILABLE, status_code=502)
 
         # --- Response --------------------------------------------------------
         response = Response(

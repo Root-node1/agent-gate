@@ -5,7 +5,12 @@ import os
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F403
-from .base import env_int
+from .base import (
+    PAYMENTS_EXECUTION_ENABLED,
+    PAYPAL_CHECKOUT_ENABLED,
+    PAYPAL_PAYOUTS_ENABLED,
+    env_int,
+)
 
 DEBUG = False
 

@@ -59,21 +59,6 @@ export const SYSTEM_REQUIREMENTS = {
     network: 'Internet access to reach the AgentGate backend',
     notes: 'DEB, RPM, and AppImage artifacts verified built on Linux x86_64 (Oct 31 2026).',
   },
-  macos: {
-    os: 'macOS 10.15 Catalina or later',
-    ram: '4 GB minimum',
-    storage: '200 MB available',
-    cpu: '64-bit (x86_64 or Apple Silicon)',
-    webview: 'Built-in WKWebView (no additional runtime needed)',
-    network: 'Internet access to reach the AgentGate backend',
-    notes: 'Build not yet produced on this platform — pending verification.',
-  },
-  backend: {
-    runtime: 'Hosted separately — the desktop application does NOT include the backend',
-    components: 'Django 6, PostgreSQL 17, Redis 7, Procrastinate worker',
-    hosting: 'Self-hosted (see deployment guide) or provider-hosted',
-    url: 'Configurable — the desktop client connects to any reachable AgentGate backend URL',
-  },
 } as const
 
 export const RELEASE_ASSETS: ReleaseAsset[] = [

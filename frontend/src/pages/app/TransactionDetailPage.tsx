@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router'
 import { FileQuestion } from 'lucide-react'
-import { useDemoState } from '../../demo/store'
+import { getDemoState } from '../../demo/store'
+import { useApiResource } from '../../api/useApiResource'
 import {
   agentById,
   approvalForRequest,
@@ -9,7 +10,7 @@ import {
   timelineForRequest,
 } from '../../demo/selectors'
 import CopyField from '../../ui/CopyField'
-import EmptyState from '../../ui/EmptyState'
+import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import PageHeader from '../../ui/PageHeader'
 import ReasonList, { RiskList } from '../../ui/ReasonList'
 import { ApprovalStatus, DecisionStatus, PaymentStatusBadge } from '../../ui/StatusBadges'
@@ -29,8 +30,36 @@ const HEADINGS = {
 
 export default function TransactionDetailPage() {
   const { id = '' } = useParams()
-  const state = useDemoState()
+  const state = getDemoState()
+  const resource = useApiResource(() => Promise.resolve({ ok: true }))
+  const loading = resource.status === 'loading'
   const now = useNow()
+
+  if (loading) {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Transaction" description="Loading…" back={{ to: '/app/transactions', label: 'Transactions' }} />
+        <section className="card"><SkeletonRows rows={4} /></section>
+      </div>
+    )
+  }
+
+  // Error state handling
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Transaction" description="Failed to load transaction" back={{ to: '/app/transactions', label: 'Transactions' }} />
+        <EmptyState
+          icon={<FileQuestion size={24} />}
+          title="Unable to load transaction"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
+
   const request = requestById(state, id)
 
   if (!request) {

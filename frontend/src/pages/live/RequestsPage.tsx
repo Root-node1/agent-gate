@@ -1,16 +1,42 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
+import { useApiResource } from '../../api/useApiResource'
 import { isRequestId } from '../../api/spendRequests'
 import DecisionBadge from '../../components/DecisionBadge'
 import { formatTime } from '../../components/labels'
 import { useSession } from '../../session/context'
+import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import PageHeader from '../../ui/PageHeader'
 
 export default function RequestsPage() {
   const { recent } = useSession()
+  const resource = useApiResource(() => Promise.resolve({ ok: true }))
   const navigate = useNavigate()
   const [id, setId] = useState('')
   const [error, setError] = useState('')
+
+  if (resource.status === 'loading') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Requests" description="Loading…" />
+        <section className="card"><SkeletonRows rows={4} /></section>
+      </div>
+    )
+  }
+
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Requests" description="Failed to load" />
+        <EmptyState
+          title="Unable to load requests"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()

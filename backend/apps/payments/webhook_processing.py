@@ -23,7 +23,7 @@ from apps.payments.checkout.services import (
 from apps.payments.models import CheckoutOrder, WebhookEvent
 from apps.payments.payouts.models import PayoutReservation
 from apps.payments.payouts.services import reconcile_payout
-from apps.payments.paypal.client import PayPalClientError, PayPalError
+from apps.payments.paypal.client import PayPalError
 
 logger = logging.getLogger(__name__)
 

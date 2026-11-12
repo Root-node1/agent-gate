@@ -1,8 +1,8 @@
 import { useRef, useState, type KeyboardEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { useDemoState } from '../../demo/store'
+import { useApiResource } from '../../api/useApiResource'
+import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import PageHeader from '../../ui/PageHeader'
-import { useSimulatedLoad } from '../../ui/hooks'
 import ApiKeysSection from './settings/ApiKeysSection'
 import AppearanceSection from './settings/AppearanceSection'
 import ConnectionSection from './settings/ConnectionSection'
@@ -16,14 +16,37 @@ import { SETTINGS_TABS, defaultWorkspace, isSettingsTab, type SettingsTab } from
 import './SettingsPage.css'
 
 export default function SettingsPage() {
-  const state = useDemoState()
-  const loading = useSimulatedLoad()
+  const resource = useApiResource(() => Promise.resolve({ ok: true }))
+  const loading = resource.status === 'loading'
   const [params, setParams] = useSearchParams()
   const [workspace, setWorkspace] = useState(defaultWorkspace)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   const param = params.get('tab')
   const active: SettingsTab = isSettingsTab(param) ? param : 'workspace'
+
+  if (loading) {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Settings" description="Loading settings…" />
+        <section className="card"><SkeletonRows rows={4} /></section>
+      </div>
+    )
+  }
+
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Settings" description="Failed to load settings" />
+        <EmptyState
+          title="Unable to load settings"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
 
   function select(tab: SettingsTab) {
     const next = new URLSearchParams(params)
@@ -87,9 +110,9 @@ export default function SettingsPage() {
         {active === 'workspace' && <WorkspaceSection saved={workspace} onSave={setWorkspace} />}
         {active === 'connection' && <ConnectionSection />}
         {active === 'paypal' && <PaypalSection />}
-        {active === 'keys' && <ApiKeysSection state={state} loading={loading} />}
+        {active === 'keys' && <ApiKeysSection loading={loading} />}
         {active === 'security' && <SecuritySection />}
-        {active === 'team' && <TeamSection state={state} loading={loading} />}
+        {active === 'team' && <TeamSection loading={loading} />}
         {active === 'developers' && <DevelopersSection />}
         {active === 'password' && <PasswordChangeForm />}
         {active === 'appearance' && <AppearanceSection />}

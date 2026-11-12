@@ -13,6 +13,10 @@ from django.views import defaults
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from apps.common.errors import ErrorCode, ensure_request_id, error_payload
+from apps.payments.settings_views import (
+    PayPalSettingsProbeView,
+    PayPalSettingsStatusView,
+)
 from apps.payments.views import paypal_webhook
 
 
@@ -137,5 +141,7 @@ urlpatterns = [
     path("v1/", include("apps.policies.urls")),
     path("v1/", include("apps.agents.urls")),
     path("v1/", include("apps.payments.urls")),
+    path("api/settings/paypal/status/", PayPalSettingsStatusView.as_view(), name="settings-paypal-status"),
+    path("api/settings/paypal/probe/", PayPalSettingsProbeView.as_view(), name="settings-paypal-probe"),
     path("api-auth/", include("rest_framework.urls")),
 ]

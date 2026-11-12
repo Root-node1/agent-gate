@@ -268,7 +268,7 @@ GitHub Actions runs the same checks on every push and pull request, with the bac
 | AGT-019 | Integrate Frontend/Dashboard Commits from origin/feat/dashboard | Del + Isaac | Not started — 6 commits require review |
 | AGT-020 | Integrate PayPal Sandbox Commits from feat/paypal-sandbox | Isaac + Anthony | Not started — 19 commits require review |
 
-All tickets are individual Markdown files under `/tickets/`.
+Ticket files have been archived. See `docs/architecture/` for the current architecture reference.
 
 ## 13. PayPal Cart API (agentic commerce) notes
 

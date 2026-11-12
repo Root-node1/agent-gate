@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 from apps.accounts.models import Organization, OrgMembership
 from apps.accounts.permissions import IsOrganizationAdmin
 from apps.agents.authentication import DashboardSessionAuthentication
+from apps.common.errors import ApiError, ErrorCode
 
 from . import services
 from .models import PayoutReservation
@@ -58,9 +59,10 @@ class PayoutReservationCreateView(APIView):
         try:
             services._require_payouts_enabled(settings)
         except services.PayoutFeatureDisabled:
-            return Response(
-                {"detail": "Payouts is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            raise ApiError(
+                "Payouts is not configured.",
+                code=ErrorCode.SERVICE_UNAVAILABLE,
+                status_code=503,
             )
 
         # --- Organization scoping (admin-only; 404 hides existence) -----
@@ -79,16 +81,15 @@ class PayoutReservationCreateView(APIView):
                 django_settings=settings,
             )
         except services.PayoutFeatureDisabled:
-            return Response(
-                {"detail": "Payouts is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            raise ApiError(
+                "Payouts is not configured.",
+                code=ErrorCode.SERVICE_UNAVAILABLE,
+                status_code=503,
             )
         except services.PayoutNotEligible as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+            raise ApiError(str(exc), code=ErrorCode.RECHECK_FAILED, status_code=422)
         except services.PayoutAlreadyReserved as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+            raise ApiError(str(exc), code=ErrorCode.IDEMPOTENCY_CONFLICT, status_code=409)
 
         response = Response(
             PayoutReservationSerializer(reservation).data,
@@ -117,9 +118,10 @@ class PayoutReservationSubmitView(APIView):
         try:
             services._require_payouts_enabled(settings)
         except services.PayoutFeatureDisabled:
-            return Response(
-                {"detail": "Payouts is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            raise ApiError(
+                "Payouts is not configured.",
+                code=ErrorCode.SERVICE_UNAVAILABLE,
+                status_code=503,
             )
 
         # --- Organization scoping (admin-only; 404 hides existence) -----
@@ -138,14 +140,13 @@ class PayoutReservationSubmitView(APIView):
         try:
             result = services.submit_payout(reservation.pk, django_settings=settings)
         except services.PayoutFeatureDisabled:
-            return Response(
-                {"detail": "Payouts is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            raise ApiError(
+                "Payouts is not configured.",
+                code=ErrorCode.SERVICE_UNAVAILABLE,
+                status_code=503,
             )
         except services.PayoutNotReserved as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+            raise ApiError(str(exc), code=ErrorCode.RECHECK_FAILED, status_code=422)
 
         http_status = (
             status.HTTP_201_CREATED
@@ -172,9 +173,10 @@ class PayoutReservationReconcileView(APIView):
         try:
             services._require_payouts_enabled(settings)
         except services.PayoutFeatureDisabled:
-            return Response(
-                {"detail": "Payouts is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            raise ApiError(
+                "Payouts is not configured.",
+                code=ErrorCode.SERVICE_UNAVAILABLE,
+                status_code=503,
             )
 
         organization = get_object_or_404(
@@ -184,16 +186,10 @@ class PayoutReservationReconcileView(APIView):
             ),
         )
 
-        try:
-            reservation = get_object_or_404(
-                PayoutReservation.objects.filter(organization=organization),
-                pk=pk,
-            )
-        except PayoutReservation.DoesNotExist:
-            return Response(
-                {"detail": "Payout reservation not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        reservation = get_object_or_404(
+            PayoutReservation.objects.filter(organization=organization),
+            pk=pk,
+        )
 
         result = services.reconcile_payout(reservation.pk, django_settings=settings)
         return Response(

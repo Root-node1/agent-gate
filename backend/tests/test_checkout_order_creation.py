@@ -622,7 +622,7 @@ class CheckoutViewTests(CheckoutViewBase):
         response = self.client.post(CHECKOUT_URL, body, format="json")
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn("not enabled", response.json()["detail"])
+        self.assertIn("not enabled", response.json()["error"]["message"])
 
     @override_settings(
         PAYPAL_CHECKOUT_ENABLED="true",
@@ -641,7 +641,7 @@ class CheckoutViewTests(CheckoutViewBase):
         response = self.client.post(CHECKOUT_URL, body, format="json")
 
         self.assertEqual(response.status_code, 503)
-        self.assertIn("not configured", response.json()["detail"])
+        self.assertIn("not configured", response.json()["error"]["message"])
 
     @patch("apps.payments.checkout.views.PayPalClient")
     def test_cross_organization_rejection(self, mock_client_cls):
@@ -737,7 +737,7 @@ class CheckoutViewTests(CheckoutViewBase):
         response = self.client.post(CHECKOUT_URL, body, format="json")
 
         self.assertEqual(response.status_code, 502)
-        self.assertIn("Invalid request", response.json()["detail"])
+        self.assertIn("Invalid request", response.json()["error"]["message"])
 
     @patch("apps.payments.checkout.views.PayPalClient")
     def test_stable_paypal_request_id(self, mock_client_cls):
@@ -797,7 +797,7 @@ class CheckoutViewTests(CheckoutViewBase):
         }
         response = self.client.post(CHECKOUT_URL, body, format="json")
 
-        detail = response.json()["detail"]
+        detail = response.json()["error"]["message"]
         self.assertNotIn("test-client-id", detail)
         self.assertNotIn("test-client-secret", detail)
 

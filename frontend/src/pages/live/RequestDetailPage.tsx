@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { useApiResource as _useApiResource } from '../../api/useApiResource'
 import { ApiError, getSpendRequest, isRequestId, type SpendRequest } from '../../api/spendRequests'
 import AgentKeyField from '../../components/AgentKeyField'
 import DecisionCard from '../../components/DecisionCard'

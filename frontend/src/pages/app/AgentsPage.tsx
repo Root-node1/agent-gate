@@ -1,14 +1,11 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router'
 import { Bot, KeyRound, Plus, Search } from 'lucide-react'
-import { useDemoState } from '../../demo/store'
-import { policyForAgent } from '../../demo/selectors'
+import { listAgents, type AgentListItem } from '../../api/agents'
+import { useApiResource } from '../../api/useApiResource'
 import EmptyState, { SkeletonRows } from '../../ui/EmptyState'
 import PageHeader from '../../ui/PageHeader'
 import { AgentStatusBadge } from '../../ui/StatusBadges'
-import { formatMoney, timeAgo } from '../../ui/format'
-import { useNow, useSimulatedLoad } from '../../ui/hooks'
-import { agentActivity } from './agents/agentStats'
 import RegisterAgentModal from './agents/RegisterAgentModal'
 import './AgentsPage.css'
 
@@ -17,17 +14,70 @@ function plural(n: number, word: string) {
 }
 
 export default function AgentsPage() {
-  const state = useDemoState()
-  const loading = useSimulatedLoad()
-  const now = useNow()
   const [query, setQuery] = useState('')
   const [registering, setRegistering] = useState(false)
 
+  const resource = useApiResource((signal) => listAgents({ signal }))
+
   const q = query.trim().toLowerCase()
-  const agents = state.agents.filter(
-    (a) => !q || a.name.includes(q) || a.description.toLowerCase().includes(q),
-  )
-  const active = state.agents.filter((a) => a.status === 'active').length
+  const agents = useMemo(() => {
+    if (resource.status !== 'success' && resource.status !== 'empty') return []
+    const items = Array.isArray(resource.data)
+      ? resource.data
+      : 'results' in resource.data
+        ? (resource.data as { results: AgentListItem[] }).results
+        : []
+    return items.filter(
+      (a: AgentListItem) => !q || a.name.toLowerCase().includes(q),
+    )
+  }, [resource, q])
+
+  const totalCount = useMemo(() => {
+    if (resource.status !== 'success' && resource.status !== 'empty') return 0
+    return 'count' in resource.data ? (resource.data as { count: number }).count : agents.length
+  }, [resource, agents.length])
+
+  const active = useMemo(() => {
+    if (resource.status !== 'success' && resource.status !== 'empty') return 0
+    const items = Array.isArray(resource.data)
+      ? resource.data
+      : 'results' in resource.data
+        ? (resource.data as { results: AgentListItem[] }).results
+        : []
+    return items.filter((a: AgentListItem) => a.status === 'active').length
+  }, [resource])
+
+  if (resource.status === 'loading') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Agents" description="Loading agents…" />
+        <section className="card card-flush">
+          <SkeletonRows rows={4} />
+        </section>
+      </div>
+    )
+  }
+
+  if (resource.status === 'error') {
+    return (
+      <div className="stack-lg">
+        <PageHeader title="Agents" description="Failed to load agents" />
+        <EmptyState
+          icon={<Bot size={24} />}
+          title="Unable to load agents"
+          action={<button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Retry</button>}
+        >
+          <span role="alert">{resource.error.message}</span>
+        </EmptyState>
+      </div>
+    )
+  }
+
+  const allItems = Array.isArray(resource.data)
+    ? resource.data
+    : 'results' in resource.data
+      ? (resource.data as { results: AgentListItem[] }).results
+      : []
 
   return (
     <div className="stack-lg">
@@ -49,7 +99,7 @@ export default function AgentsPage() {
               Connected agents
             </h2>
             <p className="card-subtitle">
-              {active} active · {state.agents.length - active} suspended
+              {active} active · {totalCount - active} suspended
             </p>
           </div>
           <div className="search ag-search">
@@ -61,16 +111,14 @@ export default function AgentsPage() {
               id="ag-search"
               type="search"
               className="input"
-              placeholder="Search by name or description"
+              placeholder="Search by name"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
         </div>
 
-        {loading ? (
-          <SkeletonRows rows={4} />
-        ) : state.agents.length === 0 ? (
+        {allItems.length === 0 ? (
           <EmptyState
             icon={<Bot size={24} />}
             title="No agents yet"
@@ -114,64 +162,46 @@ export default function AgentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {agents.map((agent) => {
-                    const policy = policyForAgent(state, agent.id)
-                    const activity = agentActivity(state, agent.id, now)
-                    return (
-                      <tr key={agent.id} className="row-link">
-                        <td className="ag-name-cell">
-                          <Link to={`/app/agents/${agent.id}`} className="row-anchor">
-                            {agent.name}
-                          </Link>
-                          {agent.description && <p className="small muted ag-desc">{agent.description}</p>}
-                        </td>
-                        <td>
-                          <AgentStatusBadge status={agent.status} />
-                        </td>
-                        <td>
-                          {policy ? (
-                            <Link to={`/app/policies/${policy.id}`} className="ag-cell-link">
-                              {policy.name}
-                            </Link>
-                          ) : (
-                            <span className="muted">None</span>
-                          )}
-                        </td>
-                        <td className="ag-nowrap">
-                          {agent.api_key_prefix ? (
-                            <span className="mono">{agent.api_key_prefix}…</span>
-                          ) : (
-                            <span className="ag-nokey">
-                              <KeyRound size={14} aria-hidden="true" /> Revoked
-                            </span>
-                          )}
-                        </td>
-                        <td className="ag-nowrap">
-                          {activity.lastRequestAt ? (
-                            <time dateTime={activity.lastRequestAt}>{timeAgo(activity.lastRequestAt, now)}</time>
-                          ) : (
-                            <span className="muted">Never</span>
-                          )}
-                        </td>
-                        <td className="num ag-nowrap">
-                          {formatMoney(activity.spendToday, activity.currency)}
-                          <span className="ag-sub">{plural(activity.requestsToday, 'request')}</span>
-                        </td>
-                        <td className="num ag-nowrap">
-                          {formatMoney(activity.spendMonth, activity.currency)}
-                          <span className="ag-sub">{plural(activity.requestsMonth, 'request')}</span>
-                        </td>
-                      </tr>
-                    )
-                  })}
+                  {agents.map((agent: AgentListItem) => (
+                    <tr key={agent.id} className="row-link">
+                      <td className="ag-name-cell">
+                        <Link to={`/app/agents/${agent.id}`} className="row-anchor">
+                          {agent.name}
+                        </Link>
+                      </td>
+                      <td>
+                        <AgentStatusBadge status={agent.status} />
+                      </td>
+                      <td>
+                        <span className="muted">—</span>
+                      </td>
+                      <td className="ag-nowrap">
+                        {agent.current_key_prefix ? (
+                          <span className="mono">{agent.current_key_prefix}…</span>
+                        ) : (
+                          <span className="ag-nokey">
+                            <KeyRound size={14} aria-hidden="true" /> Revoked
+                          </span>
+                        )}
+                      </td>
+                      <td className="ag-nowrap">
+                        <span className="muted">—</span>
+                      </td>
+                      <td className="num ag-nowrap">
+                        <span className="muted">—</span>
+                      </td>
+                      <td className="num ag-nowrap">
+                        <span className="muted">—</span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
             <div className="table-footer">
               <span>
-                Showing {agents.length} of {plural(state.agents.length, 'agent')}
+                Showing {agents.length} of {plural(totalCount, 'agent')}
               </span>
-              <span>Spend counts allowed payments plus approvals that are waiting or approved.</span>
             </div>
           </>
         )}

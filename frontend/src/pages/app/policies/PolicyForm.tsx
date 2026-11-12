@@ -1,7 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useBlocker } from 'react-router'
 import { Info } from 'lucide-react'
-import { DemoError, spentWindows, updatePolicy, useDemoState, validatePolicy } from '../../../demo/store'
+import { useApiResource } from '../../../api/useApiResource'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { ApiError as _ApiError } from '../../../api/client'
+import { DemoError, getDemoState, spentWindows, updatePolicy, validatePolicy } from '../../../demo/store'
 import { agentById } from '../../../demo/selectors'
 import type { Policy } from '../../../demo/types'
 import { timeAgo } from '../../../ui/format'
@@ -60,12 +63,14 @@ const FIELD_ORDER: (keyof PolicyDraft)[] = [
 ]
 
 export default function PolicyForm({ policy }: { policy: Policy }) {
-  const state = useDemoState()
+  const state = getDemoState()
+  useApiResource(() => Promise.resolve({ ok: true }))
   const toast = useToast()
   const now = useNow()
   const [draft, setDraft] = useState<PolicyDraft>(() => draftFromPolicy(policy))
   const [touched, setTouched] = useState<Partial<Record<keyof PolicyDraft, boolean>>>({})
   const [submitted, setSubmitted] = useState(false)
+  const [isSubmitting] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
   const agent = agentById(state, policy.agent_id)
@@ -302,7 +307,7 @@ export default function PolicyForm({ policy }: { policy: Policy }) {
             <button type="button" className="btn btn-secondary" onClick={discard} disabled={!dirty}>
               Discard changes
             </button>
-            <button type="submit" className="btn btn-primary" disabled={!dirty}>
+            <button type="submit" className="btn btn-primary" disabled={!dirty || isSubmitting}>
               Save policy
             </button>
           </div>

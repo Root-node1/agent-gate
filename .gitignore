@@ -70,7 +70,7 @@ frontend/windows-artifacts/
 *.dmg
 
 # ------------------------------------------------------------------
-# Playwright & test artifacts
+# Test artifacts
 # ------------------------------------------------------------------
 /test-results/
 /playwright-report/

@@ -1,3 +1,12 @@
-name = "agentgate-frontend"
-pages_build_output_dir = "dist"
+name = "agent-gate"
+main = "_worker.js"
 compatibility_date = "2026-11-10"
+
+[assets]
+directory = "dist"
+not_found_handling = "single-page-application"
+# The Worker runs only to prevent /_worker.js from being served as a static
+# asset. API requests (/api/*, /v1/*) are no longer handled here because the
+# backend runs on a separate subdomain (api.agentgate.zindika.app) and the
+# frontend API client uses VITE_API_BASE_URL to target it directly.
+run_worker_first = ["/_worker.js"]

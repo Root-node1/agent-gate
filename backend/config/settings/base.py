@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "django.contrib.sites",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "corsheaders",
     "rest_framework",
     "drf_spectacular",
     "procrastinate.contrib.django",
@@ -63,6 +64,7 @@ SITE_ID = 1
 MIDDLEWARE = [
     "apps.common.middleware.RequestIdMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -461,3 +463,29 @@ PAYPAL_CLIENT_SECRET = os.environ.get("PAYPAL_CLIENT_SECRET", "")
 PAYPAL_WEBHOOK_ID = os.environ.get("PAYPAL_WEBHOOK_ID", "")
 PAYPAL_CHECKOUT_ENABLED = os.environ.get("PAYPAL_CHECKOUT_ENABLED", "false")
 PAYPAL_PAYOUTS_ENABLED = os.environ.get("PAYPAL_PAYOUTS_ENABLED", "false")
+
+# ---------------------------------------------------------------------------
+# Cross-origin resource sharing (CORS)
+# ---------------------------------------------------------------------------
+# When the frontend is served from a separate origin (e.g. Cloudflare Pages)
+# and the backend runs on Contabo, CORS headers allow the browser to make
+# credentialed requests to the API.  In same-origin deployments (Caddy
+# reverse-proxy) these settings are harmless because the origin matches.
+#
+# CORS_ALLOW_LIST_ORIGINS is a comma-separated list of allowed origins
+# (e.g. https://agentgate.zindika.app).  Never use wildcards with credentials.
+# CORS_ALLOW_CREDENTIALS must be True for session-cookie authentication.
+# ---------------------------------------------------------------------------
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_LIST_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOW_LIST_ORIGINS", "").split(",")
+    if origin.strip()
+]
+# When the frontend and backend share an origin, the origin header matches
+# the request host automatically.  Allow the request origin in same-origin mode.
+CORS_ALLOW_LIST_ORIGINS_ENV = os.environ.get("CORS_ALLOW_LIST_ORIGINS", "").strip()
+if not CORS_ALLOW_LIST_ORIGINS_ENV:
+    # Same-origin deployment: allow the frontend origin (FRONTEND_ORIGIN).
+    # This covers both the production Caddy setup and local dev.
+    CORS_ALLOW_LIST_ORIGINS = [FRONTEND_ORIGIN]

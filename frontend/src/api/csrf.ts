@@ -11,16 +11,31 @@ export class CsrfBootstrapError extends Error {
   }
 }
 
+/**
+ * Production API base URL — mirrors the value in client.ts.
+ * When unset, CSRF bootstrap uses relative paths (local dev proxy).
+ *
+ * import.meta.env is only available in Vite builds. In Node.js test
+ * environments it is undefined, so we guard against that case.
+ */
+const API_BASE = ((typeof import.meta !== 'undefined'
+  ? import.meta.env?.VITE_API_BASE_URL
+  : undefined) as string | undefined)?.replace(/\/+$/, '') ?? ''
+
 function csrfCookie(): string | null {
   if (typeof document === 'undefined') return null
   const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/)
   return match ? decodeURIComponent(match[1]) : null
 }
 
+function csrfPath() {
+  return API_BASE ? `${API_BASE}/api/auth/csrf/` : '/api/auth/csrf/'
+}
+
 export async function bootstrapCsrfCookie(): Promise<string> {
   let response: Response
   try {
-    response = await fetch('/api/auth/csrf/', {
+    response = await fetch(csrfPath(), {
       credentials: 'include',
       headers: { Accept: 'application/json' },
     })

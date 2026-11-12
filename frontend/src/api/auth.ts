@@ -84,7 +84,18 @@ export type LoginResult =
   | { kind: 'mfa'; types: string[] }
   | { kind: 'verify-email' }
 
-const HEADLESS_BASE = '/api/auth/headless/browser/v1'
+/**
+ * Base URL for django-allauth headless endpoints.
+ * When VITE_API_BASE_URL is set (production), the headless base includes
+ * the API origin so that cross-origin requests reach the Contabo backend.
+ *
+ * import.meta.env is only available in Vite builds. In Node.js test
+ * environments it is undefined, so we guard against that case.
+ */
+const API_BASE = ((typeof import.meta !== 'undefined'
+  ? import.meta.env?.VITE_API_BASE_URL
+  : undefined) as string | undefined)?.replace(/\/+$/, '') ?? ''
+const HEADLESS_BASE = API_BASE ? `${API_BASE}/api/auth/headless/browser/v1` : '/api/auth/headless/browser/v1'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

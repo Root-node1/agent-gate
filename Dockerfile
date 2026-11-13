@@ -31,10 +31,11 @@ COPY backend/ /app/
 # Writable directories for runtime artifacts.
 RUN mkdir -p /app/staticfiles /app/media && chown -R agentgate:agentgate /app
 
-USER agentgate
-
 # Entrypoint (runs collectstatic, then execs CMD).
-COPY --chown=agentgate:agentgate deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+USER agentgate
 
 EXPOSE 8000
 

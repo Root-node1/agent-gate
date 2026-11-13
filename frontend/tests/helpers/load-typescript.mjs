@@ -1,10 +1,17 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import ts from 'typescript'
 
 export async function loadTypeScriptModule(sourcePath, dependencies = {}) {
-  const fileUrl = new URL(sourcePath, import.meta.url)
+  // On Windows an absolute path (e.g. from path.resolve()) must be converted
+  // to a file:// URL.  Relative paths are resolved against import.meta.url.
+  let fileUrl
+  if (path.isAbsolute(sourcePath)) {
+    fileUrl = pathToFileURL(sourcePath)
+  } else {
+    fileUrl = new URL(sourcePath, import.meta.url)
+  }
   const source = await readFile(fileUrl, 'utf8')
   let javascript = ts.transpileModule(source, {
     compilerOptions: {
